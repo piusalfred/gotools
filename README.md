@@ -18,12 +18,26 @@ A script to manage Go build tools (like `golangci-lint`, `task`, or `mockgen`) u
 
 ## Installation
 
-Download the script into your repository (e.g., into a `scripts/` or `tools/` directory) and make it executable:
+### Option 1: Global install (recommended)
+
+Run the installer to download `gotools.sh` into your Go bin directory (`GOBIN`, `GOPATH/bin`, or `~/go/bin`). This makes `gotools.sh` available system-wide, just like any other Go tool:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/piusalfred/gotools.sh/main/install.sh | bash
+```
+
+> **Note:** Make sure your Go bin directory is in your `PATH`. The installer will warn you if it isn't.
+
+### Option 2: Per-project vendored script
+
+Download the script directly into your repository (e.g., into a `scripts/` directory) and make it executable:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/piusalfred/gotools.sh/main/gotools.sh -o gotools.sh
 chmod +x gotools.sh
 ```
+
+This is useful when you want to pin the exact script version alongside your source code.
 
 ## Usage
 
