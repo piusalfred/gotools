@@ -4,8 +4,7 @@
 
 set -euo pipefail
 
-
-VERSION="v0.1.10"
+VERSION="v0.1.11"
 REPO="piusalfred/gotools.sh"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -15,7 +14,6 @@ DEFAULT_DIR="tools"
 DEFAULT_GO_VERSION="inherit"
 DEFAULT_USE_WORK="true"
 
-
 usage() {
     cat <<EOF
 🧰 Go Tool Manager (Version: $VERSION)
@@ -23,19 +21,21 @@ usage() {
 Usage: $(basename "$0") <command> [arguments]
 
 Commands:
-  init [flags]          Bootstrap the project.
-  install [name] <pkg>  Install a new tool.
-  sync                  Force state to match .gotools.env.
-  exec <name> [args]    Run a managed tool.
-  list                  List tools, versions, and strategies.
-  upgrade <name|all>    Update tools to @latest.
-  remove <name1>...     Remove tools.
-  version               Show script version.
-  self-update           Update gotools.sh to the latest version.
+  init [flags]        Bootstrap the project.
+  install [name] <pkg> Install a new tool.
+  sync                Force state to match .gotools.env.
+  exec <name> [args]  Run a managed tool.
+  list                List tools, versions, and strategies.
+  upgrade <name|all>  Update tools to @latest.
+  remove <name1>...   Remove specific tools.
+  purge               Remove all tools and the .gotools.env file.
+  version             Show script version.
+  self-update         Update gotools.sh to the latest version.
+  uninstall           Remove this script from your system.
 
 Examples:
-  ./gotools.sh self-update
-  ./gotools.sh version
+  ./gotools.sh purge
+  ./gotools.sh uninstall
 EOF
     exit 1
 }
@@ -51,16 +51,43 @@ load_config() {
     GOTOOLS_USE_WORK="${GOTOOLS_USE_WORK:-$DEFAULT_USE_WORK}"
 }
 
-
 cmd_version() {
     echo "gotools.sh $VERSION"
 }
 
+cmd_purge() {
+    load_config
+    echo "⚠️  WARNING: This will delete the tools directory ('$GOTOOLS_DIR') and '$ENV_FILE'."
+    echo "This action cannot be undone."
+    printf "Are you sure you want to proceed? (type YES to confirm): "
+    read -r confirmation
+
+    if [[ "$confirmation" == "YES" ]]; then
+        rm -rf "$GOTOOLS_DIR" "$ENV_FILE"
+        echo "✅ Purge complete. All tools and configurations have been removed."
+    else
+        echo "❌ Purge cancelled."
+    fi
+}
+
+cmd_uninstall() {
+    echo "⚠️  WARNING: This will delete the 'gotools.sh' script itself."
+    printf "Do you want to uninstall gotools.sh? (y/N): "
+    read -r confirmation
+
+    if [[ "$confirmation" =~ ^[Yy]$ ]]; then
+        local script_path; script_path=$(realpath "$0")
+        rm "$script_path"
+        echo "✅ gotools.sh has been uninstalled. Goodbye!"
+        exit 0
+    else
+        echo "❌ Uninstall cancelled."
+    fi
+}
+
 cmd_self_update() {
     echo "🔍 Checking for updates..."
-
-    # Fetch latest tag from GitHub API without requiring jq
-    local latest_tag;
+    local latest_tag
     latest_tag=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
     if [[ -z "$latest_tag" ]]; then
@@ -76,13 +103,10 @@ cmd_self_update() {
     echo "🚀 New version found: $latest_tag (Current: $VERSION)"
     echo "📥 Downloading update..."
 
-    # Use a temporary file to ensure we don't break the current script if download fails
     local tmp_file; tmp_file=$(mktemp)
-    # We download from the specific tag to ensure we get that release version
     local tag_url="https://raw.githubusercontent.com/$REPO/$latest_tag/gotools.sh"
 
     if curl -sL "$tag_url" -o "$tmp_file"; then
-        # Replace the current script ($0) with the new one
         mv "$tmp_file" "$0"
         chmod +x "$0"
         echo "✨ Successfully updated to $latest_tag!"
@@ -92,7 +116,6 @@ cmd_self_update() {
         return 1
     fi
 }
-
 
 resolve_go_version() {
     if [[ "$GOTOOLS_GO_VERSION" != "inherit" ]]; then
@@ -247,8 +270,10 @@ case "$action" in
     exec) cmd_exec "$@" ;;
     list) cmd_list ;;
     remove) cmd_remove "$@" ;;
+    purge) cmd_purge ;;
     upgrade|update) cmd_upgrade "$@" ;;
     version) cmd_version ;;
     self-update|self-upgrade) cmd_self_update ;;
+    uninstall) cmd_uninstall ;;
     *) usage ;;
 esac

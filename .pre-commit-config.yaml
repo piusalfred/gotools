@@ -29,6 +29,6 @@ repos:
           - id: addlicense
             name: addlicense
             language: system
-            entry: ./gotools.sh exec addlicense -check -l mit -c "Pius Alfred" -ignore "tools/**" .
+            entry: ./gotools.sh exec addlicense -check -l mit -c "Pius Alfred" -ignore "tools/**" -ignore ".idea/**" -ignore ".gitignore" .
             pass_filenames: false
             always_run: true
