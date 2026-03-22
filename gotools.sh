@@ -5,7 +5,7 @@
 set -euo pipefail
 
 
-VERSION="v0.1.0" # Manually update this before tagging a release
+VERSION="v0.1.10"
 REPO="piusalfred/gotools.sh"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
