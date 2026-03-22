@@ -18,32 +18,33 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-name: Version Guard
+name: Production Release
 on:
-    pull_request:
+    push:
+        branches: [main]
         paths: ["gotools.sh"]
 
 jobs:
-    check-version:
+    release:
         runs-on: ubuntu-latest
         permissions:
-            contents: read
+            contents: write
         steps:
             - uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0
-            - name: Verify Version Increment
+
+            - name: Extract Version
+              id: meta
               run: |
-                  NEW_VERSION=$(grep '^VERSION=' gotools.sh | cut -d'"' -f2)
-                  OLD_VERSION=$(git show origin/${{ github.base_ref }}:gotools.sh | grep '^VERSION=' | cut -d'"' -f2)
+                  VERSION=$(grep '^VERSION=' gotools.sh | cut -d'"' -f2)
+                  echo "tag=$VERSION" >> $GITHUB_OUTPUT
 
-                  if [ "$NEW_VERSION" == "$OLD_VERSION" ]; then
-                    echo "❌ ERROR: VERSION ($NEW_VERSION) was not incremented."
-                    exit 1
-                  fi
-
-                  HIGHEST=$(printf "%s\n%s" "$OLD_VERSION" "$NEW_VERSION" | sort -V | tail -n 1)
-                  if [ "$HIGHEST" != "$NEW_VERSION" ]; then
-                    echo "❌ ERROR: Version downgrade! $NEW_VERSION < $OLD_VERSION."
-                    exit 1
-                  fi
+            - name: Tag and Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ steps.meta.outputs.tag }}
+                  name: Release ${{ steps.meta.outputs.tag }}
+                  body: |
+                      Automated release for version ${{ steps.meta.outputs.tag }}.
+                      Run `./gotools.sh self-update` to upgrade.
+                  files: gotools.sh
+                  generate_release_notes: true
