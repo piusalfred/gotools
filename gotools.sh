@@ -15,9 +15,7 @@ DEFAULT_GO_VERSION="inherit"
 DEFAULT_USE_WORK="false"
 DEFAULT_MODULE_PREFIX=""
 
-# ---------------------------------------------------------------------------
-# Usage
-# ---------------------------------------------------------------------------
+
 usage() {
     cat <<EOF
 🧰 Go Tool Manager (Version: $VERSION)
