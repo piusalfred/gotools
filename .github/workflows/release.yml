@@ -22,29 +22,121 @@ name: Production Release
 on:
     push:
         branches: [main]
-        paths: ["gotools.sh"]
+        paths:
+            - "gotools.sh"
+            - "gotools.go"
+            - "cmd/**"
+            - "go.mod"
+            - "go.sum"
 
 jobs:
+    # ------------------------------------------------------------------
+    # 1. Extract the version tag from gotools.sh (single source of truth)
+    # ------------------------------------------------------------------
+    meta:
+        runs-on: ubuntu-latest
+        outputs:
+            tag: ${{ steps.meta.outputs.tag }}
+        steps:
+            - uses: actions/checkout@v4
+            - name: Extract Version
+              id: meta
+              run: |
+                  VERSION=$(grep '^VERSION=' gotools.sh | cut -d'"' -f2)
+                  echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+
+    # ------------------------------------------------------------------
+    # 2. Cross-compile the Go binary for each OS/arch combination
+    # ------------------------------------------------------------------
+    build:
+        needs: meta
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                include:
+                    - goos: linux
+                      goarch: amd64
+                    - goos: linux
+                      goarch: arm64
+                    - goos: darwin
+                      goarch: amd64
+                    - goos: darwin
+                      goarch: arm64
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+
+            - name: Build
+              env:
+                  CGO_ENABLED: "0"
+                  GOOS: ${{ matrix.goos }}
+                  GOARCH: ${{ matrix.goarch }}
+              run: |
+                  EXT=""
+                  if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+
+                  BINARY="gotools-${GOOS}-${GOARCH}${EXT}"
+                  go build -trimpath \
+                      -ldflags="-s -w" \
+                      -o "dist/${BINARY}" \
+                      ./cmd/gotools
+
+            - name: Upload artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: gotools-${{ matrix.goos }}-${{ matrix.goarch }}
+                  path: dist/*
+                  retention-days: 1
+
+    # ------------------------------------------------------------------
+    # 3. Create the GitHub release with the script and all binaries
+    # ------------------------------------------------------------------
     release:
+        needs: [meta, build]
         runs-on: ubuntu-latest
         permissions:
             contents: write
         steps:
             - uses: actions/checkout@v4
 
-            - name: Extract Version
-              id: meta
+            - name: Download all artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  path: dist
+                  merge-multiple: true
+
+            - name: Generate checksums
+              working-directory: dist
               run: |
-                  VERSION=$(grep '^VERSION=' gotools.sh | cut -d'"' -f2)
-                  echo "tag=$VERSION" >> $GITHUB_OUTPUT
+                  sha256sum * > checksums-sha256.txt
 
             - name: Tag and Release
               uses: softprops/action-gh-release@v2
               with:
-                  tag_name: ${{ steps.meta.outputs.tag }}
-                  name: Release ${{ steps.meta.outputs.tag }}
+                  tag_name: ${{ needs.meta.outputs.tag }}
+                  name: Release ${{ needs.meta.outputs.tag }}
                   body: |
-                      Automated release for version ${{ steps.meta.outputs.tag }}.
-                      Run `./gotools.sh self-update` to upgrade.
-                  files: gotools.sh
+                      ## Install
+
+                      **Shell script** (no Go required):
+                      ```
+                      curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ needs.meta.outputs.tag }}/install.sh | bash
+                      ```
+
+                      **Go binary** — download the archive for your platform from the assets below, or:
+                      ```
+                      go install github.com/piusalfred/gotools/cmd/gotools@${{ needs.meta.outputs.tag }}
+                      ```
+
+                      **Upgrade existing installs:**
+                      ```
+                      ./gotools.sh self-update
+                      ```
+                  files: |
+                      gotools.sh
+                      dist/*
                   generate_release_notes: true

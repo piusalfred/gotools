@@ -29,6 +29,23 @@ repos:
           - id: addlicense
             name: addlicense
             language: system
-            entry: ./gotools.sh exec addlicense -check -l mit -c "Pius Alfred" -ignore "tools/**" -ignore ".idea/**" -ignore ".gitignore" .
+            entry: ./gotools.sh exec addlicense -check -l mit -c "Pius Alfred" -ignore "tools/**" -ignore ".idea/**" -ignore ".gitignore" -ignore "go.work" .
             pass_filenames: false
             always_run: true
+          - id: gci
+            name: gci
+            language: system
+            entry: bash -c 'diff="$(./gotools.sh exec gci diff -s standard -s default -s "prefix(github.com/piusalfred/gotools)" "$@")"; if [ -n "$diff" ]; then printf "%s\n" "$diff"; exit 1; fi' --
+            types: [go]
+            pass_filenames: true
+          - id: gofumpt
+            name: gofumpt
+            language: system
+            entry: bash -c 'diff="$(./gotools.sh exec gofumpt -d -extra "$@")"; if [ -n "$diff" ]; then printf "%s\n" "$diff"; exit 1; fi' --
+            types: [go]
+            pass_filenames: true
+    - repo: https://github.com/rvben/rumdl-pre-commit
+      rev: v0.1.58
+      hooks:
+          - id: rumdl # Lint only (fails on issues)
+          - id: rumdl-fmt
