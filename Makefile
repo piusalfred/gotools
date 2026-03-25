@@ -21,27 +21,36 @@ GCI_SECTIONS := \
 	-s default \
 	-s "prefix($(MODULE))"
 
-.PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod help
+.PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean help
 
+## fmt: autofix license headers, organise imports, format Go source, and tidy modules
 fmt: fmt-license fmt-imports fmt-go fmt-mod
 
+## fmt-license: add or fix missing license headers
 fmt-license:
-	@echo "📝 Fixing license headers..."
 	$(ADDLICENSE) -l $(LICENSE_TYPE) -c "$(LICENSE_OWNER)" $(LICENSE_IGNORE) .
 
+## fmt-imports: group and sort imports with gci
 fmt-imports:
-	@echo "🔀 Organising imports..."
 	$(GCI) write $(GCI_SECTIONS) .
 
+## fmt-go: format Go source with gofumpt
 fmt-go:
-	@echo "🔧 Formatting Go source files..."
 	$(GOFUMPT) -w -extra .
 
+## fmt-mod: tidy go.mod
 fmt-mod:
-	@echo "📦 Tidying go.mod..."
 	go mod tidy
 
+## build: compile the gotools binary
+build:
+	go build -trimpath -ldflags="-s -w" -o gotools ./cmd/gotools
+
+## clean: remove build artifacts
+clean:
+	rm -f gotools
+	rm -rf dist
+
+## help: show available targets
 help:
-	@echo "Usage: make [target]"
-	@echo ""
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
