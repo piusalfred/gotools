@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.2.1"
+VERSION="v0.3.0"
 REPO="piusalfred/gotools.sh"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
