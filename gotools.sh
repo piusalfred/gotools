@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.2.1"
+VERSION="v0.3.0"
 REPO="piusalfred/gotools.sh"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -295,24 +295,57 @@ extract_tools_from_mod() {
 
 # extract_version_for_pkg <modfile> <pkg>
 #   Prints the version string for <pkg> from the require block(s) of <modfile>.
+#   Handles subpackage paths like github.com/foo/bar/v2/cmd/baz by trying
+#   progressively shorter prefixes until it finds a match in require.
 extract_version_for_pkg() {
     local modfile="$1" pkg="$2"
-    awk -v p="$pkg" '
-        /^require[[:space:]]+\(/ { in_req=1; next }
-        in_req && /^\)/ { in_req=0; next }
-        in_req {
-            gsub(/^[[:space:]]+/, "")
-            if ($1 == p) { gsub(/\/\/.*/, "", $2); print $2 }
-            next
-        }
-        $1 == "require" && $2 == p { gsub(/\/\/.*/, "", $3); print $3 }
-    ' "$modfile"
+    local candidate="$pkg"
+    while [[ -n "$candidate" ]]; do
+        local ver
+        ver=$(awk -v p="$candidate" '
+            /^require[[:space:]]+\(/ { in_req=1; next }
+            in_req && /^\)/ { in_req=0; next }
+            in_req {
+                gsub(/^[[:space:]]+/, "")
+                if ($1 == p) { gsub(/\/\/.*/, "", $2); print $2 }
+                next
+            }
+            $1 == "require" && $2 == p { gsub(/\/\/.*/, "", $3); print $3 }
+        ' "$modfile")
+        if [[ -n "$ver" ]]; then
+            echo "$ver"
+            return
+        fi
+        # Strip the last path component and try again.
+        local parent="${candidate%/*}"
+        [[ "$parent" == "$candidate" ]] && break
+        candidate="$parent"
+    done
 }
 
 # extract_pkg_from_mod <modfile>
 #   Returns the FIRST tool package from a go.mod (convenience for single-tool mods).
 extract_pkg_from_mod() {
     extract_tools_from_mod "$1" | head -n1
+}
+
+# resolve_binary_name <tool_name> <modfile>
+#   Dereferences a tool alias to the actual Go binary name.
+#   Reads the tool directive from the modfile and returns basename of the
+#   package path. Falls back to the tool_name itself if no directive is found.
+#
+#   Example: tool alias "golangci" with tool directive
+#     github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+#   resolves to binary name "golangci-lint".
+resolve_binary_name() {
+    local tool_name="$1" modfile="$2"
+    local pkg
+    pkg=$(extract_pkg_from_mod "$modfile")
+    if [[ -n "$pkg" ]]; then
+        basename "$pkg"
+    else
+        echo "$tool_name"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -557,7 +590,9 @@ cmd_exec() {
                 echo "❌ Error: No $GOTOOLS_DIR/go.mod found. Run 'init' first." >&2
                 exit 1
             fi
-            (cd "$GOTOOLS_DIR" && exec go tool "$tool_name" "$@")
+            local binary
+            binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/go.mod")
+            (cd "$GOTOOLS_DIR" && exec go tool "$binary" "$@")
             ;;
 
         split)
@@ -566,7 +601,9 @@ cmd_exec() {
                 echo "❌ Error: Tool '$tool_name' not found ($mod_file missing). Run 'install' first." >&2
                 exit 1
             fi
-            exec go tool -modfile="$mod_file" "$tool_name" "$@"
+            local binary
+            binary=$(resolve_binary_name "$tool_name" "$mod_file")
+            exec go tool -modfile="$mod_file" "$binary" "$@"
             ;;
 
         module)
@@ -574,7 +611,9 @@ cmd_exec() {
                 echo "❌ Error: Tool '$tool_name' not found ($GOTOOLS_DIR/$tool_name missing). Run 'install' first." >&2
                 exit 1
             fi
-            (cd "$GOTOOLS_DIR/$tool_name" && exec go tool "$tool_name" "$@")
+            local binary
+            binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/$tool_name/go.mod")
+            (cd "$GOTOOLS_DIR/$tool_name" && exec go tool "$binary" "$@")
             ;;
 
         *)
