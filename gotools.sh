@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.4.0"
+VERSION="v0.4.1"
 REPO="piusalfred/gotools.sh"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -329,23 +329,69 @@ extract_pkg_from_mod() {
     extract_tools_from_mod "$1" | head -n1
 }
 
+# infer_binary_name_from_pkg <package-path>
+#   Converts a Go package path (without @version) into the expected binary name.
+#   Examples:
+#     github.com/goreleaser/goreleaser/v2           -> goreleaser
+#     github.com/goreleaser/goreleaser/v2/cmd/goreleaser -> goreleaser
+#     golang.org/x/tools/cmd/goimports              -> goimports
+#     honnef.co/go/tools/cmd/staticcheck            -> staticcheck
+infer_binary_name_from_pkg() {
+    local pkg="$1"
+    # Remove version suffix: /v2, /v3, /v10, etc.
+    pkg="${pkg%/v[0-9]*}"
+    # If it ends with /cmd/<name>, take <name>
+    if [[ "$pkg" =~ /cmd/([^/]+)$ ]]; then
+        echo "${BASH_REMATCH[1]}"
+        return
+    fi
+    # Fallback to basename
+    basename "$pkg"
+}
+
 # resolve_binary_name <tool_name> <modfile>
 #   Dereferences a tool alias to the actual Go binary name.
-#   Reads the tool directive from the modfile and returns basename of the
-#   package path. Falls back to the tool_name itself if no directive is found.
-#
-#   Example: tool alias "golangci" with tool directive
-#     github.com/golangci/golangci-lint/v2/cmd/golangci-lint
-#   resolves to binary name "golangci-lint".
+#   Reads the tool directive from the modfile and returns the inferred binary name.
+#   Falls back to the tool_name itself if no directive is found.
 resolve_binary_name() {
     local tool_name="$1" modfile="$2"
     local pkg
     pkg=$(extract_pkg_from_mod "$modfile")
     if [[ -n "$pkg" ]]; then
-        basename "$pkg"
+        infer_binary_name_from_pkg "$pkg"
     else
         echo "$tool_name"
     fi
+}
+
+# pkg_for_tool <tool-name>
+#   Prints the full package path (e.g., github.com/.../cmd/tool) for the given tool name,
+#   based on the current strategy. Returns 1 if not found.
+pkg_for_tool() {
+    local tool_name="$1"
+    case "$GOTOOLS_STRATEGY" in
+        unified)
+            local modfile="$GOTOOLS_DIR/go.mod"
+            [[ -f "$modfile" ]] || return 1
+            while IFS= read -r pkg; do
+                if [[ "$(infer_binary_name_from_pkg "$pkg")" == "$tool_name" ]]; then
+                    echo "$pkg"
+                    return 0
+                fi
+            done < <(extract_tools_from_mod "$modfile")
+            ;;
+        split)
+            local modfile="$GOTOOLS_DIR/${tool_name}.mod"
+            [[ -f "$modfile" ]] || return 1
+            extract_pkg_from_mod "$modfile"
+            ;;
+        module)
+            local modfile="$GOTOOLS_DIR/${tool_name}/go.mod"
+            [[ -f "$modfile" ]] || return 1
+            extract_pkg_from_mod "$modfile"
+            ;;
+    esac
+    return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -361,7 +407,7 @@ extract_tools_with_versions() {
             while IFS= read -r pkg; do
                 [[ -z "$pkg" ]] && continue
                 local name ver
-                name=$(basename "$pkg")
+                name=$(infer_binary_name_from_pkg "$pkg")
                 ver=$(extract_version_for_pkg "$modfile" "$pkg")
                 if [[ -n "$ver" ]]; then
                     echo "$name ${pkg}@${ver}"
@@ -412,7 +458,6 @@ extract_tools_with_versions() {
     esac
 }
 
-# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -525,8 +570,8 @@ cmd_install() {
         exit 1
     elif [[ $# -eq 1 ]]; then
         pkg="$1"
-        # Strip @version suffix to get the base package path, then take basename.
-        name=$(basename "${pkg%%@*}")
+        # Strip @version suffix to get the base package path, then infer the name.
+        name=$(infer_binary_name_from_pkg "${pkg%%@*}")
     else
         name="$1"
         pkg="$2"
@@ -639,7 +684,7 @@ cmd_list() {
                 while IFS= read -r pkg; do
                     [[ -z "$pkg" ]] && continue
                     local name ver
-                    name=$(basename "$pkg")
+                    name=$(infer_binary_name_from_pkg "$pkg")
                     ver=$(extract_version_for_pkg "$modfile" "$pkg")
                     printf "  %-18s %-10s %-8s %-30s %s\n" "$name" "unified" "${go_ver:-?}" "$rel_mod" "${pkg}@${ver:-unknown}"
                 done < <(extract_tools_from_mod "$modfile")
@@ -701,9 +746,9 @@ cmd_info() {
                 echo "❌ No $modfile found. Run 'init' first." >&2
                 exit 1
             fi
-            # Find the package whose basename matches the tool name.
+            # Find the package whose inferred name matches the tool name.
             pkg=$(extract_tools_from_mod "$modfile" | while IFS= read -r p; do
-                if [[ "$(basename "$p")" == "$tool_name" ]]; then
+                if [[ "$(infer_binary_name_from_pkg "$p")" == "$tool_name" ]]; then
                     echo "$p"
                     break
                 fi
@@ -797,8 +842,12 @@ cmd_upgrade() {
         echo "🚀 Upgrading $t..."
         case "$GOTOOLS_STRATEGY" in
             unified)
-                # $t here is the full package path from the tool directive.
-                (cd "$GOTOOLS_DIR" && go get -tool "${t}@latest")
+                local pkg
+                if pkg=$(pkg_for_tool "$t"); then
+                    (cd "$GOTOOLS_DIR" && go get -tool "${pkg}@latest")
+                else
+                    echo "  ⚠️  Tool $t not found in $GOTOOLS_DIR/go.mod"
+                fi
                 ;;
             split)
                 local pkg
@@ -838,14 +887,8 @@ cmd_remove() {
             unified)
                 local modfile="$GOTOOLS_DIR/go.mod"
                 if [[ -f "$modfile" ]]; then
-                    # Find the full pkg path matching the tool name.
                     local pkg
-                    pkg=$(extract_tools_from_mod "$modfile" | grep "/${name}\$" || true)
-                    if [[ -z "$pkg" ]]; then
-                        # Try exact match (the tool directive might just be the name).
-                        pkg=$(extract_tools_from_mod "$modfile" | grep -x "$name" || true)
-                    fi
-                    if [[ -n "$pkg" ]]; then
+                    if pkg=$(pkg_for_tool "$name"); then
                         (cd "$GOTOOLS_DIR" && go mod edit -drop-tool="$pkg" && go mod tidy)
                         echo "  ✅ Dropped $name from $modfile"
                     else
