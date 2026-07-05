@@ -89,7 +89,7 @@ test_strategy_lifecycle() {
     local strategy="$1"
     local tmpdir="$TMP_BASE/lifecycle-$strategy"
     setup_project "$tmpdir"
-    cd "$tmpdir"
+    cd "$tmpdir" || return
 
     suite "lifecycle: $strategy — init + install"
     run_cmd "init --strategy=$strategy"     "$GOTOOLS" init --strategy="$strategy"
@@ -143,7 +143,7 @@ test_strategy_lifecycle() {
 test_migration() {
     local tmpdir="$TMP_BASE/migration"
     setup_project "$tmpdir"
-    cd "$tmpdir"
+    cd "$tmpdir" || return
 
     suite "migration: unified init + install"
     run_cmd "init unified" "$GOTOOLS" init --strategy=unified
@@ -183,7 +183,7 @@ test_migration() {
 test_smoke() {
     local tmpdir="$TMP_BASE/smoke"
     setup_project "$tmpdir"
-    cd "$tmpdir"
+    cd "$tmpdir" || return
 
     suite "smoke: init + install"
     run_cmd "init split" "$GOTOOLS" init --strategy=split

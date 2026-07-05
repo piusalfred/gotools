@@ -7,13 +7,15 @@ A bash script to manage Go build tools using Go 1.24+ `tool` directives.
 
 ## Why does this exist?
 
-Prior to Go 1.24, managing tool versions meant tracking them in a dummy `tools.go` file.
-With Go 1.24, you can track tools directly in `go.mod`. However, installing tools directly
-into your project's main `go.mod` pollutes your dependency graph which is not ideal as tools
-tend to not be part of production code.
+Prior to Go 1.24, managing tool versions meant tracking them in a dummy
+`tools.go` file. With Go 1.24, you can track tools directly in `go.mod`.
+However, installing tools directly into your project's main `go.mod` pollutes
+your dependency graph which is not ideal as tools tend to not be part of
+production code.
 
-`gotools.sh` provides different "strategies" to isolate tool dependencies, preventing version
-conflicts and ensuring your CI pipeline runs the exact same binaries as your local machine.
+`gotools.sh` provides different "strategies" to isolate tool dependencies,
+preventing version conflicts and ensuring your CI pipeline runs the exact
+same binaries as your local machine.
 
 ---
 
@@ -625,7 +627,7 @@ See `.github/workflows/test.yml` for the full configuration.
 
 ### Project layout
 
-```
+```text
 gotools.sh           # The main Bash script (source of truth)
 cmd/gotools/main.go  # Go binary wrapper (embeds gotools.sh via //go:embed)
 gotools.go           # Embed shim

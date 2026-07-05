@@ -1,4 +1,24 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Pius Alfred
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 # Unit tests for module path and Go version resolution functions:
 #   resolve_go_version, resolve_module_prefix, tool_module_path,
 #   relative_path, detect_strategy, extract_go_version_from_mod.
@@ -129,18 +149,15 @@ echo "==> tool_module_path"
 
 # Need GOTOOLS_DIR and GOTOOLS_MODULE_PREFIX set. Use env vars.
 category "with explicit prefix"
-GOTOOLS_MODULE_PREFIX="github.com/user/repo" GOTOOLS_DIR="tools" \
-    result=$(tool_module_path "addlicense")
+result=$(GOTOOLS_MODULE_PREFIX="github.com/user/repo" GOTOOLS_DIR="tools" tool_module_path "addlicense")
 assert_eq "with prefix" "github.com/user/repo/tools/addlicense" "$result"
 
 category "no args (unified path)"
-GOTOOLS_MODULE_PREFIX="github.com/user/repo" GOTOOLS_DIR="tools" \
-    result=$(tool_module_path)
+result=$(GOTOOLS_MODULE_PREFIX="github.com/user/repo" GOTOOLS_DIR="tools" tool_module_path)
 assert_eq "unified path" "github.com/user/repo/tools" "$result"
 
 category "empty args"
-GOTOOLS_MODULE_PREFIX="github.com/user/repo" GOTOOLS_DIR="tools" \
-    result=$(tool_module_path "")
+result=$(GOTOOLS_MODULE_PREFIX="github.com/user/repo" GOTOOLS_DIR="tools" tool_module_path "")
 assert_eq "empty arg same as no arg" "github.com/user/repo/tools" "$result"
 
 echo ""
@@ -148,8 +165,7 @@ echo "==> resolve_module_prefix"
 
 # With explicit prefix set
 category "explicit prefix"
-GOTOOLS_MODULE_PREFIX="github.com/custom/prefix" \
-    result=$(resolve_module_prefix)
+result=$(GOTOOLS_MODULE_PREFIX="github.com/custom/prefix" resolve_module_prefix)
 assert_eq "returns explicit prefix" "github.com/custom/prefix" "$result"
 
 cleanup() { rm -rf "$FIXTURE_DIR"; }
