@@ -1,0 +1,192 @@
+# Copyright (c) 2026 Pius Alfred
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+name: Test
+
+on:
+    push:
+        branches: [main]
+        paths:
+            - "gotools.sh"
+            - "gotools.go"
+            - "cmd/**"
+            - "go.mod"
+            - "go.sum"
+            - "test/**"
+            - ".github/workflows/test.yml"
+    pull_request:
+        paths:
+            - "gotools.sh"
+            - "gotools.go"
+            - "cmd/**"
+            - "go.mod"
+            - "go.sum"
+            - "test/**"
+            - ".github/workflows/test.yml"
+    schedule:
+        - cron: "57 3 * * 0" # 03:57 UTC every Sunday
+    workflow_dispatch: {}
+
+jobs:
+    # ------------------------------------------------------------------
+    # 1. Static analysis + unit tests — fast feedback. Runs once on Linux.
+    # ------------------------------------------------------------------
+    static-analysis:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Run shellcheck on gotools.sh
+              uses: ludeeus/action-shellcheck@2.0.0
+              with:
+                  severity: warning
+                  additional_files: "install.sh test/test.sh"
+
+            - name: Set up Go
+              uses: actions/setup-go@v5
+              with:
+                  go-version-file: go.mod
+
+            - name: Go vet
+              run: go vet ./...
+
+            - name: Build Go wrapper (needed for smoke test)
+              run: go build -o gotools ./cmd/gotools
+
+            - name: Unit tests
+              run: bash test/unit/run_all.sh
+
+    # ------------------------------------------------------------------
+    # 2. Integration tests — matrix across OS, arch, and Go versions.
+    #    No Windows support.
+    #    Runner labels:
+    #      ubuntu-latest       = linux/amd64
+    #      ubuntu-24.04-arm    = linux/arm64
+    #      macos-13            = macos/amd64 (Intel)
+    #      macos-latest        = macos/arm64 (Apple Silicon)
+    # ------------------------------------------------------------------
+    test:
+        needs: static-analysis
+        strategy:
+            fail-fast: false
+            matrix:
+                runner:
+                    - ubuntu-latest       # linux/amd64
+                    - ubuntu-24.04-arm    # linux/arm64
+                    - macos-13            # macos/amd64
+                    - macos-latest        # macos/arm64
+                go-version:
+                    - "1.24"  # minimum supported
+                    - "1.26"  # current stable
+        runs-on: ${{ matrix.runner }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Go ${{ matrix.go-version }}
+              uses: actions/setup-go@v5
+              with:
+                  go-version: ${{ matrix.go-version }}
+
+            - name: Cache Go modules
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cache/go-build
+                      ~/go/pkg/mod
+                  key: test-${{ matrix.runner }}-go-${{ matrix.go-version }}-${{ hashFiles('go.mod') }}-${{ github.run_id }}
+                  restore-keys: |
+                      test-${{ matrix.runner }}-go-${{ matrix.go-version }}-${{ hashFiles('go.mod') }}-
+                      test-${{ matrix.runner }}-go-${{ matrix.go-version }}-
+
+            - name: Run integration tests
+              timeout-minutes: 15
+              run: |
+                  cd test && bash test.sh
+
+    # ------------------------------------------------------------------
+    # 3. Build — smoke test that the Go wrapper compiles on each platform.
+    # ------------------------------------------------------------------
+    build:
+        needs: static-analysis
+        strategy:
+            fail-fast: false
+            matrix:
+                runner:
+                    - ubuntu-latest
+                    - ubuntu-24.04-arm
+                    - macos-13
+                    - macos-latest
+                go-version:
+                    - "1.24"
+                    - "1.26"
+        runs-on: ${{ matrix.runner }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Go ${{ matrix.go-version }}
+              uses: actions/setup-go@v5
+              with:
+                  go-version: ${{ matrix.go-version }}
+
+            - name: Build
+              run: go build -trimpath -ldflags="-s -w" -o /dev/null ./cmd/gotools
+
+    # ------------------------------------------------------------------
+    # 4. Retry on failure — scheduled runs only.
+    #    Absorbs transient network/proxy issues. PR/push failures are
+    #    NOT retried so flaky tests stay visible.
+    # ------------------------------------------------------------------
+    test-retry:
+        needs: test
+        if: failure() && github.event_name == 'schedule'
+        strategy:
+            fail-fast: false
+            matrix:
+                runner:
+                    - ubuntu-latest
+                    - ubuntu-24.04-arm
+                    - macos-13
+                    - macos-latest
+                go-version:
+                    - "1.26"
+        runs-on: ${{ matrix.runner }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Set up Go ${{ matrix.go-version }}
+              uses: actions/setup-go@v5
+              with:
+                  go-version: ${{ matrix.go-version }}
+
+            - name: Cache Go modules
+              uses: actions/cache@v4
+              with:
+                  path: |
+                      ~/.cache/go-build
+                      ~/go/pkg/mod
+                  key: retry-${{ matrix.runner }}-go-${{ matrix.go-version }}-${{ hashFiles('go.mod') }}-${{ github.run_id }}
+                  restore-keys: |
+                      retry-${{ matrix.runner }}-go-${{ matrix.go-version }}-${{ hashFiles('go.mod') }}-
+                      retry-${{ matrix.runner }}-go-${{ matrix.go-version }}-
+
+            - name: Retry integration tests
+              timeout-minutes: 15
+              run: |
+                  cd test && bash test.sh

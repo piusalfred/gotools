@@ -21,7 +21,7 @@ GCI_SECTIONS := \
 	-s default \
 	-s "prefix($(MODULE))"
 
-.PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean install help
+.PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean install help test test-unit test-integration
 
 
 fmt: fmt-license fmt-imports fmt-go fmt-mod
@@ -48,5 +48,11 @@ clean:
 install:
 	go install -trimpath -ldflags="-s -w" ./cmd/gotools
 
-help:
-	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /' | column -t -s ':'
+test: test-unit test-integration
+
+test-unit: build
+	bash test/unit/run_all.sh
+
+test-integration: build
+	cd test && bash test.sh
+

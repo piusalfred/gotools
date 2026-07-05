@@ -58,7 +58,7 @@ safety.
   dynamically with the `migrate` command without losing
   your pinned versions.
 - **Auto-Migration on Sync:** If the tools directory
-  structure doesn't match `.gotools.env`, `sync`
+  structure doesn't match `.gotools.json`, `sync`
   detects the mismatch and migrates automatically.
 - **Reproducibility:** Commit the `tools/` directory to
   guarantee environment parity across teams and CI.
@@ -152,7 +152,7 @@ Browse all available versions on the
 
 ## Strategies
 
-Running `gotools.sh init` creates a `.gotools.env`
+Running `gotools.sh init` creates a `.gotools.json`
 config file. You configure the isolation level using the
 `--strategy` flag.
 
@@ -250,7 +250,7 @@ gotools.sh list
 | `init [flags]` | Bootstrap the project. |
 | `install [name] <pkg>` | Install a new tool. |
 | `exec <name> [args]` | Run a managed tool. |
-| `sync` | Sync state to `.gotools.env`. Auto-migrates on strategy mismatch. |
+| `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch. |
 | `upgrade <name\|all>` | Upgrade tools to `@latest`. |
 | `list` | List all managed tools with Go version and modfile path. |
 | `info <name>` | Show detailed information about a specific tool. |
@@ -333,7 +333,7 @@ gotools.sh sync
 ```
 
 If `sync` detects that the directory structure doesn't
-match the strategy in `.gotools.env`, it auto-migrates:
+match the strategy in `.gotools.json`, it auto-migrates:
 
 ```text
 ⚠️  Strategy mismatch: .gotools.env says 'split' but tools/ looks like 'module'.
@@ -409,38 +409,49 @@ The migration process:
 2. Extracts the exact list of tools with their pinned
    versions.
 3. Cleans up the old tools directory.
-4. Updates `.gotools.env` with the new strategy.
+4. Updates `.gotools.json` with the new strategy.
 5. Re-installs all tools at their exact previous
    versions under the new layout.
 
 You can also trigger migration indirectly: edit
-`GOTOOLS_STRATEGY` in `.gotools.env` and run `sync`.
+`GOTOOLS_STRATEGY` in `.gotools.json` and run `sync`.
 It will detect the mismatch and auto-migrate.
 
 ---
 
 ## Configuration
 
-Running `init` creates a `.gotools.env` file in the
+Running `init` creates a `.gotools.json` manifest in the
 project root:
 
-```bash
-GOTOOLS_STRATEGY=split
-GOTOOLS_DIR=tools
-GOTOOLS_GO_VERSION=inherit
-GOTOOLS_MODULE_PREFIX=
+```json
+{
+  "version": 1,
+  "strategy": "split",
+  "dir": "tools",
+  "go_version": "inherit",
+  "module_prefix": "github.com/user/repo",
+  "tools": {
+    "addlicense": {
+      "source": "go",
+      "package": "github.com/google/addlicense",
+      "version": "v1.2.0"
+    }
+  }
+}
 ```
 
-All subsequent commands read this file automatically.
+All subsequent commands read and update this file automatically.
 You can edit it by hand, re-run `init` with different
 flags, or use the `config` command.
 
-| Variable | Description |
+| Field | Description |
 | :--- | :--- |
-| `GOTOOLS_STRATEGY` | `unified`, `split`, or `module`. |
-| `GOTOOLS_DIR` | Tools directory path. |
-| `GOTOOLS_GO_VERSION` | Go version or `inherit`. |
-| `GOTOOLS_MODULE_PREFIX` | Module path prefix. |
+| `strategy` | `unified`, `split`, or `module`. |
+| `dir` | Tools directory path (default: `tools`). |
+| `go_version` | Go version for tool modules, or `inherit`. |
+| `module_prefix` | Module path prefix. Auto-resolved from root `go.mod` if empty. |
+| `tools` | Object mapping tool names to their source, package, and version. |
 
 Environment variables override the config file. For
 example, `GOTOOLS_DIR=build-tools gotools.sh list`
@@ -482,7 +493,7 @@ gotools.sh init --prefix=github.com/myorg/myrepo
 
 ## CI Integration
 
-Commit the generated tool files and `.gotools.env` to
+Commit the generated tool files and `.gotools.json` to
 version control. This guarantees your CI pipeline uses
 the exact same tool versions as your local environment.
 
@@ -542,7 +553,7 @@ gotools.sh remove golangci-lint mockgen
 
 **Total purge (interactive, requires typing YES):**
 
-Deletes the `tools/` directory and `.gotools.env`
+Deletes the `tools/` directory and `.gotools.json`
 entirely.
 
 ```bash
@@ -553,6 +564,79 @@ gotools.sh purge
 
 ```bash
 gotools.sh uninstall
+```
+
+---
+
+## Development
+
+### Prerequisites
+
+- Go 1.24+
+- Bash 4+
+- [shellcheck](https://github.com/koalaman/shellcheck) (for linting)
+
+### Build and install
+
+```bash
+# Build the Go wrapper binary
+make build          # → ./gotools
+
+# Install to $GOBIN (for local development)
+make install
+
+# Format code (addlicense → gci → gofumpt → go mod tidy)
+make fmt
+
+# Clean build artifacts
+make clean
+```
+
+### Running tests
+
+```bash
+# Unit tests (fast, no network)
+bash test/unit/run_all.sh
+
+# Integration tests (requires network, real go get -tool)
+cd test && bash test.sh
+```
+
+### CI
+
+Tests run on every push to `main` and on pull requests that touch relevant files.
+Weekly scheduled runs catch regressions from new Go releases.
+
+| Job | OS | Arch |
+|-----|----|------|
+| `static-analysis` | ubuntu-latest | amd64 |
+| `test` | ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-latest | amd64 + arm64 |
+| `build` | same matrix | amd64 + arm64 |
+
+See `.github/workflows/test.yml` for the full configuration.
+
+### Cutting a release
+
+1. Bump `VERSION` in `gotools.sh`
+2. Push to `main`
+3. The release workflow (`.github/workflows/release.yml`) cross-compiles binaries
+   for linux/amd64, linux/arm64, darwin/amd64, darwin/arm64 and creates a
+   GitHub release with SHA256 checksums.
+
+### Project layout
+
+```
+gotools.sh           # The main Bash script (source of truth)
+cmd/gotools/main.go  # Go binary wrapper (embeds gotools.sh via //go:embed)
+gotools.go           # Embed shim
+go.mod               # Go module (zero external dependencies)
+Makefile             # Build, format, install targets
+test/
+  test.sh            # Integration test suite
+  unit/              # Unit tests (runnable without network)
+  fixtures/          # Test fixture go.mod files
+tools/               # Managed tools (split strategy, committed to git)
+.gotools.json        # Tool manifest (config + tool declarations)
 ```
 
 ---

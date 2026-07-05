@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-REPO="piusalfred/gotools.sh"
+REPO="piusalfred/gotools"
 BINARY_NAME="gotools.sh"
 
 resolve_version() {

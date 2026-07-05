@@ -41,20 +41,18 @@ func main() {
 		if ctx.Err() != nil {
 			code := 128 + int(syscall.SIGINT)
 
-			var exitErr *exec.ExitError
-			if errors.As(err, &exitErr) {
+			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 				code = exitErr.ExitCode()
 			}
 
 			os.Exit(code)
 		}
 
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			os.Exit(exitErr.ExitCode())
 		}
 
-		fmt.Fprintf(os.Stderr, "gotools: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "gotools: %v\n", err)
 		os.Exit(1)
 	}
 }
