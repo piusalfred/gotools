@@ -263,6 +263,7 @@ gotools.sh list
 | `uninstall` | Remove the script itself. |
 | `version` | Print the script version. |
 | `self-update` | Update to the latest release. |
+| `completion [shell\|install]` | Generate or install shell completions (bash/zsh/fish). |
 
 ### `init` Flags
 
@@ -384,6 +385,19 @@ gotools.sh version
 gotools.sh self-update
 ```
 
+**Shell completions:**
+
+```bash
+# Print completion script (for manual sourcing)
+gotools.sh completion bash
+gotools.sh completion zsh
+gotools.sh completion fish
+
+# Auto-install to the right location
+gotools.sh completion install        # detects your shell
+gotools.sh completion install zsh    # explicit
+```
+
 ---
 
 ## Migration
@@ -418,6 +432,66 @@ The migration process:
 You can also trigger migration indirectly: edit
 `GOTOOLS_STRATEGY` in `.gotools.json` and run `sync`.
 It will detect the mismatch and auto-migrate.
+
+> **Note:** Migration re-installs every tool from scratch.
+> Even if you migrate back to the original strategy (e.g.
+> `split` → `module` → `split`), the tool `.mod` and
+> `.sum` files may change. This happens because each
+> `go get` re-resolves transitive dependencies to their
+> latest compatible versions at that moment. The pinned
+> tool versions stay the same — only indirect dependencies
+> can drift.
+
+---
+
+## Shell Completions
+
+`gotools.sh` can generate tab completions for bash, zsh, and fish.
+
+### Generate (for manual sourcing)
+
+```bash
+gotools.sh completion bash    # bash completion script
+gotools.sh completion zsh     # zsh completion script
+gotools.sh completion fish    # fish completion script
+```
+
+These print the completion script to stdout. Manually source them with:
+
+```bash
+# bash
+source <(gotools.sh completion bash)
+
+# zsh
+source <(gotools.sh completion zsh)
+
+# fish
+gotools.sh completion fish | source
+```
+
+### Auto-install
+
+The `install` subcommand writes the completion file to the standard
+user location for your shell:
+
+```bash
+# Auto-detect your shell from $SHELL
+gotools.sh completion install
+
+# Or specify explicitly
+gotools.sh completion install bash
+gotools.sh completion install zsh
+gotools.sh completion install fish
+```
+
+| Shell | Install path | Activation needed? |
+| :--- | :--- | :--- |
+| bash | `~/.local/share/bash-completion/completions/gotools` | Add `source <path>` to `~/.bashrc` |
+| zsh | `~/.zsh/completions/_gotools` | Add `fpath=(~/.zsh/completions $fpath)` + `compinit` to `~/.zshrc` |
+| fish | `~/.config/fish/completions/gotools.fish` | None — auto-loaded on shell start |
+
+After activation, restart your shell or re-source your rc file. Tab
+completion will then work for all `gotools` and `gotools.sh` commands.
 
 ---
 

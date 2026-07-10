@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.5.2"
+VERSION="v0.5.3"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -1032,11 +1032,8 @@ cmd_check() {
 }
 
 # ---- completion ----------------------------------------------------------
-cmd_completion() {
-    local shell="${1:-bash}"
-    case "$shell" in
-        bash)
-            cat <<'COMPLETION'
+_generate_bash_completion() {
+    cat <<'COMPLETION'
 _gotools_completion() {
     local cur prev words cword
     _init_completion || return
@@ -1077,9 +1074,10 @@ _gotools_completion() {
 }
 complete -F _gotools_completion gotools.sh gotools
 COMPLETION
-            ;;
-        zsh)
-            cat <<'COMPLETION'
+}
+
+_generate_zsh_completion() {
+    cat <<'COMPLETION'
 #compdef gotools.sh gotools
 _gotools() {
     local -a commands
@@ -1088,15 +1086,30 @@ _gotools() {
 }
 _gotools
 COMPLETION
-            ;;
-        fish)
-            echo "complete -c gotools.sh -f"
-            echo "complete -c gotools.sh -a 'init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help'"
-            echo "complete -c gotools -f"
-            echo "complete -c gotools -a 'init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help'"
-            ;;
+}
+
+_generate_fish_completion() {
+    echo "complete -c gotools.sh -f"
+    echo "complete -c gotools.sh -a 'init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help'"
+    echo "complete -c gotools -f"
+    echo "complete -c gotools -a 'init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help'"
+}
+
+cmd_completion() {
+    local shell="${1:-bash}"
+
+    # install subcommand
+    if [[ "$shell" == "install" ]]; then
+        cmd_completion_install "${2:-}"
+        return
+    fi
+
+    case "$shell" in
+        bash) _generate_bash_completion ;;
+        zsh)  _generate_zsh_completion ;;
+        fish) _generate_fish_completion ;;
         *)
-            echo "Usage: gotools.sh completion <bash|zsh|fish>"
+            echo "Usage: gotools.sh completion <bash|zsh|fish|install>" >&2
             return 1
             ;;
     esac
@@ -1106,6 +1119,85 @@ COMPLETION
         bash) echo "#   source <(gotools.sh completion bash)" >&2 ;;
         zsh)  echo "#   source <(gotools.sh completion zsh)"  >&2 ;;
         fish) echo "#   gotools.sh completion fish | source"   >&2 ;;
+    esac
+}
+
+cmd_completion_install() {
+    local shell="${1:-}"
+
+    # auto-detect shell from $SHELL if not specified
+    if [[ -z "$shell" ]]; then
+        case "$SHELL" in
+            */bash) shell=bash ;;
+            */zsh)  shell=zsh ;;
+            */fish) shell=fish ;;
+            *)
+                echo "❌ Error: Could not detect shell from \$SHELL." >&2
+                echo "   Please specify: gotools.sh completion install <bash|zsh|fish>" >&2
+                return 1
+                ;;
+        esac
+    fi
+
+    local install_path
+    case "$shell" in
+        bash)
+            if [[ -n "${BASH_COMPLETION_USER_DIR:-}" ]]; then
+                install_path="$BASH_COMPLETION_USER_DIR/completions/gotools"
+            elif [[ -n "${XDG_DATA_HOME:-}" ]]; then
+                install_path="$XDG_DATA_HOME/bash-completion/completions/gotools"
+            else
+                install_path="$HOME/.local/share/bash-completion/completions/gotools"
+            fi
+            ;;
+        zsh)
+            install_path="$HOME/.zsh/completions/_gotools"
+            ;;
+        fish)
+            install_path="$HOME/.config/fish/completions/gotools.fish"
+            ;;
+        *)
+            echo "Usage: gotools.sh completion install <bash|zsh|fish>" >&2
+            return 1
+            ;;
+    esac
+
+    local dir
+    dir=$(dirname "$install_path")
+    if [[ ! -d "$dir" ]]; then
+        mkdir -p "$dir" || {
+            echo "❌ Error: Could not create directory: $dir" >&2
+            return 1
+        }
+    fi
+
+    case "$shell" in
+        bash) _generate_bash_completion > "$install_path" ;;
+        zsh)  _generate_zsh_completion > "$install_path" ;;
+        fish) _generate_fish_completion > "$install_path" ;;
+    esac
+
+    echo "✅ Completion installed for $shell: $install_path"
+
+    # post-install hints
+    case "$shell" in
+        bash)
+            echo ""
+            echo "💡 To activate, add this to your ~/.bashrc:"
+            echo "   source \"$install_path\""
+            ;;
+        zsh)
+            echo ""
+            echo "💡 To activate, add this to your ~/.zshrc:"
+            echo "   fpath=(\$HOME/.zsh/completions \$fpath)"
+            echo "   autoload -Uz compinit && compinit"
+            ;;
+        fish)
+            echo ""
+            echo "💡 Fish auto-loads completions from ~/.config/fish/completions/"
+            echo "   No further setup needed. Restart your shell or run:"
+            echo "   source \"$install_path\""
+            ;;
     esac
 }
 
