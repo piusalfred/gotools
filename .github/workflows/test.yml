@@ -125,11 +125,8 @@ jobs:
             matrix:
                 runner:
                     - ubuntu-latest
-                    - ubuntu-24.04-arm
-                    - macos-13
                     - macos-latest
                 go-version:
-                    - "1.24"
                     - "1.26"
         runs-on: ${{ matrix.runner }}
         steps:
@@ -156,8 +153,6 @@ jobs:
             matrix:
                 runner:
                     - ubuntu-latest
-                    - ubuntu-24.04-arm
-                    - macos-13
                     - macos-latest
                 go-version:
                     - "1.26"
