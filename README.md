@@ -263,6 +263,7 @@ gotools.sh list
 | `uninstall` | Remove the script itself. |
 | `version` | Print the script version. |
 | `self-update` | Update to the latest release. |
+| `completion [shell\|install]` | Generate or install shell completions (bash/zsh/fish). |
 
 ### `init` Flags
 
@@ -382,6 +383,19 @@ gotools.sh info addlicense
 ```bash
 gotools.sh version
 gotools.sh self-update
+```
+
+**Shell completions:**
+
+```bash
+# Print completion script (for manual sourcing)
+gotools.sh completion bash
+gotools.sh completion zsh
+gotools.sh completion fish
+
+# Auto-install to the right location
+gotools.sh completion install        # detects your shell
+gotools.sh completion install zsh    # explicit
 ```
 
 ---
