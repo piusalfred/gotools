@@ -444,6 +444,57 @@ It will detect the mismatch and auto-migrate.
 
 ---
 
+## Shell Completions
+
+`gotools.sh` can generate tab completions for bash, zsh, and fish.
+
+### Generate (for manual sourcing)
+
+```bash
+gotools.sh completion bash    # bash completion script
+gotools.sh completion zsh     # zsh completion script
+gotools.sh completion fish    # fish completion script
+```
+
+These print the completion script to stdout. Manually source them with:
+
+```bash
+# bash
+source <(gotools.sh completion bash)
+
+# zsh
+source <(gotools.sh completion zsh)
+
+# fish
+gotools.sh completion fish | source
+```
+
+### Auto-install
+
+The `install` subcommand writes the completion file to the standard
+user location for your shell:
+
+```bash
+# Auto-detect your shell from $SHELL
+gotools.sh completion install
+
+# Or specify explicitly
+gotools.sh completion install bash
+gotools.sh completion install zsh
+gotools.sh completion install fish
+```
+
+| Shell | Install path | Activation needed? |
+| :--- | :--- | :--- |
+| bash | `~/.local/share/bash-completion/completions/gotools` | Add `source <path>` to `~/.bashrc` |
+| zsh | `~/.zsh/completions/_gotools` | Add `fpath=(~/.zsh/completions $fpath)` + `compinit` to `~/.zshrc` |
+| fish | `~/.config/fish/completions/gotools.fish` | None — auto-loaded on shell start |
+
+After activation, restart your shell or re-source your rc file. Tab
+completion will then work for all `gotools` and `gotools.sh` commands.
+
+---
+
 ## Configuration
 
 Running `init` creates a `.gotools.json` manifest in the
