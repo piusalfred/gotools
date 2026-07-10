@@ -65,7 +65,11 @@ func main() {
 // child process, giving it up to WaitDelay (3 s) to clean up before
 // Go escalates to SIGKILL.
 func Run(ctx context.Context, args []string) error {
-	script := []string{"-c", gotools.SCRIPT, "gotools"}
+	execPath, err := os.Executable()
+	if err != nil {
+		execPath = "gotools"
+	}
+	script := []string{"-c", gotools.SCRIPT, execPath}
 	if len(args) > 1 {
 		script = append(script, args[1:]...)
 	}

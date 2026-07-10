@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.5.3"
+VERSION="v0.5.4"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -2080,6 +2080,19 @@ cmd_self_update() {
     fi
 
     echo "🚀 New version found: $latest_tag (Current: $VERSION)"
+
+    # If $0 doesn't end in .sh, we're running inside the Go binary wrapper.
+    # We can't overwrite a compiled binary with a shell script — use go install.
+    if [[ "$0" != *.sh ]]; then
+        echo "📥 Updating via go install..."
+        go install "github.com/piusalfred/gotools/cmd/gotools@$latest_tag" || {
+            echo "❌ Error: go install failed." >&2
+            return 1
+        }
+        echo "✨ Successfully updated to $latest_tag!"
+        return 0
+    fi
+
     echo "📥 Downloading update..."
 
     local tmp_file
