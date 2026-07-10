@@ -5,7 +5,7 @@
 set -euo pipefail
 
 VERSION="v0.5.1"
-REPO="piusalfred/gotools.sh"
+REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
 MANIFEST_FILE=".gotools.json"
@@ -1975,7 +1975,7 @@ cmd_config() {
 cmd_self_update() {
     echo "🔍 Checking for updates..."
     local latest_tag
-    latest_tag=$(curl -s "$API_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+    latest_tag=$(curl -sL "$API_URL" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/') || true
 
     if [[ -z "$latest_tag" ]]; then
         echo "❌ Error: Could not fetch latest version from GitHub." >&2
