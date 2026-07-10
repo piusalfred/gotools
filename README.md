@@ -419,6 +419,15 @@ You can also trigger migration indirectly: edit
 `GOTOOLS_STRATEGY` in `.gotools.json` and run `sync`.
 It will detect the mismatch and auto-migrate.
 
+> **Note:** Migration re-installs every tool from scratch.
+> Even if you migrate back to the original strategy (e.g.
+> `split` → `module` → `split`), the tool `.mod` and
+> `.sum` files may change. This happens because each
+> `go get` re-resolves transitive dependencies to their
+> latest compatible versions at that moment. The pinned
+> tool versions stay the same — only indirect dependencies
+> can drift.
+
 ---
 
 ## Configuration
