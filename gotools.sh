@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.5.0"
+VERSION="v0.5.1"
 REPO="piusalfred/gotools.sh"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -1197,12 +1197,32 @@ cmd_sync() {
                 done
             else
                 mkdir -p "$GOTOOLS_DIR"
+                local parent_mod
+                parent_mod=$(resolve_module_prefix)
                 for f in "$GOTOOLS_DIR"/*.mod; do
                     [[ -f "$f" ]] || continue
-                    local base
+                    local base sumfile
                     base=$(basename "$f")
+                    sumfile="${f%.mod}.sum"
                     echo "  ↻ $base"
-                    (cd "$GOTOOLS_DIR" && go mod edit -go="$target_v" -modfile="$base" && go mod tidy -modfile="$base")
+                    # Isolate: copy to a temp dir so Go doesn't discover the
+                    # parent module (go mod tidy -modfile cannot reconcile two
+                    # module identities when run from inside another module's tree).
+                    # Also add a replace directive so Go uses the local parent
+                    # module (which has all packages) instead of the stale
+                    # published version which may be missing packages.
+                    local tmpdir
+                    tmpdir=$(mktemp -d)
+                    cp "$f" "$tmpdir/go.mod"
+                    [[ -f "$sumfile" ]] && cp "$sumfile" "$tmpdir/go.sum"
+                    if [[ -n "$parent_mod" ]]; then
+                        (cd "$tmpdir" && go mod edit -replace="${parent_mod}=${PWD}" && go mod edit -go="$target_v" && go mod tidy && go mod edit -dropreplace="$parent_mod")
+                    else
+                        (cd "$tmpdir" && go mod edit -go="$target_v" && go mod tidy)
+                    fi
+                    cp "$tmpdir/go.mod" "$f"
+                    cp "$tmpdir/go.sum" "$sumfile"
+                    rm -rf "$tmpdir"
                 done
             fi
             ;;
@@ -1233,6 +1253,28 @@ cmd_sync() {
             exit 1
             ;;
     esac
+
+    # ---- Discover tools on disk not yet in the manifest ----
+    local discovered=0
+    local tool_line
+    while IFS= read -r tool_line; do
+        [[ -z "$tool_line" ]] && continue
+        local disk_name disk_pkg
+        disk_name=$(echo "$tool_line" | awk '{print $1}')
+        disk_pkg=$(echo "$tool_line" | awk '{print $2}')
+        if ! _manifest_tool_exists "$disk_name"; then
+            local disk_ver
+            disk_ver=$(echo "$disk_pkg" | sed 's/.*@//')
+            local disk_pkg_base="${disk_pkg%%@*}"
+            _manifest_tool_set "$disk_name" "go" "$disk_pkg_base" "$disk_ver"
+            echo "  ✚ $disk_name ($disk_pkg) — discovered from disk"
+            discovered=$((discovered + 1))
+        fi
+    done <<< "$(extract_tools_with_versions)"
+    if [[ $discovered -gt 0 ]]; then
+        _manifest_flush
+        echo "✅ Added $discovered tool(s) to manifest."
+    fi
 
     # ---- Reinstall tools from manifest that are missing on disk ----
     local missing_count=0
