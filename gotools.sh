@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.5.4"
+VERSION="v0.5.5"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -26,6 +26,10 @@ _DRY_RUN=false
 # Verbose mode — set via GOTOOLS_VERBOSE=1 env var or --verbose flag.
 # When true, print every go command before executing it.
 _VERBOSE="${GOTOOLS_VERBOSE:-0}"
+
+# Trace mode — set via GOTOOLS_TRACE=1 env var.
+# When true, log exec arguments to /tmp/gotools_trace.log for debugging.
+_TRACE="${GOTOOLS_TRACE:-0}"
 
 # _PROJECT_ROOT — set by _find_project_root(). The directory containing
 # .gotools.json, found by walking up from $PWD (like git finds .git).
@@ -1239,11 +1243,11 @@ cmd_init() {
 # ---- sync ----------------------------------------------------------------
 cmd_sync() {
     _require_go
-    _acquire_lock
     _DRY_RUN=false
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
 
     load_config
+    _acquire_lock
     local target_v
     target_v=$(resolve_go_version)
 
@@ -1436,19 +1440,24 @@ cmd_install() {
 
     echo "📦 Installing $name ($pkg) [strategy=$GOTOOLS_STRATEGY]..."
 
+    local _created_mod=false  # track whether we just created a mod file/dir
     case "$GOTOOLS_STRATEGY" in
         unified)
             mkdir -p "$GOTOOLS_DIR"
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                 (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$target_v")
             fi
-            (cd "$GOTOOLS_DIR" && go get -tool "$pkg")
+            if ! (cd "$GOTOOLS_DIR" && go get -tool "$pkg"); then
+                echo "❌ Failed to install $name" >&2
+                exit 1
+            fi
             ;;
 
         split)
             mkdir -p "$GOTOOLS_DIR"
             local modfile="${name}.mod"
             if [[ ! -f "$GOTOOLS_DIR/$modfile" ]]; then
+                _created_mod=true
                 local mod_path
                 mod_path=$(tool_module_path "$name")
                 cat > "$GOTOOLS_DIR/$modfile" <<MODEOF
@@ -1457,15 +1466,28 @@ module $mod_path
 go $target_v
 MODEOF
             fi
-            (cd "$GOTOOLS_DIR" && go get -tool -modfile="$modfile" "$pkg")
+            if ! (cd "$GOTOOLS_DIR" && go get -tool -modfile="$modfile" "$pkg"); then
+                if $_created_mod; then
+                    rm -f "$GOTOOLS_DIR/$modfile" "$GOTOOLS_DIR/${modfile%.mod}.sum"
+                fi
+                echo "❌ Failed to install $name" >&2
+                exit 1
+            fi
             ;;
 
         module)
             mkdir -p "$GOTOOLS_DIR/$name"
             if [[ ! -f "$GOTOOLS_DIR/$name/go.mod" ]]; then
+                _created_mod=true
                 (cd "$GOTOOLS_DIR/$name" && go mod init "$(tool_module_path "$name")" && go mod edit -go="$target_v")
             fi
-            (cd "$GOTOOLS_DIR/$name" && go get -tool "$pkg")
+            if ! (cd "$GOTOOLS_DIR/$name" && go get -tool "$pkg"); then
+                if $_created_mod; then
+                    rm -rf "${GOTOOLS_DIR:?}/$name"
+                fi
+                echo "❌ Failed to install $name" >&2
+                exit 1
+            fi
             ;;
 
         *)
@@ -1481,6 +1503,34 @@ MODEOF
         split)   resolved_ver=$(_resolve_installed_version "$GOTOOLS_DIR/$modfile" "$pkg_base") ;;
         module)  resolved_ver=$(_resolve_installed_version "$GOTOOLS_DIR/$name/go.mod" "$pkg_base") ;;
     esac
+    # Verify the binary was actually compiled and is runnable.
+    # go get -tool may exit 0 even if compilation fails (the tool directive
+    # is written to go.mod before the binary is built).  Run the tool with
+    # /dev/null on stdin and check whether the go command itself can find the
+    # binary.  A "go: "-prefixed error means the go tool couldn't find/resolve
+    # the binary; any other output (or even a non-zero exit from the tool
+    # itself) confirms the binary exists and is executable.
+    local _verify_binary _verify_err
+    case "$GOTOOLS_STRATEGY" in
+        unified)
+            _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/go.mod")
+            _verify_err=$(cd "$GOTOOLS_DIR" && go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            ;;
+        split)
+            _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/$modfile")
+            _verify_err=$(cd "$GOTOOLS_DIR" && go tool -modfile="$modfile" "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            ;;
+        module)
+            _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/$name/go.mod")
+            _verify_err=$(cd "$GOTOOLS_DIR/$name" && go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            ;;
+    esac
+    if echo "$_verify_err" | grep -qiE '^(go: )?(no such tool|unknown command|tool not found)'; then
+        echo "❌ Tool installed but not runnable: $name" >&2
+        echo "   go tool error: $_verify_err" >&2
+        exit 1
+    fi
+
     _manifest_tool_set "$name" "go" "$pkg_base" "${resolved_ver:-latest}"
     _manifest_flush
 
@@ -1501,6 +1551,26 @@ cmd_exec() {
     local tool_name="${1:?tool name is required}"
     shift
 
+    # Trace logging (opt-in via GOTOOLS_TRACE=1) — appends exec arguments to
+    # .gotools_trace.log in the project root for debugging invocation issues.
+    _trace_exec() {
+        if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
+            return
+        fi
+        local _bin="$1"
+        shift
+        {
+            printf "TRACE: %s: tool=%s binary=%s strategy=%s argc=%d argv=%s\n" \
+                "$(date '+%Y-%m-%dT%H:%M:%S')" "$tool_name" "$_bin" "$GOTOOLS_STRATEGY" "$#" "$*"
+            local _i=0
+            for _a in "$@"; do
+                printf "TRACE:   arg[%d]: '%s'\n" "$_i" "$_a"
+                ((_i++))
+            done
+            printf "TRACE:   stdin_type: %s\n" "$([ -t 0 ] && echo terminal || echo not-terminal)"
+        } >> "$_PROJECT_ROOT/.gotools_trace.log"
+    }
+
     case "$GOTOOLS_STRATEGY" in
         unified)
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
@@ -1509,6 +1579,7 @@ cmd_exec() {
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/go.mod")
+            _trace_exec "$binary" "$@"
             (cd "$GOTOOLS_DIR" && exec go tool "$binary" "$@")
             ;;
 
@@ -1520,6 +1591,7 @@ cmd_exec() {
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$mod_file")
+            _trace_exec "$binary" "$@"
             exec go tool -modfile="$mod_file" "$binary" "$@"
             ;;
 
@@ -1530,6 +1602,7 @@ cmd_exec() {
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/$tool_name/go.mod")
+            _trace_exec "$binary" "$@"
             (cd "$GOTOOLS_DIR/$tool_name" && exec go tool "$binary" "$@")
             ;;
 
@@ -1706,10 +1779,10 @@ cmd_info() {
 # ---- upgrade -------------------------------------------------------------
 cmd_upgrade() {
     _require_go
-    _acquire_lock
     _DRY_RUN=false
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
     load_config
+    _acquire_lock
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") upgrade <name|all> [--dry-run]" >&2
         exit 1
@@ -1790,10 +1863,10 @@ cmd_upgrade() {
 # ---- remove --------------------------------------------------------------
 cmd_remove() {
     _require_go
-    _acquire_lock
     _DRY_RUN=false
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
     load_config
+    _acquire_lock
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") remove <name1> [name2...] [--dry-run]" >&2
         exit 1
@@ -1855,7 +1928,6 @@ cmd_remove() {
 # ---- migrate -------------------------------------------------------------
 cmd_migrate() {
     _require_go
-    _acquire_lock
     _DRY_RUN=false
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
     if [[ $# -eq 0 ]]; then
@@ -1871,6 +1943,7 @@ cmd_migrate() {
     esac
 
     load_config
+    _acquire_lock
 
     # Use the on-disk structure as the source of truth for what we're
     # migrating *from*, not the config file (which may already be updated).
@@ -1949,10 +2022,10 @@ cmd_migrate() {
 
 # ---- purge ---------------------------------------------------------------
 cmd_purge() {
-    _acquire_lock
     _DRY_RUN=false
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
     load_config
+    _acquire_lock
 
     if $_DRY_RUN; then
         echo "🔍 [dry-run] Would delete:"

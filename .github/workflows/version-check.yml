@@ -33,17 +33,4 @@ jobs:
               with:
                   fetch-depth: 0
             - name: Verify Version Increment
-              run: |
-                  NEW_VERSION=$(grep '^VERSION=' gotools.sh | cut -d'"' -f2)
-                  OLD_VERSION=$(git show origin/${{ github.base_ref }}:gotools.sh | grep '^VERSION=' | cut -d'"' -f2)
-
-                  if [ "$NEW_VERSION" == "$OLD_VERSION" ]; then
-                    echo "❌ ERROR: VERSION ($NEW_VERSION) was not incremented."
-                    exit 1
-                  fi
-
-                  HIGHEST=$(printf "%s\n%s" "$OLD_VERSION" "$NEW_VERSION" | sort -V | tail -n 1)
-                  if [ "$HIGHEST" != "$NEW_VERSION" ]; then
-                    echo "❌ ERROR: Version downgrade! $NEW_VERSION < $OLD_VERSION."
-                    exit 1
-                  fi
+              run: make version-check BASE=origin/${{ github.base_ref }}
