@@ -19,6 +19,16 @@
       "source": "go",
       "package": "mvdan.cc/gofumpt",
       "version": "v0.10.0"
+    },
+    "govulncheck": {
+      "source": "go",
+      "package": "golang.org/x/vuln/cmd/govulncheck",
+      "version": "v1.6.0"
+    },
+    "staticcheck": {
+      "source": "go",
+      "package": "honnef.co/go/tools/cmd/staticcheck",
+      "version": "v0.7.0"
     }
   }
 }

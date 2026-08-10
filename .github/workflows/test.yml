@@ -53,22 +53,27 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
-            - name: Run shellcheck on gotools.sh
-              uses: ludeeus/action-shellcheck@2.0.0
-              with:
-                  severity: warning
-                  additional_files: "install.sh test/test.sh"
-
             - name: Set up Go
               uses: actions/setup-go@v5
               with:
                   go-version-file: go.mod
 
-            - name: Go vet
-              run: go vet ./...
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.13"
 
-            - name: Build Go wrapper (needed for smoke test)
-              run: go build -o gotools ./cmd/gotools
+            - name: Install pre-commit
+              run: pip install pre-commit
+
+            - name: Cache pre-commit environments
+              uses: actions/cache@v4
+              with:
+                  path: ~/.cache/pre-commit
+                  key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+            - name: Run pre-commit
+              run: pre-commit run --all-files
 
             - name: Unit tests
               run: bash test/unit/run_all.sh

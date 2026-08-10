@@ -201,6 +201,86 @@ test_smoke() {
 }
 
 # ---------------------------------------------------------------------------
+# Robustness — lockfile placement, install failure cleanup, verification
+# ---------------------------------------------------------------------------
+test_robustness() {
+    local tmpdir="$TMP_BASE/robustness"
+    setup_project "$tmpdir"
+    cd "$tmpdir" || return
+
+    # --- Issue #14: lockfile goes to configured GOTOOLS_DIR, not default ---
+    suite "robustness: lockfile in configured dir"
+    # Configure a non-default tools directory.
+    "$GOTOOLS" init --strategy=split --dir=my-tools >/dev/null 2>&1
+    # Run a lock-acquiring command (sync on a fresh project).  With the fix,
+    # _acquire_lock runs *after* load_config, so the lock — and its parent
+    # directory — land in my-tools/, never in tools/.
+    "$GOTOOLS" sync >/dev/null 2>&1 || true
+    if [[ -d tools ]]; then
+        fail_detail "lockfile in wrong dir — 'tools/' exists but dir is 'my-tools'"
+    else
+        pass "lockfile in correct dir (no stray 'tools/')"
+    fi
+    # Clean up for next sub-tests.
+    rm -rf my-tools .gotools.json
+
+    # --- Issue #15: install with non-existent package fails and cleans up ---
+    suite "robustness: install failure — bad package"
+    "$GOTOOLS" init --strategy=split --dir=tools >/dev/null 2>&1
+    local bad_pkg="example.com/definitely-not-a-real-package@latest"
+    # The install must fail.
+    if "$GOTOOLS" install fakename "$bad_pkg" >/dev/null 2>&1; then
+        fail_detail "install bad package succeeded" "expected: install to fail"
+    else
+        pass "install bad package fails"
+    fi
+    # No orphaned mod/sum files left behind.
+    if [[ -f tools/fakename.mod || -f tools/fakename.sum ]]; then
+        fail_detail "install failure leaves orphaned files" \
+            "expected: no tools/fakename.mod" \
+            "actual:   $(ls tools/fakename.* 2>/dev/null || echo 'none')"
+    else
+        pass "install failure cleans up mod/sum files"
+    fi
+    # The failed tool must not appear in the manifest list.
+    if "$GOTOOLS" list 2>/dev/null | grep -q fakename; then
+        fail_detail "install failure writes manifest entry" \
+            "expected: fakename not in list" \
+            "actual:   fakename found in list"
+    else
+        pass "install failure does not write manifest entry"
+    fi
+    # The manifest file should still exist (just without the failed tool).
+    if [[ -f .gotools.json ]]; then
+        pass "manifest file preserved after failed install"
+    else
+        fail_detail "manifest file deleted after failed install"
+    fi
+
+    # Clean up.
+    rm -rf tools .gotools.json
+
+    # --- typo in package path (regression check for the user-reported bug) ---
+    suite "robustness: install failure — typo in package path"
+    "$GOTOOLS" init --strategy=split --dir=tools >/dev/null 2>&1
+    local typo_pkg="github.com/golangci/golangci-lint/v2/cmd/golangci-lidnt@latest"
+    if "$GOTOOLS" install linter "$typo_pkg" >/dev/null 2>&1; then
+        fail_detail "install with typo succeeded" "expected: install to fail"
+    else
+        pass "install with typo fails"
+    fi
+    # No linter.mod left behind (the exact scenario from the bug report).
+    if [[ -f tools/linter.mod ]]; then
+        fail_detail "install with typo leaves linter.mod" \
+            "expected: linter.mod deleted" \
+            "actual:   file exists"
+    else
+        pass "install with typo cleans up linter.mod"
+    fi
+    rm -rf tools .gotools.json
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 echo "gotools.sh integration tests"
@@ -217,6 +297,7 @@ test_strategy_lifecycle split
 test_strategy_lifecycle module
 test_migration
 test_smoke
+test_robustness
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"
