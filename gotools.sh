@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.5.6"
+VERSION="v0.5.7"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -28,7 +28,8 @@ _DRY_RUN=false
 _VERBOSE="${GOTOOLS_VERBOSE:-0}"
 
 # Trace mode — set via GOTOOLS_TRACE=1 env var.
-# When true, log exec arguments to /tmp/gotools_trace.log for debugging.
+# When true, log each tool execution as a JSON Lines record to
+# .gotools_trace.log in the project root.
 _TRACE="${GOTOOLS_TRACE:-0}"
 
 # _PROJECT_ROOT — set by _find_project_root(). The directory containing
@@ -171,6 +172,16 @@ _cmd_help() {
             echo "    gotools.sh install mylint golang.org/x/tools/cmd/goimports@v0.38.0"
             echo "    gotools.sh exec mylint -w .   # runs goimports binary"
             echo ""
+            echo "  Pipe mode — feed 'go install' commands via stdin:"
+            echo "    echo 'go install pkg@latest' | gotools.sh       # pipe"
+            echo "    gotools.sh <<< 'go install pkg@latest'          # herestring"
+            echo "    gotools.sh <<EOF                               # heredoc"
+            echo "    go install pkg1@v1"
+            echo "    go install pkg2@v2"
+            echo "    EOF"
+            echo "    gotools.sh < tools.txt                         # file redirect"
+            echo "    # The 'go install' prefix is optional — bare pkg@version works too"
+            echo ""
             echo "  Options:"
             echo "    --force   Overwrite an existing tool with the same name"
             ;;
@@ -299,6 +310,7 @@ usage() {
 🧰 Go Tool Manager (Version: $VERSION)
 
 Usage: $(basename "$0") <command> [arguments]
+       <go install command> | $(basename "$0")     (pipe mode)
 
 Commands:
   init [flags]            Bootstrap the project.
@@ -1046,7 +1058,7 @@ _gotools_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help" -- "$cur"))
+        COMPREPLY=($(compgen -W "init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help" -- "$cur"))
         return
     fi
 
@@ -1068,6 +1080,9 @@ _gotools_completion() {
         install)
             COMPREPLY=($(compgen -W "--force" -- "$cur"))
             ;;
+        completion)
+            COMPREPLY=($(compgen -W "bash zsh fish install" -- "$cur"))
+            ;;
         sync|upgrade|remove|migrate|purge)
             COMPREPLY=($(compgen -W "--dry-run" -- "$cur"))
             ;;
@@ -1085,7 +1100,7 @@ _generate_zsh_completion() {
 #compdef gotools.sh gotools
 _gotools() {
     local -a commands
-    commands=(init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help)
+    commands=(init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help)
     _describe 'command' commands
 }
 _gotools
@@ -1094,9 +1109,9 @@ COMPLETION
 
 _generate_fish_completion() {
     echo "complete -c gotools.sh -f"
-    echo "complete -c gotools.sh -a 'init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help'"
+    echo "complete -c gotools.sh -a 'init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help'"
     echo "complete -c gotools -f"
-    echo "complete -c gotools -a 'init install sync exec list upgrade remove migrate config purge info check version self-update uninstall help'"
+    echo "complete -c gotools -a 'init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help'"
 }
 
 cmd_completion() {
@@ -1173,6 +1188,12 @@ cmd_completion_install() {
             echo "❌ Error: Could not create directory: $dir" >&2
             return 1
         }
+    fi
+
+    if [[ -f "$install_path" ]]; then
+        echo "📝 Updating existing completion at $install_path"
+    else
+        echo "✅ Installing completion to $install_path"
     fi
 
     case "$shell" in
@@ -1551,24 +1572,74 @@ cmd_exec() {
     local tool_name="${1:?tool name is required}"
     shift
 
-    # Trace logging (opt-in via GOTOOLS_TRACE=1) — appends exec arguments to
-    # .gotools_trace.log in the project root for debugging invocation issues.
+    # _json_escape — escape a string for inclusion in a JSON string value.
+    # Escapes: backslash, double-quote, and control characters (0x00-0x1f).
+    _json_escape() {
+        local s="$1"
+        local i c escaped=""
+        for ((i = 0; i < ${#s}; i++)); do
+            c="${s:i:1}"
+            case "$c" in
+                $'\\') escaped+='\\' ;;
+                '"')   escaped+='\"'  ;;
+                $'\n') escaped+='\n'  ;;
+                $'\r') escaped+='\r'  ;;
+                $'\t') escaped+='\t'  ;;
+                *)     escaped+="$c"  ;;
+            esac
+        done
+        printf '%s' "$escaped"
+    }
+
+    # Trace logging (opt-in via GOTOOLS_TRACE=1) — appends one JSON Lines
+    # record per tool invocation to .gotools_trace.log in the project root.
+    # Format:
+    #   {"ts":"<iso8601>","tool":"<name>","binary":"<path>","cmd":"<reconstructed>","strategy":"<s>","stdin":"<pipe|terminal>","args":["...",...],"env":{...}}
     _trace_exec() {
         if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
             return
         fi
         local _bin="$1"
         shift
-        {
-            printf "TRACE: %s: tool=%s binary=%s strategy=%s argc=%d argv=%s\n" \
-                "$(date '+%Y-%m-%dT%H:%M:%S')" "$tool_name" "$_bin" "$GOTOOLS_STRATEGY" "$#" "$*"
-            local _i=0
-            for _a in "$@"; do
-                printf "TRACE:   arg[%d]: '%s'\n" "$_i" "$_a"
-                ((_i++))
-            done
-            printf "TRACE:   stdin_type: %s\n" "$([ -t 0 ] && echo terminal || echo not-terminal)"
-        } >> "$_PROJECT_ROOT/.gotools_trace.log"
+
+        local _ts _stdin _json_args="" _first=1 _arg _cmd
+        _ts=$(date '+%Y-%m-%dT%H:%M:%S')
+        _stdin=$([ -t 0 ] && echo "terminal" || echo "pipe")
+
+        # Reconstruct the full gotools invocation — copy-pasteable for reproduction.
+        _cmd="gotools exec $tool_name"
+        for _arg in "$@"; do
+            if [[ "$_arg" =~ [[:space:]] ]]; then
+                _cmd+=" \"$_arg\""
+            else
+                _cmd+=" $_arg"
+            fi
+        done
+
+        for _arg in "$@"; do
+            if [[ $_first -eq 1 ]]; then
+                _json_args+="\"$(_json_escape "$_arg")\""
+                _first=0
+            else
+                _json_args+=",\"$(_json_escape "$_arg")\""
+            fi
+        done
+
+        printf '{"ts":"%s","tool":"%s","binary":"%s","cmd":"%s","strategy":"%s","stdin":"%s","args":[%s],"env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
+            "$_ts" \
+            "$(_json_escape "$tool_name")" \
+            "$(_json_escape "$_bin")" \
+            "$(_json_escape "$_cmd")" \
+            "$(_json_escape "$GOTOOLS_STRATEGY")" \
+            "$_stdin" \
+            "$_json_args" \
+            "$(_json_escape "${GOTOOLS_STRATEGY:-}")" \
+            "$(_json_escape "${GOTOOLS_DIR:-}")" \
+            "$(_json_escape "$(resolve_go_version)")" \
+            "$(_json_escape "$(resolve_module_prefix)")" \
+            "$(_json_escape "${GOTOOLS_VERBOSE:-0}")" \
+            "$(_json_escape "${GOTOOLS_TRACE:-0}")" \
+            >> "$_PROJECT_ROOT/.gotools_trace.log"
     }
 
     case "$GOTOOLS_STRATEGY" in
@@ -2216,6 +2287,38 @@ cmd_test() {
     echo "✅ Finished — no interruption."
 }
 
+# _stdin_install — read "go install <tool>" lines from stdin and install each.
+# Strips the "go install " prefix, trims whitespace, and delegates to
+# cmd_install for each non-empty line. Lines without the prefix are passed
+# through as-is, so bare "pkg@version" also works.
+_stdin_install() {
+    local line count=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Trim leading / trailing whitespace
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" ]] && continue
+
+        # Strip "go install " prefix if present
+        if [[ "$line" == "go install "* ]]; then
+            line="${line#go install }"
+        fi
+
+        # Trim again after stripping the prefix
+        line="${line#"${line%%[![:space:]]*}"}"
+        [[ -z "$line" ]] && continue
+
+        # shellcheck disable=SC2086
+        cmd_install $line
+        count=$((count + 1))
+    done </dev/stdin
+    if [[ $count -eq 0 ]]; then
+        echo "❌ No tool specifications found on stdin." >&2
+        echo "   Pipe one or more lines such as: go install <package>@<version>" >&2
+        exit 1
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Main dispatch — only runs when executed as a script, not when sourced.
 # Uses the standard `return 2>/dev/null` trick: return succeeds only inside
@@ -2223,7 +2326,22 @@ cmd_test() {
 # This correctly handles direct execution, `bash -c` (Go wrapper), and source.
 # ---------------------------------------------------------------------------
 if ! (return 0 2>/dev/null); then
-    [[ $# -lt 1 ]] && usage
+    if [[ $# -lt 1 ]]; then
+        # When stdin is not a terminal AND has data waiting, read
+        # "go install <tool>" lines from it.  Otherwise show usage.
+        if [[ ! -t 0 ]]; then
+            _first_byte=""
+            _first_byte=$(dd bs=1 count=1 2>/dev/null)
+            if [[ -n "$_first_byte" ]]; then
+                {
+                    printf '%s' "$_first_byte"
+                    cat
+                } | _stdin_install
+                exit ${PIPESTATUS[0]}
+            fi
+        fi
+        usage
+    fi
     action="$1"
     shift
 
@@ -2235,24 +2353,24 @@ if ! (return 0 2>/dev/null); then
     fi
 
     case "$action" in
-        init)                   cmd_init "$@" ;;
-        install)                cmd_install "$@" ;;
-        sync)                   cmd_sync "$@" ;;
-        exec)                   cmd_exec "$@" ;;
-        list)                   cmd_list "$@" ;;
-        upgrade|update)         cmd_upgrade "$@" ;;
-        remove)                 cmd_remove "$@" ;;
-        info)                   cmd_info "$@" ;;
-        migrate)                cmd_migrate "$@" ;;
-        config)                 cmd_config "$@" ;;
-        purge)                  cmd_purge "$@" ;;
-        check)                  cmd_check ;;
-        completion)             cmd_completion "$@" ;;
-        version)                cmd_version ;;
+        init)                     cmd_init "$@" ;;
+        install)                  cmd_install "$@" ;;
+        sync)                     cmd_sync "$@" ;;
+        exec)                     cmd_exec "$@" ;;
+        list)                     cmd_list "$@" ;;
+        upgrade|update)           cmd_upgrade "$@" ;;
+        remove)                   cmd_remove "$@" ;;
+        info)                     cmd_info "$@" ;;
+        migrate)                  cmd_migrate "$@" ;;
+        config)                   cmd_config "$@" ;;
+        purge)                    cmd_purge "$@" ;;
+        check)                    cmd_check ;;
+        completion)               cmd_completion "$@" ;;
+        version)                  cmd_version ;;
         self-update|self-upgrade) cmd_self_update ;;
-        uninstall)              cmd_uninstall ;;
-        test)                   cmd_test "$@" ;;
-        help|--help|-h)         usage ;;
-        *)                      echo "❌ Unknown command: $action" >&2; usage ;;
+        uninstall)                cmd_uninstall ;;
+        test)                     cmd_test "$@" ;;
+        help|--help|-h)           usage ;;
+        *)                        echo "❌ Unknown command: $action" >&2; usage ;;
     esac
 fi

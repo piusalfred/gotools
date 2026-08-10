@@ -235,6 +235,15 @@ gotools.sh install github.com/google/addlicense
 gotools.sh install golangci-lint \
   github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
+# Pipe mode: feed "go install" commands via stdin
+echo 'go install golang.org/x/tools/cmd/goimports@latest' | gotools.sh  # pipe
+gotools.sh <<< 'go install honnef.co/go/tools/cmd/staticcheck@latest'   # herestring
+gotools.sh <<EOF                                                        # heredoc
+go install pkg1@v1
+go install pkg2@v2
+EOF
+gotools.sh < tools.txt                                                  # file redirect
+
 # Run a tool
 gotools.sh exec addlicense -l mit -c "Your Name" .
 gotools.sh exec golangci-lint run ./...
@@ -251,6 +260,7 @@ gotools.sh list
 | :--- | :--- |
 | `init [flags]` | Bootstrap the project. |
 | `install [name] <pkg>` | Install a new tool. |
+| `<stdin> \| gotools.sh` | Pipe `go install <pkg>@<ver>` lines from stdin. |
 | `exec <name> [args]` | Run a managed tool. |
 | `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch. |
 | `upgrade <name\|all>` | Upgrade tools to `@latest`. |

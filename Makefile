@@ -32,7 +32,7 @@ GCI_SECTIONS := \
         version-check get-version set-version govulncheck check
 
 
-fmt: fmt-license fmt-imports fmt-go fmt-mod
+fmt: fmt-license fmt-imports fmt-go fmt-mod fmt-md
 
 fmt-license:
 	$(ADDLICENSE) -l $(LICENSE_TYPE) -c "$(LICENSE_OWNER)" $(LICENSE_IGNORE) .

@@ -84,8 +84,10 @@ shellcheck gotools.sh --severity=warning
 - **Locking:** `_acquire_lock` / `_release_lock` use a directory-based mutex (`mkdir` is atomic) to prevent concurrent operations
 - **Dry-run:** Commands support `--dry-run` via `_DRY_RUN` global; check `_parse_dry_run` for the pattern
 - **Verbose:** `_go` wrapper prints `go` commands when `_VERBOSE=1` (set via `GOTOOLS_VERBOSE=1` env var)
+- **Trace:** `_trace_exec` logs each tool invocation as a JSON Lines record to `$PROJECT_ROOT/.gotools_trace.log` when `_TRACE=1` (set via `GOTOOLS_TRACE=1` env var). Each record contains `ts`, `tool`, `binary`, `cmd` (copy-pasteable full invocation), `strategy`, `stdin` (pipe|terminal), `args` (array), and `env` (resolved GOTOOLS_* values). Uses `>>` append — never overwrites. String values are escaped via `_json_escape` (handles `"`, `\`, and control chars). Pipeable to `jq`.
+- **Stdin pipe mode:** When no arguments are given and stdin is not a terminal, `_stdin_install` reads lines from stdin, strips the `go install` prefix, and delegates each line to `cmd_install`. Supports pipe (`|`), herestring (`<<<`), heredoc (`<<`), and file redirect (`<`).
 - **Error handling:** Failures print to stderr with `❌` prefix and `exit 1`
-- **No external dependencies:** JSON parsing uses `awk`, path normalization is pure Bash (`relative_path()`)
+- **No external dependencies:** JSON parsing uses `awk`, JSON generation uses pure Bash string escaping. Path normalization is pure Bash (`relative_path()`).
 - **Platform:** Works on macOS and Linux; avoids GNU-specific tools like `realpath`
 
 ### Go Code
@@ -99,6 +101,128 @@ shellcheck gotools.sh --severity=warning
 - **Unit tests** (`test/unit/`): Self-contained, no network, use mock fixtures. Each test file is a standalone bash script.
 - **Integration tests** (`test/test.sh`): Real `go get -tool` calls, requires network access
 - Tests use `test/debug2/` as a sandbox directory
+
+## Development Guidelines
+
+### When changing `gotools.sh`
+
+**Always run the tests.** The test suite is the safety net — it verifies existing
+behaviors still hold after your change. Changes that alter behavior (new flags,
+different output, new commands) should add or update tests, not just pass the
+existing ones.
+
+- `make test-unit` — fast, no network. Unit-tests key logic paths (manifest
+  parsing, tool-name resolution, path normalization, argument parsing).
+- `make test-integration` — real `go get -tool` calls, needs network. Verifies
+  end-to-end workflows with actual Go toolchains.
+- `make check` — lint + unit tests (mirrors CI).
+
+**Prefer modularity.** The script is ~2200 lines and growing. Before adding more
+inline logic, ask: can this be extracted into a focused, testable helper
+function? Each function should do one thing well. Smaller functions are easier
+to unit-test, reuse across commands, and reason about when debugging. Avoid
+duplicating logic — if you find yourself writing the same pattern twice, factor
+it out.
+
+Guidelines for new helpers:
+
+- Name internal helpers with a `_` prefix (e.g. `_validate_tool_name`).
+- Keep them pure where possible: take input as arguments, return output via
+  stdout, signal errors via exit code — don't mutate globals from helpers.
+- If a helper is reusable across commands, place it near related helpers so the
+  script grows in coherent sections rather than randomly.
+
+### Before adding a feature
+
+Run through this checklist:
+
+1. **Is it already possible?** Check `./gotools.sh help` and the README —
+   don't add a command that duplicates existing functionality.
+
+2. **Is it useful?** The feature should solve a concrete problem a user will
+   hit. Avoid adding flags or commands "just in case" — every addition is
+   permanent maintenance burden.
+
+3. **Does it work across all isolation strategies?** Test with `split`,
+   `module`, and `unified`. A feature that only works with one strategy is
+   a bug, not a feature.
+
+4. **Does it respect `--dry-run`?** Every destructive command must support
+   dry-run mode. Use the existing `_DRY_RUN` guard pattern (see
+   `_parse_dry_run` for the convention).
+
+5. **Does it handle failure modes?** Missing Go, locked directory, network
+   errors, malformed `.gotools.json` — think through what breaks and handle
+   it with a clear `❌` message to stderr + `exit 1`.
+
+### Documentation sync
+
+Every user-visible change must be reflected in three places:
+
+| What changed | Update this |
+| --- | --- |
+| New command, flag, or behavior | `./gotools.sh help` text (the usage function) |
+| User-facing feature | `README.md` |
+| Architecture, conventions, or internal patterns | `CLAUDE.md` |
+
+Out-of-sync docs are worse than no docs — they actively mislead. If you change
+a command's output format or a config key name, grep the repo for old
+references and update them all.
+
+### Testing philosophy
+
+- **Unit tests** (`test/unit/`) assert that individual functions produce the
+  right output for representative inputs. Focus on: manifest parsing, tool-name
+  extraction, path normalization, argument parsing, config loading — pure logic
+  that can be verified without Go or network.
+
+- **Integration tests** (`test/test.sh`) assert that real `go` invocations
+  succeed end-to-end. They are slower and require network but catch regressions
+  that unit tests can't: Go version interactions, module proxy behavior,
+  filesystem edge cases.
+
+- When fixing a bug, write a test first that reproduces it, then fix. This
+  proves the test catches the bug and prevents it from returning.
+
+- When adding a helper, add a unit test. A helper without a test is technical
+  debt — the next person won't know what edge cases it was designed for.
+
+### Bug fixing methodology
+
+Fixes must be systematic, not speculative. Follow these steps in order:
+
+1. **Validate the bug report.** Read the code paths involved. Does the reported
+   behavior actually exist, or is it a usage mistake? Don't take the report at
+   face value — verify by inspecting the relevant functions, their callers, and
+   the data flow through them.
+
+2. **Reproduce it.** Create a minimal reproduction case (specific inputs,
+   environment, command). If you can't reproduce it, you don't understand it.
+   Keep refining the reproduction until it reliably triggers the bug — the
+   moment it reproduces consistently, you've isolated the trigger.
+
+3. **Trace to root cause.** Don't stop at the symptom. Follow the chain of
+   causality backward: what value was wrong → which function produced it →
+   what input caused that → why was that input accepted? Use semantics (what
+   does this code *mean* to do?) and heuristics (null/empty inputs, boundary
+   values, race windows, implicit assumptions) to guide the search. The root
+   cause is the *earliest* point in the chain where something diverges from
+   correct behavior — fix that, not the downstream symptom.
+
+4. **Design the fix from cause, not guesswork.** The fix must directly address
+   the root cause identified in step 3. If you can't explain *why* the fix
+   works in terms of the root cause, you haven't found the root cause yet.
+
+5. **Verify the fix, don't assume.** A fix is not correct until proven:
+   - The original reproduction case now passes.
+   - Existing tests still pass (no regressions).
+   - Edge cases that share the same code path are checked — did the fix break
+     a neighboring scenario?
+   - If the root cause could manifest in other callers or similar patterns,
+     audit those too. One bug often indicates a class of bugs.
+
+   A fix that "seems right" but isn't verified is just a different bug waiting
+   to be discovered.
 
 ## Release Process
 
