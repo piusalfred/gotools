@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-VERSION="v0.5.7"
+VERSION="v0.5.8"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -29,7 +29,9 @@ _VERBOSE="${GOTOOLS_VERBOSE:-0}"
 
 # Trace mode — set via GOTOOLS_TRACE=1 env var.
 # When true, log each tool execution as a JSON Lines record to
-# .gotools_trace.log in the project root.
+# .gotools_trace.log in the project root. Each record includes a
+# "level" field: "info" (exit 0), "error" (tool ran but failed),
+# or "fatal" (gotools itself errored before executing the tool).
 _TRACE="${GOTOOLS_TRACE:-0}"
 
 # _PROJECT_ROOT — set by _find_project_root(). The directory containing
@@ -1594,17 +1596,26 @@ cmd_exec() {
     # Trace logging (opt-in via GOTOOLS_TRACE=1) — appends one JSON Lines
     # record per tool invocation to .gotools_trace.log in the project root.
     # Format:
-    #   {"ts":"<iso8601>","tool":"<name>","binary":"<path>","cmd":"<reconstructed>","strategy":"<s>","stdin":"<pipe|terminal>","args":["...",...],"env":{...}}
+    #   {"ts":"<iso8601>","level":"<info|error>","tool":"<name>","binary":"<path>","cmd":"<reconstructed>","strategy":"<s>","stdin":"<pipe|terminal>","exit_code":<int>,"args":["...",...],"env":{...}}
+    # _trace_exec BINARY EXIT_CODE [ARGS...]
     _trace_exec() {
         if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
             return
         fi
         local _bin="$1"
-        shift
+        local _exit_code="$2"
+        shift 2
 
-        local _ts _stdin _json_args="" _first=1 _arg _cmd
+        local _ts _stdin _json_args="" _first=1 _arg _cmd _level
         _ts=$(date '+%Y-%m-%dT%H:%M:%S')
         _stdin=$([ -t 0 ] && echo "terminal" || echo "pipe")
+
+        # Compute level from exit code.
+        if [[ "$_exit_code" -eq 0 ]]; then
+            _level="info"
+        else
+            _level="error"
+        fi
 
         # Reconstruct the full gotools invocation — copy-pasteable for reproduction.
         _cmd="gotools exec $tool_name"
@@ -1625,14 +1636,42 @@ cmd_exec() {
             fi
         done
 
-        printf '{"ts":"%s","tool":"%s","binary":"%s","cmd":"%s","strategy":"%s","stdin":"%s","args":[%s],"env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
+        printf '{"ts":"%s","level":"%s","tool":"%s","binary":"%s","cmd":"%s","strategy":"%s","stdin":"%s","exit_code":%d,"args":[%s],"env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
             "$_ts" \
+            "$_level" \
             "$(_json_escape "$tool_name")" \
             "$(_json_escape "$_bin")" \
             "$(_json_escape "$_cmd")" \
             "$(_json_escape "$GOTOOLS_STRATEGY")" \
             "$_stdin" \
+            "$_exit_code" \
             "$_json_args" \
+            "$(_json_escape "${GOTOOLS_STRATEGY:-}")" \
+            "$(_json_escape "${GOTOOLS_DIR:-}")" \
+            "$(_json_escape "$(resolve_go_version)")" \
+            "$(_json_escape "$(resolve_module_prefix)")" \
+            "$(_json_escape "${GOTOOLS_VERBOSE:-0}")" \
+            "$(_json_escape "${GOTOOLS_TRACE:-0}")" \
+            >> "$_PROJECT_ROOT/.gotools_trace.log"
+    }
+
+    # _trace_fatal — emit a "fatal" trace record when gotools itself errors
+    # out before a tool is executed (missing go.mod, unknown tool, etc.).
+    # _trace_fatal MESSAGE
+    _trace_fatal() {
+        if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
+            return
+        fi
+        local _message="$1"
+        local _ts _stdin
+        _ts=$(date '+%Y-%m-%dT%H:%M:%S')
+        _stdin=$([ -t 0 ] && echo "terminal" || echo "pipe")
+        printf '{"ts":"%s","level":"fatal","tool":"%s","error":"%s","strategy":"%s","stdin":"%s","env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
+            "$_ts" \
+            "$(_json_escape "${tool_name:-unknown}")" \
+            "$(_json_escape "$_message")" \
+            "$(_json_escape "${GOTOOLS_STRATEGY:-}")" \
+            "$_stdin" \
             "$(_json_escape "${GOTOOLS_STRATEGY:-}")" \
             "$(_json_escape "${GOTOOLS_DIR:-}")" \
             "$(_json_escape "$(resolve_go_version)")" \
@@ -1645,39 +1684,49 @@ cmd_exec() {
     case "$GOTOOLS_STRATEGY" in
         unified)
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
+                _trace_fatal "No $GOTOOLS_DIR/go.mod found"
                 echo "❌ Error: No $GOTOOLS_DIR/go.mod found. Run 'init' first." >&2
                 exit 1
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/go.mod")
-            _trace_exec "$binary" "$@"
-            (cd "$GOTOOLS_DIR" && exec go tool "$binary" "$@")
+            local _ec=0
+            (cd "$GOTOOLS_DIR" && go tool "$binary" "$@") || _ec=$?
+            _trace_exec "$binary" $_ec "$@"
+            exit $_ec
             ;;
 
         split)
             local mod_file="$GOTOOLS_DIR/${tool_name}.mod"
             if [[ ! -f "$mod_file" ]]; then
+                _trace_fatal "Tool '$tool_name' not found ($mod_file missing)"
                 echo "❌ Error: Tool '$tool_name' not found ($mod_file missing). Run 'install' first." >&2
                 exit 1
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$mod_file")
-            _trace_exec "$binary" "$@"
-            exec go tool -modfile="$mod_file" "$binary" "$@"
+            local _ec=0
+            go tool -modfile="$mod_file" "$binary" "$@" || _ec=$?
+            _trace_exec "$binary" $_ec "$@"
+            exit $_ec
             ;;
 
         module)
             if [[ ! -d "$GOTOOLS_DIR/$tool_name" ]]; then
+                _trace_fatal "Tool '$tool_name' not found ($GOTOOLS_DIR/$tool_name missing)"
                 echo "❌ Error: Tool '$tool_name' not found ($GOTOOLS_DIR/$tool_name missing). Run 'install' first." >&2
                 exit 1
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/$tool_name/go.mod")
-            _trace_exec "$binary" "$@"
-            (cd "$GOTOOLS_DIR/$tool_name" && exec go tool "$binary" "$@")
+            local _ec=0
+            (cd "$GOTOOLS_DIR/$tool_name" && go tool "$binary" "$@") || _ec=$?
+            _trace_exec "$binary" $_ec "$@"
+            exit $_ec
             ;;
 
         *)
+            _trace_fatal "Unknown strategy: $GOTOOLS_STRATEGY"
             echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
             exit 1
             ;;
