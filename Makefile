@@ -124,7 +124,12 @@ check: lint test-unit
 # ---- version management ----
 version-check:
 	@new=$$(grep '^VERSION=' gotools.sh | cut -d'"' -f2); \
-	old_ref=$${BASE:-origin/main}; \
+	base=$${BASE:-origin/main}; \
+	if git merge-base --is-ancestor HEAD $$base 2>/dev/null; then \
+		old_ref="$$base~1"; \
+	else \
+		old_ref="$$base"; \
+	fi; \
 	old=$$(git show $$old_ref:gotools.sh 2>/dev/null | grep '^VERSION=' | cut -d'"' -f2); \
 	if [ -z "$$old" ]; then echo "No previous version to compare (ref: $$old_ref)."; exit 0; fi; \
 	if [ "$$new" = "$$old" ]; then \
