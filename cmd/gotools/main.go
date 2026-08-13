@@ -86,7 +86,7 @@ func Run(ctx context.Context, args []string) error {
 		return cmd.Process.Signal(syscall.SIGTERM)
 	}
 
-	if err := cmd.Run(); err != nil {
+	if err = cmd.Run(); err != nil {
 		return fmt.Errorf("execution failed: %w", err)
 	}
 

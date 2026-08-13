@@ -86,7 +86,7 @@ shellcheck gotools.sh --severity=warning
 - **Verbose:** `_go` wrapper prints `go` commands when `_VERBOSE=1` (set via `GOTOOLS_VERBOSE=1` env var)
 - **Trace:** `_trace_exec` logs each tool invocation as a JSON Lines record to `$PROJECT_ROOT/.gotools_trace.log` when `_TRACE=1` (set via `GOTOOLS_TRACE=1` env var). Each record contains `ts`, `tool`, `binary`, `cmd` (copy-pasteable full invocation), `strategy`, `stdin` (pipe|terminal), `args` (array), and `env` (resolved GOTOOLS_* values). Uses `>>` append — never overwrites. String values are escaped via `_json_escape` (handles `"`, `\`, and control chars). Pipeable to `jq`.
 - **Stdin pipe mode:** When no arguments are given and stdin is not a terminal, `_stdin_install` reads lines from stdin, strips the `go install` prefix, and delegates each line to `cmd_install`. Supports pipe (`|`), herestring (`<<<`), heredoc (`<<`), and file redirect (`<`).
-- **Error handling:** Failures print to stderr with `❌` prefix and `exit 1`
+- **Error handling:** Failures print to stderr with `❌` prefix. Exit codes are structured via readonly constants (`E_GENERIC=1`, `E_USAGE=2`, `E_NETWORK=3`, `E_LOCK=4`, `E_TOOL_NOT_FOUND=5`, `E_OFFLINE=6`, `E_POLICY=7`, `E_ENVIRONMENT=8`) — always `exit $E_*` / `return $E_*`, never a raw `exit 1`. The user-facing table lives in `usage()` and README's "Exit Codes" section; keep all three in sync.
 - **No external dependencies:** JSON parsing uses `awk`, JSON generation uses pure Bash string escaping. Path normalization is pure Bash (`relative_path()`).
 - **Platform:** Works on macOS and Linux; avoids GNU-specific tools like `realpath`
 

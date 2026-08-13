@@ -8,6 +8,18 @@ VERSION="v0.5.8"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
+# Structured exit codes — let CI pipelines react intelligently to different
+# failure modes instead of a flat `exit 1` everywhere. The user-facing table
+# lives in usage(); keep it in sync when changing these values.
+readonly E_GENERIC=1
+readonly E_USAGE=2
+readonly E_NETWORK=3
+readonly E_LOCK=4
+readonly E_TOOL_NOT_FOUND=5
+readonly E_OFFLINE=6
+readonly E_POLICY=7
+readonly E_ENVIRONMENT=8
+
 MANIFEST_FILE=".gotools.json"
 DEFAULT_STRATEGY="split"
 DEFAULT_DIR="tools"
@@ -66,20 +78,20 @@ _require_go() {
     if ! command -v go &>/dev/null; then
         echo "❌ Go is not installed. Please install Go 1.24 or higher." >&2
         echo "   https://go.dev/dl/" >&2
-        exit 1
+        exit $E_ENVIRONMENT
     fi
     local go_ver
     go_ver=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
     if [[ -z "$go_ver" ]]; then
         echo "❌ Could not determine Go version." >&2
-        exit 1
+        exit $E_ENVIRONMENT
     fi
     local major minor
     major=$(echo "$go_ver" | cut -d. -f1)
     minor=$(echo "$go_ver" | cut -d. -f2)
     if [[ "$major" -lt 1 ]] || { [[ "$major" -eq 1 ]] && [[ "${minor:-0}" -lt 24 ]]; }; then
         echo "❌ Go $go_ver is too old. Go 1.24 or higher is required." >&2
-        exit 1
+        exit $E_ENVIRONMENT
     fi
 }
 
@@ -98,7 +110,7 @@ _acquire_lock() {
     while ! mkdir "$_LOCK_FILE" 2>/dev/null; do
         if [[ $waited -ge $timeout ]]; then
             echo "❌ Another gotools process is running. Try again later." >&2
-            exit 1
+            exit $E_LOCK
         fi
         sleep 0.5
         waited=$((waited + 1))
@@ -135,8 +147,10 @@ _parse_dry_run() {
             filtered+=("$arg")
         fi
     done
-    # Return filtered args via a global (bash can't return arrays)
-    _PARSED_ARGS=("${filtered[@]}")
+    # Return filtered args via a global (bash can't return arrays).
+    # ${filtered[@]+...} keeps the expansion legal when filtered is empty
+    # under `set -u` on bash < 4.4.
+    _PARSED_ARGS=(${filtered[@]+"${filtered[@]}"})
 }
 
 # _cmd_help <command> — print per-command help.
@@ -358,8 +372,18 @@ Examples:
   gotools.sh config GOTOOLS_STRATEGY module
   gotools.sh purge
   gotools.sh uninstall
+
+Exit codes (stable — CI pipelines can key off these):
+  $E_GENERIC  Generic failure (catch-all)
+  $E_USAGE  Usage error — bad flags, wrong args, invalid input
+  $E_NETWORK  Network error — proxy unreachable, DNS failure, timeout
+  $E_LOCK  Lock contention — another gotools process is running
+  $E_TOOL_NOT_FOUND  Tool not installed — run 'gotools.sh sync' and retry
+  $E_OFFLINE  Offline violation — network needed but --offline was set
+  $E_POLICY  Policy violation — tool banned, version not pinned
+  $E_ENVIRONMENT  Environment error — Go missing/too old, bad manifest
 EOF
-    exit 1
+    exit $E_USAGE
 }
 
 # ---------------------------------------------------------------------------
@@ -1046,7 +1070,7 @@ cmd_check() {
     done <<< "$_MANIFEST_TOOLS"
     echo ""
     echo "  $ok passed, $fail failed"
-    [[ $fail -eq 0 ]] || return 1
+    [[ $fail -eq 0 ]] || return $E_TOOL_NOT_FOUND
 }
 
 # ---- completion ----------------------------------------------------------
@@ -1131,7 +1155,7 @@ cmd_completion() {
         fish) _generate_fish_completion ;;
         *)
             echo "Usage: gotools.sh completion <bash|zsh|fish|install>" >&2
-            return 1
+            return $E_USAGE
             ;;
     esac
     echo ""
@@ -1155,7 +1179,7 @@ cmd_completion_install() {
             *)
                 echo "❌ Error: Could not detect shell from \$SHELL." >&2
                 echo "   Please specify: gotools.sh completion install <bash|zsh|fish>" >&2
-                return 1
+                return $E_USAGE
                 ;;
         esac
     fi
@@ -1179,7 +1203,7 @@ cmd_completion_install() {
             ;;
         *)
             echo "Usage: gotools.sh completion install <bash|zsh|fish>" >&2
-            return 1
+            return $E_USAGE
             ;;
     esac
 
@@ -1188,7 +1212,7 @@ cmd_completion_install() {
     if [[ ! -d "$dir" ]]; then
         mkdir -p "$dir" || {
             echo "❌ Error: Could not create directory: $dir" >&2
-            return 1
+            return $E_GENERIC
         }
     fi
 
@@ -1244,7 +1268,7 @@ cmd_init() {
     # Validate strategy.
     case "$strategy" in
         unified|split|module) ;;
-        *) echo "❌ Invalid strategy: $strategy (must be unified, split, or module)" >&2; exit 1 ;;
+        *) echo "❌ Invalid strategy: $strategy (must be unified, split, or module)" >&2; exit $E_USAGE ;;
     esac
 
     # Set config vars in memory, then flush manifest.
@@ -1369,7 +1393,7 @@ cmd_sync() {
 
         *)
             echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
-            exit 1
+            exit $E_ENVIRONMENT
             ;;
     esac
 
@@ -1411,7 +1435,9 @@ cmd_sync() {
                 echo "  🔍 [dry-run] Would reinstall $_n ($_p@$_v)"
             else
                 echo "  ⬇ $_n ($_p@$_v) — missing, reinstalling..."
-                cmd_install "$_n" "${_p}@${_v}"
+                # --force: the tool is already in the manifest — restoring a
+                # missing modfile must not trip cmd_install's duplicate check.
+                cmd_install --force "$_n" "${_p}@${_v}"
             fi
             missing_count=$((missing_count + 1))
         fi
@@ -1426,6 +1452,24 @@ cmd_sync() {
     fi
 }
 
+# _install_failed <name> <output> — report a failed `go get -tool` and exit
+# with a structured exit code. Network problems (proxy unreachable, DNS
+# failure, timeout) exit $E_NETWORK so CI can retry with backoff; invalid
+# package paths / versions are usage errors and exit $E_USAGE; anything
+# else exits $E_GENERIC.
+_install_failed() {
+    local name="$1" output="$2"
+    echo "❌ Failed to install $name" >&2
+    [[ -n "$output" ]] && echo "$output" >&2
+    if echo "$output" | grep -qiE 'dial tcp|i/o timeout|connection timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded'; then
+        exit $E_NETWORK
+    fi
+    if echo "$output" | grep -qiE 'invalid module version syntax|malformed module path|invalid package path|can.t request version'; then
+        exit $E_USAGE
+    fi
+    exit $E_GENERIC
+}
+
 # ---- install -------------------------------------------------------------
 cmd_install() {
     _require_go
@@ -1438,12 +1482,14 @@ cmd_install() {
         if [[ "$a" == "--force" ]]; then force=true
         else filtered+=("$a"); fi
     done
-    set -- "${filtered[@]}"
+    # ${filtered[@]+...} keeps the expansion legal when filtered is empty
+    # under `set -u` on bash < 4.4 (e.g. plain `gotools.sh install`).
+    set -- ${filtered[@]+"${filtered[@]}"}
 
-    local name="" pkg=""
+    local name="" pkg="" _get_out=""
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") install [name] <pkg> [--force]" >&2
-        exit 1
+        exit $E_USAGE
     elif [[ $# -eq 1 ]]; then
         pkg="$1"
         name=$(infer_binary_name_from_pkg "${pkg%%@*}")
@@ -1458,7 +1504,7 @@ cmd_install() {
     # refuse duplicate tool names unless --force is given.
     if _manifest_tool_exists "$name" && ! $force; then
         echo "❌ Tool '$name' already exists in manifest. Use --force to overwrite." >&2
-        exit 1
+        exit $E_USAGE
     fi
 
     echo "📦 Installing $name ($pkg) [strategy=$GOTOOLS_STRATEGY]..."
@@ -1470,9 +1516,8 @@ cmd_install() {
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                 (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$target_v")
             fi
-            if ! (cd "$GOTOOLS_DIR" && go get -tool "$pkg"); then
-                echo "❌ Failed to install $name" >&2
-                exit 1
+            if ! _get_out=$(cd "$GOTOOLS_DIR" && go get -tool "$pkg" 2>&1); then
+                _install_failed "$name" "$_get_out"
             fi
             ;;
 
@@ -1489,12 +1534,11 @@ module $mod_path
 go $target_v
 MODEOF
             fi
-            if ! (cd "$GOTOOLS_DIR" && go get -tool -modfile="$modfile" "$pkg"); then
+            if ! _get_out=$(cd "$GOTOOLS_DIR" && go get -tool -modfile="$modfile" "$pkg" 2>&1); then
                 if $_created_mod; then
                     rm -f "$GOTOOLS_DIR/$modfile" "$GOTOOLS_DIR/${modfile%.mod}.sum"
                 fi
-                echo "❌ Failed to install $name" >&2
-                exit 1
+                _install_failed "$name" "$_get_out"
             fi
             ;;
 
@@ -1504,18 +1548,17 @@ MODEOF
                 _created_mod=true
                 (cd "$GOTOOLS_DIR/$name" && go mod init "$(tool_module_path "$name")" && go mod edit -go="$target_v")
             fi
-            if ! (cd "$GOTOOLS_DIR/$name" && go get -tool "$pkg"); then
+            if ! _get_out=$(cd "$GOTOOLS_DIR/$name" && go get -tool "$pkg" 2>&1); then
                 if $_created_mod; then
                     rm -rf "${GOTOOLS_DIR:?}/$name"
                 fi
-                echo "❌ Failed to install $name" >&2
-                exit 1
+                _install_failed "$name" "$_get_out"
             fi
             ;;
 
         *)
             echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
-            exit 1
+            exit $E_ENVIRONMENT
             ;;
     esac
 
@@ -1551,7 +1594,7 @@ MODEOF
     if echo "$_verify_err" | grep -qiE '^(go: )?(no such tool|unknown command|tool not found)'; then
         echo "❌ Tool installed but not runnable: $name" >&2
         echo "   go tool error: $_verify_err" >&2
-        exit 1
+        exit $E_ENVIRONMENT
     fi
 
     _manifest_tool_set "$name" "go" "$pkg_base" "${resolved_ver:-latest}"
@@ -1686,7 +1729,7 @@ cmd_exec() {
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                 _trace_fatal "No $GOTOOLS_DIR/go.mod found"
                 echo "❌ Error: No $GOTOOLS_DIR/go.mod found. Run 'init' first." >&2
-                exit 1
+                exit $E_TOOL_NOT_FOUND
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/go.mod")
@@ -1701,7 +1744,7 @@ cmd_exec() {
             if [[ ! -f "$mod_file" ]]; then
                 _trace_fatal "Tool '$tool_name' not found ($mod_file missing)"
                 echo "❌ Error: Tool '$tool_name' not found ($mod_file missing). Run 'install' first." >&2
-                exit 1
+                exit $E_TOOL_NOT_FOUND
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$mod_file")
@@ -1715,7 +1758,7 @@ cmd_exec() {
             if [[ ! -d "$GOTOOLS_DIR/$tool_name" ]]; then
                 _trace_fatal "Tool '$tool_name' not found ($GOTOOLS_DIR/$tool_name missing)"
                 echo "❌ Error: Tool '$tool_name' not found ($GOTOOLS_DIR/$tool_name missing). Run 'install' first." >&2
-                exit 1
+                exit $E_TOOL_NOT_FOUND
             fi
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/$tool_name/go.mod")
@@ -1728,7 +1771,7 @@ cmd_exec() {
         *)
             _trace_fatal "Unknown strategy: $GOTOOLS_STRATEGY"
             echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
-            exit 1
+            exit $E_ENVIRONMENT
             ;;
     esac
 }
@@ -1799,7 +1842,7 @@ cmd_list() {
 
         *)
             echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
-            exit 1
+            exit $E_ENVIRONMENT
             ;;
     esac
 
@@ -1818,14 +1861,14 @@ cmd_info() {
     load_config
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") info <tool-name> [--json]" >&2
-        exit 1
+        exit $E_USAGE
     fi
 
     local tool_name="$1" as_json=false
     [[ "${2:-}" == "--json" ]] && as_json=true
 
     if $as_json; then
-        _info_json "$tool_name"
+        _info_json "$tool_name" || exit $E_TOOL_NOT_FOUND
         return
     fi
 
@@ -1836,7 +1879,7 @@ cmd_info() {
             modfile="$GOTOOLS_DIR/go.mod"
             if [[ ! -f "$modfile" ]]; then
                 echo "❌ No $modfile found. Run 'init' first." >&2
-                exit 1
+                exit $E_TOOL_NOT_FOUND
             fi
             # Find the package whose inferred name matches the tool name.
             pkg=$(extract_tools_from_mod "$modfile" | while IFS= read -r p; do
@@ -1847,7 +1890,7 @@ cmd_info() {
             done)
             if [[ -z "$pkg" ]]; then
                 echo "❌ Tool '$tool_name' not found in $modfile." >&2
-                exit 1
+                exit $E_TOOL_NOT_FOUND
             fi
             ver=$(extract_version_for_pkg "$modfile" "$pkg")
             go_ver=$(extract_go_version_from_mod "$modfile")
@@ -1857,7 +1900,7 @@ cmd_info() {
             modfile="$GOTOOLS_DIR/${tool_name}.mod"
             if [[ ! -f "$modfile" ]]; then
                 echo "❌ Tool '$tool_name' not found ($modfile missing)." >&2
-                exit 1
+                exit $E_TOOL_NOT_FOUND
             fi
             pkg=$(extract_pkg_from_mod "$modfile")
             ver=$(extract_version_for_pkg "$modfile" "$pkg")
@@ -1868,7 +1911,7 @@ cmd_info() {
             modfile="$GOTOOLS_DIR/$tool_name/go.mod"
             if [[ ! -f "$modfile" ]]; then
                 echo "❌ Tool '$tool_name' not found ($modfile missing)." >&2
-                exit 1
+                exit $E_TOOL_NOT_FOUND
             fi
             pkg=$(extract_pkg_from_mod "$modfile")
             ver=$(extract_version_for_pkg "$modfile" "$pkg")
@@ -1877,7 +1920,7 @@ cmd_info() {
 
         *)
             echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
-            exit 1
+            exit $E_ENVIRONMENT
             ;;
     esac
 
@@ -1905,7 +1948,7 @@ cmd_upgrade() {
     _acquire_lock
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") upgrade <name|all> [--dry-run]" >&2
-        exit 1
+        exit $E_USAGE
     fi
 
     local targets=()
@@ -1989,7 +2032,7 @@ cmd_remove() {
     _acquire_lock
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") remove <name1> [name2...] [--dry-run]" >&2
-        exit 1
+        exit $E_USAGE
     fi
 
     for name in "$@"; do
@@ -2034,7 +2077,7 @@ cmd_remove() {
 
             *)
                 echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
-                exit 1
+                exit $E_ENVIRONMENT
                 ;;
         esac
 
@@ -2052,14 +2095,14 @@ cmd_migrate() {
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") migrate <unified|split|module> [--dry-run]" >&2
-        exit 1
+        exit $E_USAGE
     fi
 
     local target_strategy="$1"
 
     case "$target_strategy" in
         unified|split|module) ;;
-        *) echo "❌ Invalid strategy: $target_strategy (must be unified, split, or module)" >&2; exit 1 ;;
+        *) echo "❌ Invalid strategy: $target_strategy (must be unified, split, or module)" >&2; exit $E_USAGE ;;
     esac
 
     load_config
@@ -2193,7 +2236,7 @@ cmd_config() {
         # Show all config.
         if [[ ! -f "$MANIFEST_FILE" ]]; then
             echo "⚠️  No $MANIFEST_FILE found. Run 'init' first."
-            return 1
+            return $E_ENVIRONMENT
         fi
         cat "$MANIFEST_FILE"
         return 0
@@ -2206,14 +2249,14 @@ cmd_config() {
         GOTOOLS_STRATEGY|GOTOOLS_DIR|GOTOOLS_GO_VERSION|GOTOOLS_MODULE_PREFIX) ;;
         *) echo "❌ Unknown config key: $key" >&2
            echo "   Valid keys: GOTOOLS_STRATEGY, GOTOOLS_DIR, GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX" >&2
-           return 1 ;;
+           return $E_USAGE ;;
     esac
 
     if [[ $# -eq 1 ]]; then
         # Show single key.
         if [[ ! -f "$MANIFEST_FILE" ]]; then
             echo "⚠️  No $MANIFEST_FILE found. Run 'init' first."
-            return 1
+            return $E_ENVIRONMENT
         fi
         local val
         val=$(_manifest_config_get "$key")
@@ -2231,7 +2274,7 @@ cmd_config() {
     if [[ "$key" == "GOTOOLS_STRATEGY" ]]; then
         case "$value" in
             unified|split|module) ;;
-            *) echo "❌ Invalid strategy: $value (must be unified, split, or module)" >&2; return 1 ;;
+            *) echo "❌ Invalid strategy: $value (must be unified, split, or module)" >&2; return $E_USAGE ;;
         esac
     fi
 
@@ -2264,7 +2307,7 @@ cmd_self_update() {
 
     if [[ -z "$latest_tag" ]]; then
         echo "❌ Error: Could not fetch latest version from GitHub." >&2
-        return 1
+        return $E_NETWORK
     fi
 
     if [[ "$latest_tag" == "$VERSION" ]]; then
@@ -2280,7 +2323,7 @@ cmd_self_update() {
         echo "📥 Updating via go install..."
         go install "github.com/piusalfred/gotools/cmd/gotools@$latest_tag" || {
             echo "❌ Error: go install failed." >&2
-            return 1
+            return $E_GENERIC
         }
         echo "✨ Successfully updated to $latest_tag!"
         return 0
@@ -2299,7 +2342,7 @@ cmd_self_update() {
     else
         echo "❌ Error: Update download failed." >&2
         rm -f "$tmp_file"
-        return 1
+        return $E_NETWORK
     fi
 }
 
@@ -2307,7 +2350,7 @@ cmd_self_update() {
 cmd_test() {
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") test <seconds>" >&2
-        exit 1
+        exit $E_USAGE
     fi
 
     local seconds="$1"
@@ -2315,7 +2358,7 @@ cmd_test() {
     # Validate that the argument is a positive number.
     if ! [[ "$seconds" =~ ^[0-9]+(\.[0-9]+)?$ ]] || [[ "$seconds" == "0" ]]; then
         echo "❌ Error: <seconds> must be a positive number, got '$seconds'" >&2
-        exit 1
+        exit $E_USAGE
     fi
 
     # Trap SIGINT and SIGTERM so we can report the signal before exiting.
@@ -2364,7 +2407,7 @@ _stdin_install() {
     if [[ $count -eq 0 ]]; then
         echo "❌ No tool specifications found on stdin." >&2
         echo "   Pipe one or more lines such as: go install <package>@<version>" >&2
-        exit 1
+        exit $E_USAGE
     fi
 }
 
