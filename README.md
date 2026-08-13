@@ -572,11 +572,26 @@ flags, or use the `config` command.
 
 | Field | Description |
 | :--- | :--- |
+| `version` | Manifest schema version (currently `1`). |
 | `strategy` | `unified`, `split`, or `module`. |
 | `dir` | Tools directory path (default: `tools`). |
 | `go_version` | Go version for tool modules, or `inherit`. |
 | `module_prefix` | Module path prefix. Auto-resolved from root `go.mod` if empty. |
 | `tools` | Object mapping tool names to their source, package, and version. |
+
+### Manifest schema versioning
+
+If a future gotools changes the manifest format, an older gotools refuses to
+read it instead of silently misparsing:
+
+```text
+❌ This project's .gotools.json requires schema version 2.
+   Your gotools (v0.5.8) only understands version 1.
+   Upgrade: https://github.com/piusalfred/gotools/releases
+```
+
+Manifests without a `version` field (created before schema versioning
+existed) are treated as version 1 — no migration needed.
 
 Environment variables override the config file. For
 example, `GOTOOLS_DIR=build-tools gotools.sh list`

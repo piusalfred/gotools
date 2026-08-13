@@ -106,6 +106,8 @@ load_config() {
     _find_project_root
 
     if [[ -f "$MANIFEST_FILE" ]]; then
+        # Fail loudly on manifests written by a newer gotools.
+        _manifest_check_version
         _manifest_parse "$MANIFEST_FILE"
     fi
 
@@ -369,6 +371,32 @@ _trace_fatal() {
 # ---------------------------------------------------------------------------
 # Manifest helpers (.gotools.json)
 # ---------------------------------------------------------------------------
+
+# _MANIFEST_SCHEMA_VERSION — the manifest schema this gotools understands.
+# Bump ONLY when load_config would misinterpret a newer format. Additive
+# changes (new optional key, new strategy value) do not require a bump.
+readonly _MANIFEST_SCHEMA_VERSION=1
+
+# _manifest_check_version — refuse manifests written by a NEWER gotools so
+# old versions fail loudly instead of silently misparsing. Pre-version
+# manifests (no top-level "version" key) default to v1. A non-numeric match
+# means the "version" key belongs to a tool entry, not the top level.
+_manifest_check_version() {
+    local version
+    # Shape-aware: the top-level version is unquoted JSON ("version": 1,)
+    # and lands in $3 as ": 1,"; a quoted value (e.g. a tool entry's
+    # "version": "v0.8.0") lands in $4.
+    version=$(awk -F'"' '/"version":/ { if (NF >= 4) print $4; else print $3; exit }' "$MANIFEST_FILE")
+    version="${version#: }"
+    version="${version%,}"
+    [[ "$version" =~ ^[0-9]+$ ]] || version=1
+    if [[ "$version" -gt "$_MANIFEST_SCHEMA_VERSION" ]]; then
+        echo "❌ This project's $MANIFEST_FILE requires schema version ${version}." >&2
+        echo "   Your gotools (${VERSION}) only understands version ${_MANIFEST_SCHEMA_VERSION}." >&2
+        echo "   Upgrade: https://github.com/$REPO/releases" >&2
+        exit $E_ENVIRONMENT
+    fi
+}
 
 # _manifest_parse — read .gotools.json into config vars and _MANIFEST_TOOLS.
 # Uses awk on the known, fixed JSON schema (no jq/python3 dependency).
