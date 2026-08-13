@@ -105,6 +105,9 @@ load_config() {
     # find project root by walking up from $PWD.
     _find_project_root
 
+    # Drop stray temp files from a manifest write that crashed mid-flight.
+    _manifest_flush_cleanup
+
     if [[ -f "$MANIFEST_FILE" ]]; then
         # Fail loudly on manifests written by a newer gotools.
         _manifest_check_version
@@ -491,7 +494,13 @@ _manifest_flush() {
         tools_json+="    }"
     done <<< "$_MANIFEST_TOOLS"
 
-    cat > "$mf" <<MANIFEST_EOF
+    # Atomic write: build in a temp file, then rename over the target.
+    # A crash mid-write leaves the previous manifest intact; the stray
+    # temp file is removed by _manifest_flush_cleanup on the next run.
+    # The PID suffix keeps concurrent writes from colliding even if the
+    # lock was bypassed.
+    local tmpfile="${mf}.tmp.$$"
+    cat > "$tmpfile" <<MANIFEST_EOF
 {
   "version": 1,
   "strategy": "${strategy}",
@@ -503,6 +512,13 @@ ${tools_json}
   }
 }
 MANIFEST_EOF
+    mv "$tmpfile" "$mf"
+}
+
+# _manifest_flush_cleanup — remove temp files left behind by a crash during
+# an atomic manifest write. They are never valid across invocations.
+_manifest_flush_cleanup() {
+    rm -f "${MANIFEST_FILE}.tmp."* 2>/dev/null || true
 }
 
 # _manifest_tools_list — echo tool names, one per line.

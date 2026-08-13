@@ -96,6 +96,9 @@ load_config() {
     # find project root by walking up from $PWD.
     _find_project_root
 
+    # Drop stray temp files from a manifest write that crashed mid-flight.
+    _manifest_flush_cleanup
+
     if [[ -f "$MANIFEST_FILE" ]]; then
         # Fail loudly on manifests written by a newer gotools.
         _manifest_check_version
