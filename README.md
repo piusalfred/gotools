@@ -410,6 +410,45 @@ gotools.sh completion install zsh    # explicit
 
 ---
 
+## Exit Codes
+
+Every failure path exits with a distinct code so CI pipelines can react
+intelligently instead of treating every failure the same:
+
+| Code | Name | Meaning | CI can... |
+|------|------|---------|-----------|
+| 0    | Success | Everything worked | Proceed |
+| 1    | Generic failure | Something went wrong (catch-all) | Fail the build |
+| 2    | Usage error | Bad flags, wrong args, invalid input | Fail the build (no retry) |
+| 3    | Network error | Proxy unreachable, DNS failure, timeout | Retry with backoff |
+| 4    | Lock contention | Another gotools process holds the lock | Wait and retry |
+| 5    | Tool not found | Requested tool isn't installed | Run `gotools.sh sync` and retry |
+| 6    | Offline required | Network needed but `--offline` set | Run `gotools.sh sync` locally |
+| 7    | Policy violation | Tool banned, version not pinned, vuln found | Block merge |
+| 8    | Environment error | Go missing/too old, bad manifest schema | Fix environment |
+
+Codes 6 (`--offline`) and 7 (policy) are reserved — offline mode and policy
+enforcement ship in future releases.
+
+```yaml
+# GitHub Actions — react differently per failure mode
+- name: Sync tools
+  id: sync
+  continue-on-error: true
+  run: gotools sync
+
+- name: Handle sync result
+  shell: bash
+  run: |
+    case ${{ steps.sync.outcome == 'failure' && steps.sync.exitcode || 0 }} in
+      3) echo "Network error — retrying..."; sleep 10; gotools sync ;;
+      4) echo "Lock contention — retrying..."; sleep 5; gotools sync ;;
+      *) echo "Unexpected failure"; exit 1 ;;
+    esac
+```
+
+---
+
 ## Migration
 
 The `migrate` command handles moving between strategies.
