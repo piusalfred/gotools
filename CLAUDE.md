@@ -157,7 +157,9 @@ existing ones.
 - `pre-commit run --all-files` — the local gate mirroring CI's static-analysis
   job (shellcheck, license, vet, imports, fmt, staticcheck, govulncheck,
   version-check, rumdl). Run it before committing; a failure here is a CI
-  failure.
+  failure. The version-check hook only enforces when the change is headed for
+  `main` (`build/version-check-hook.sh`) — dev PRs do not require a VERSION
+  bump.
 - `make test-unit` — fast, no network. Unit-tests key logic paths (manifest
   parsing, tool-name resolution, path normalization, argument parsing).
 - `make test-integration` — real `go get -tool` calls, needs network. Verifies
@@ -273,9 +275,10 @@ Fixes must be systematic, not speculative. Follow these steps in order:
 
 ## Release Process
 
-1. Bump `VERSION` in `lib/config.sh` (`make set-version VER=x.y.z`) — the
-   pre-commit version-check hook enforces a bump on any change that touches
-   `gotools.sh`.
+1. Bump `VERSION` in `lib/config.sh` (`make set-version VER=x.y.z`) when
+   merging to `main` — the CI Version Guard workflow enforces the bump on
+   PRs targeting `main`, and the local pre-commit version-check hook mirrors
+   that rule. PRs targeting `dev` do NOT bump.
 2. Push to `main`
 3. GitHub Actions release workflow cross-compiles binaries (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64) and creates a GitHub release with SHA256 checksums
 
