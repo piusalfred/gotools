@@ -262,7 +262,7 @@ gotools.sh list
 | `install [name] <pkg>` | Install a new tool. |
 | `<stdin> \| gotools.sh` | Pipe `go install <pkg>@<ver>` lines from stdin. |
 | `exec <name> [args]` | Run a managed tool. |
-| `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch. |
+| `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch; skips work via a state fingerprint when nothing changed. |
 | `upgrade <name\|all>` | Upgrade tools to `@latest`. |
 | `list` | List all managed tools with Go version and modfile path. |
 | `info <name>` | Show detailed information about a specific tool. |
