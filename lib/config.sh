@@ -97,6 +97,8 @@ load_config() {
     _find_project_root
 
     if [[ -f "$MANIFEST_FILE" ]]; then
+        # Fail loudly on manifests written by a newer gotools.
+        _manifest_check_version
         _manifest_parse "$MANIFEST_FILE"
     fi
 

@@ -121,6 +121,7 @@ shellcheck gotools.sh --severity=warning
 - **`set -euo pipefail`** at the top — no exceptions
 - **Function naming:** `cmd_<name>` for command handlers, `_helper_name` for internal helpers
 - **Manifest helpers:** `_manifest_parse`, `_manifest_flush`, `_manifest_tool_set`, `_manifest_tool_remove` operate on `_MANIFEST_TOOLS` (in-memory pipe-delimited store: `name|source|package|version`)
+- **Manifest schema:** `_MANIFEST_SCHEMA_VERSION` (in `lib/manifest.sh`) gates format compatibility — `load_config` refuses manifests written by a newer gotools (exit 8, `_manifest_check_version`). Bump it ONLY when `load_config` would misinterpret the new format; additive changes (new optional key, new strategy value) don't need a bump. Pre-version manifests default to v1.
 - **Config:** `load_config` reads `.gotools.json` once (guarded by `_CONFIG_LOADED`). Env vars (`GOTOOLS_STRATEGY`, `GOTOOLS_DIR`, etc.) override manifest values.
 - **Locking:** `_acquire_lock` / `_release_lock` use a directory-based mutex (`mkdir` is atomic) to prevent concurrent operations
 - **Dry-run:** Commands support `--dry-run` via `_DRY_RUN` global; check `_parse_dry_run` for the pattern
