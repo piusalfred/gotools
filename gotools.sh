@@ -1435,7 +1435,9 @@ cmd_sync() {
                 echo "  🔍 [dry-run] Would reinstall $_n ($_p@$_v)"
             else
                 echo "  ⬇ $_n ($_p@$_v) — missing, reinstalling..."
-                cmd_install "$_n" "${_p}@${_v}"
+                # --force: the tool is already in the manifest — restoring a
+                # missing modfile must not trip cmd_install's duplicate check.
+                cmd_install --force "$_n" "${_p}@${_v}"
             fi
             missing_count=$((missing_count + 1))
         fi

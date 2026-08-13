@@ -206,7 +206,11 @@ rc=$(run_rc "$TMPDIR" "$GO_BADPATH" -- install 'tool@')
 assert_eq "install with invalid package path exits 2" "2" "$rc"
 
 category "exit code 8 — environment errors"
-rc=$(run_rc "$TMPDIR" "PATH=/usr/bin:/bin" -- sync)
+# Empty PATH dir: `command -v go` must fail everywhere, including runners
+# that ship a go binary in /usr/bin (e.g. ubuntu images). `_require_go`
+# needs no external commands before its exit, so an empty PATH is safe.
+mkdir -p "$TMPDIR/empty-bin"
+rc=$(run_rc "$TMPDIR" "PATH=$TMPDIR/empty-bin" -- sync)
 assert_eq "sync without go on PATH exits 8" "8" "$rc"
 
 make_go_stub "$STUB_BIN" old
@@ -255,6 +259,12 @@ rc=$(run_rc "$TMPDIR" "$GO_NETFAIL" -- install mvdan.cc/gofumpt@v0.8.0)
 assert_eq "install network failure exits 3" "3" "$rc"
 # Failed install must clean up the modfile it created.
 assert_file_absent "network-failed install leaves no modfile" "$TMPDIR/tools/gofumpt.mod"
+
+# sync restoring a missing modfile must bypass the duplicate check (--force)
+# and surface the underlying failure — here a network error, exit 3.
+write_manifest "$TMPDIR" split gofumpt mvdan.cc/gofumpt v0.8.0
+rc=$(run_rc "$TMPDIR" "$GO_NETFAIL" -- sync)
+assert_eq "sync reinstall network failure exits 3" "3" "$rc"
 
 category "exit code 1 — generic failure"
 make_go_stub "$STUB_BIN" pkgnotfound
