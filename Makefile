@@ -165,8 +165,9 @@ version-check:
 get-version:
 	@grep '^VERSION=' gotools.sh | cut -d'"' -f2
 
-set-version:
+set-version: bundle
 	@if [ -z "$(VER)" ]; then echo "Usage: make set-version VER=vX.Y.Z" >&2; exit 1; fi
-	@sed -i '' 's/^VERSION=.*/VERSION="$(VER)"/' gotools.sh
+	@sed -i '' 's/^VERSION=.*/VERSION="$(VER)"/' lib/config.sh
+	@$(MAKE) bundle
 	@echo "Version set to $(VER)"
 

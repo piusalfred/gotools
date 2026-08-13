@@ -138,8 +138,8 @@ rc=$(run_rc "$S" self-update)
 assert_eq "matching checksum updates successfully" "0" "$rc"
 cmp -s "$S/gotools.sh" "$CTRL/script.sh"
 assert_eq "installed script matches the verified download" "0" "$?"
-[[ -x "$S/gotools.sh" ]]
-assert_eq "installed script stays executable" "0" "$?"
+if [[ -x "$S/gotools.sh" ]]; then rc=0; else rc=1; fi
+assert_eq "installed script stays executable" "0" "$rc"
 
 # 2. Checksum mismatch: refuse, delete download, leave $0 untouched.
 printf '%064d  gotools.sh\n' 0 > "$CTRL/checksums.txt"
@@ -164,8 +164,9 @@ assert_eq "checksums download failure exits 3" "3" "$rc"
 rm -f "$CTRL/fail_checksums"
 
 # 4. Already on the latest version: no download at all.
-cat > "$CTRL/api.json" <<'EOF'
-{"tag_name": "v0.5.8"}
+CUR_VER=$(grep '^VERSION=' "$GOTOOLS_SH" | cut -d'"' -f2)
+cat > "$CTRL/api.json" <<EOF
+{"tag_name": "$CUR_VER"}
 EOF
 S="$TMPDIR/latest"
 new_sandbox "$S"

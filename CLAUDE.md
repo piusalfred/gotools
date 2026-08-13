@@ -154,6 +154,10 @@ behaviors still hold after your change. Changes that alter behavior (new flags,
 different output, new commands) should add or update tests, not just pass the
 existing ones.
 
+- `pre-commit run --all-files` — the local gate mirroring CI's static-analysis
+  job (shellcheck, license, vet, imports, fmt, staticcheck, govulncheck,
+  version-check, rumdl). Run it before committing; a failure here is a CI
+  failure.
 - `make test-unit` — fast, no network. Unit-tests key logic paths (manifest
   parsing, tool-name resolution, path normalization, argument parsing).
 - `make test-integration` — real `go get -tool` calls, needs network. Verifies
@@ -269,7 +273,9 @@ Fixes must be systematic, not speculative. Follow these steps in order:
 
 ## Release Process
 
-1. Bump `VERSION` in `gotools.sh`
+1. Bump `VERSION` in `lib/config.sh` (`make set-version VER=x.y.z`) — the
+   pre-commit version-check hook enforces a bump on any change that touches
+   `gotools.sh`.
 2. Push to `main`
 3. GitHub Actions release workflow cross-compiles binaries (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64) and creates a GitHub release with SHA256 checksums
 
