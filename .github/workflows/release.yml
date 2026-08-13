@@ -103,6 +103,9 @@ jobs:
         steps:
             - uses: actions/checkout@v4
 
+            - name: Verify bundled script is in sync
+              run: make check-bundle
+
             - name: Download all artifacts
               uses: actions/download-artifact@v4
               with:

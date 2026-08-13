@@ -29,7 +29,7 @@ GCI_SECTIONS := \
 
 .PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean install help test test-unit test-integration \
         lint lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt \
-        version-check get-version set-version govulncheck check
+        version-check get-version set-version govulncheck check bundle check-bundle generate
 
 
 fmt: fmt-license fmt-imports fmt-go fmt-mod fmt-md
@@ -49,14 +49,14 @@ fmt-mod:
 fmt-md:
 	$(RUMDL) fmt *.md
 
-build:
+build: generate
 	go build -trimpath -ldflags="-s -w" -o gotools ./cmd/gotools
 
 clean:
 	rm -f gotools
 	rm -rf dist
 
-install:
+install: generate
 	go install -trimpath -ldflags="-s -w" ./cmd/gotools
 
 test: test-unit test-integration
@@ -67,10 +67,31 @@ test-unit: build
 test-integration: build
 	cd test && bash test.sh
 
-gotools:
+gotools: generate
 	@echo "Building gotools into bin/gotools"
 	@mkdir -p bin
 	go build -trimpath -ldflags="-s -w" -o bin/gotools ./cmd/gotools
+
+# Run the //go:generate directive in gotools.go (regenerates gotools.sh).
+generate:
+	@echo "Generating gotools.sh (go:generate)"
+	@go generate ./...
+
+# ---- modular source (lib/) -> single distributable (gotools.sh) ----
+# gotools.sh is consumed as one file by install.sh, self-update, the release
+# workflow, and the Go embed — edit lib/, then run `make bundle`.
+bundle:
+	@echo "Bundling gotools.sh from lib/"
+	@bash build/bundle.sh
+
+# Fail when the committed gotools.sh is out of sync with lib/.
+check-bundle: bundle
+	@if git diff --quiet -- gotools.sh; then \
+		echo "✅ gotools.sh is in sync with lib/"; \
+	else \
+		echo "❌ gotools.sh is out of sync with lib/. Run: make bundle" >&2; \
+		exit 1; \
+	fi
 
 govulncheck:
 	@echo "Running govulncheck"
@@ -118,7 +139,7 @@ lint-go-fmt:
 	@diff=$$($(GOFUMPT) -d -extra .); if [ -n "$$diff" ]; then printf "%s\n" "$$diff"; exit 1; fi
 
 # ---- CI-equivalent: lint + test (mirrors static-analysis job) ----
-check: lint test-unit
+check: lint check-bundle test-unit
 	@echo "✅ All checks passed"
 
 # ---- version management ----

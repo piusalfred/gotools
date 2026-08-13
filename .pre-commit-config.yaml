@@ -24,6 +24,11 @@ repos:
       hooks:
           - id: shellcheck
             args: ["--severity=warning"]
+            # lib/*.sh modules share globals across files, so per-file linting
+            # produces SC2154 noise. The bundled gotools.sh is the shipped
+            # artifact and is linted instead; `make check-bundle` guarantees
+            # lib/ and gotools.sh stay in sync.
+            files: ^(gotools\.sh|install\.sh|test/.*\.sh|build/.*\.sh)$
     - repo: local
       hooks:
           - id: lint-license

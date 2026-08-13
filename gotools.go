@@ -24,5 +24,7 @@ import (
 	_ "embed"
 )
 
+//go:generate bash build/bundle.sh
+
 //go:embed gotools.sh
 var SCRIPT string
