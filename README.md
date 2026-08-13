@@ -272,7 +272,7 @@ gotools.sh list
 | `purge` | Remove all tools and config. |
 | `uninstall` | Remove the script itself. |
 | `version` | Print the script version. |
-| `self-update` | Update to the latest release. |
+| `self-update` | Update to the latest release (SHA-256 checksum verified). |
 | `completion [shell\|install]` | Generate or install shell completions (bash/zsh/fish). |
 
 ### `init` Flags
@@ -394,6 +394,11 @@ gotools.sh info addlicense
 gotools.sh version
 gotools.sh self-update
 ```
+
+Before installing, `self-update` verifies the downloaded script against the
+SHA-256 checksum published in the release's `checksums-sha256.txt`. A
+mismatch deletes the download and refuses to install — the script is never
+replaced by an unverified file.
 
 **Shell completions:**
 

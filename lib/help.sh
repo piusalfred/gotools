@@ -152,6 +152,7 @@ _cmd_help() {
             echo "Usage: gotools.sh self-update"
             echo ""
             echo "  Update gotools.sh to the latest release from GitHub."
+            echo "  Verifies the release SHA-256 checksum before installing."
             ;;
         uninstall)
             echo "Usage: gotools.sh uninstall"

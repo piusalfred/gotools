@@ -273,6 +273,11 @@ Fixes must be systematic, not speculative. Follow these steps in order:
 2. Push to `main`
 3. GitHub Actions release workflow cross-compiles binaries (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64) and creates a GitHub release with SHA256 checksums
 
+The release manifest `checksums-sha256.txt` must include `gotools.sh` itself
+(the workflow appends its hash) — `self-update` refuses to install a script
+whose SHA-256 doesn't match. Keep the manifest in sync when changing the
+release pipeline.
+
 The Version Guard workflow (`make version-check`) enforces the bump on pull
 requests targeting `main` that change `gotools.sh` — any such PR must bump
 `VERSION`, and the guard only runs for `main`, not other branches.

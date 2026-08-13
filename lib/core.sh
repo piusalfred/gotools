@@ -130,6 +130,18 @@ relative_path() {
     echo "${rel:-.}"
 }
 
+# _sha256 <file> — print the SHA-256 hash of a file.
+# Uses sha256sum (Linux) or shasum -a 256 (macOS); returns 1 if neither exists.
+_sha256() {
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$1" | awk '{print $1}'
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$1" | awk '{print $1}'
+    else
+        return 1
+    fi
+}
+
 # _json_escape — escape a string for inclusion in a JSON string value.
 # Escapes: backslash, double-quote, and control characters (0x00-0x1f).
 _json_escape() {
