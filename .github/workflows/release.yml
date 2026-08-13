@@ -113,9 +113,10 @@ jobs:
                   merge-multiple: true
 
             - name: Generate checksums
-              working-directory: dist
               run: |
-                  sha256sum * > checksums-sha256.txt
+                  (cd dist && sha256sum * > checksums-sha256.txt)
+                  # self-update verifies the script against this manifest
+                  sha256sum gotools.sh >> dist/checksums-sha256.txt
 
             - name: Tag and Release
               uses: softprops/action-gh-release@v2

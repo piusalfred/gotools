@@ -70,7 +70,7 @@ repos:
           - id: version-check
             name: version check
             language: system
-            entry: make version-check
+            entry: bash build/version-check-hook.sh
             pass_filenames: false
             always_run: true
     - repo: https://github.com/rvben/rumdl-pre-commit
