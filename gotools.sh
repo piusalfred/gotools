@@ -1131,7 +1131,8 @@ _cmd_help() {
             echo ""
             echo "  Remove all tools and the .gotools.json manifest."
             echo "  With --restore, the managed tools are added back to the root"
-            echo "  go.mod at their pinned versions (go get -tool) before the wipe."
+            echo "  go.mod at their pinned versions (go get -tool) before the wipe,"
+            echo "  and the init command that recreates this project is printed."
             echo "  Interactive: requires typing YES to confirm."
             echo ""
             echo "  Options:"
@@ -2167,6 +2168,19 @@ cmd_migrate() {
 }
 # ---- purge ---------------------------------------------------------------
 
+# _purge_restore_hint — the init command that recreates this project's
+# configuration. The tools themselves come back via the restore; the
+# strategy/dir/go-version/prefix live only in the manifest and would
+# otherwise be lost, so print how to reconstruct them.
+_purge_restore_hint() {
+    local cmd
+    cmd="$(basename "$0") init --strategy=${GOTOOLS_STRATEGY}"
+    [[ "${GOTOOLS_DIR:-}" != "tools" ]] && cmd+=" --dir=${GOTOOLS_DIR}"
+    [[ -n "${GOTOOLS_GO_VERSION:-}" && "$GOTOOLS_GO_VERSION" != "inherit" ]] && cmd+=" --go=${GOTOOLS_GO_VERSION}"
+    [[ -n "${GOTOOLS_MODULE_PREFIX:-}" ]] && cmd+=" --prefix=${GOTOOLS_MODULE_PREFIX}"
+    echo "$cmd"
+}
+
 # _purge_restore_tools — the reverse of init's go.mod adoption: add every
 # managed tool back to the root go.mod at its pinned version via
 # `go get -tool`. Runs BEFORE the wipe so a failure leaves gotools intact.
@@ -2227,6 +2241,7 @@ cmd_purge() {
     if $_DRY_RUN; then
         if $restore; then
             _purge_restore_tools
+            echo "🔍 [dry-run] To come back: $(_purge_restore_hint)"
         fi
         echo "🔍 [dry-run] Would delete:"
         echo "  - $GOTOOLS_DIR/ (tools directory)"
@@ -2249,6 +2264,7 @@ cmd_purge() {
 
     if $restore; then
         _purge_restore_tools
+        echo "💡 To come back: $(_purge_restore_hint)"
     fi
 
     rm -rf "${GOTOOLS_DIR:?}" "${MANIFEST_FILE:?}"

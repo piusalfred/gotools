@@ -733,7 +733,9 @@ gotools.sh remove golangci-lint mockgen
 Deletes the `tools/` directory and `.gotools.json`
 entirely. With `--restore`, the managed tools are added
 back to your root `go.mod` at their pinned versions first
-(the reverse of `init`'s adoption):
+(the reverse of `init`'s adoption), and gotools prints the
+exact `init` command that recreates the project's
+configuration:
 
 ```bash
 gotools.sh purge

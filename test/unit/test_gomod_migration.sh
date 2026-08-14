@@ -188,8 +188,7 @@ rc=$(run_rc "$S" init)
 assert_eq "init with network failure exits 3" "3" "$rc"
 cmp -s "$S/go.mod" "$S/.before"
 assert_eq "failed adoption leaves go.mod untouched" "0" "$?"
-[[ -f "$S/.gotools.json" ]]
-assert_eq "manifest still bootstrapped" "0" "$?"
+assert_file_exists "manifest still bootstrapped" "$S/.gotools.json"
 
 # --no-migrate skips adoption entirely.
 S="$TMPDIR/init-nomigrate"
@@ -211,14 +210,7 @@ make_go_stub forbid
 out=$(run_out "$S" init --dry-run)
 assert_contains "dry-run shows adoption plan" "[dry-run] Would install stringer" "$out"
 assert_contains "dry-run shows strip plan" "[dry-run] Would strip tool directives" "$out"
-[[ -f "$S/.gotools.json" ]]
-if [[ $? -eq 0 ]]; then
-    echo "    FAIL dry-run init writes no manifest"
-    TEST_FAILED=$((TEST_FAILED + 1))
-else
-    echo "    PASS dry-run init writes no manifest"
-    TEST_PASSED=$((TEST_PASSED + 1))
-fi
+assert_file_absent "dry-run init writes no manifest" "$S/.gotools.json"
 
 # Re-running init merges the existing manifest instead of wiping it.
 S="$TMPDIR/init-merge"
@@ -242,8 +234,8 @@ write_root_gomod "$S"
 make_go_stub forbid
 out=$(run_out "$S" purge --restore --dry-run)
 assert_contains "dry-run restore plan" "[dry-run] Would restore gofumpt" "$out"
-[[ -f "$S/.gotools.json" ]]
-assert_eq "dry-run purge keeps the manifest" "0" "$?"
+assert_contains "dry-run shows re-init hint" "[dry-run] To come back: gotools.sh init --strategy=split --go=1.24 --prefix=example.com/test" "$out"
+assert_file_exists "dry-run purge keeps the manifest" "$S/.gotools.json"
 
 # Restore failure must abort before the wipe.
 S="$TMPDIR/purge-fail"
@@ -255,8 +247,7 @@ rc=$(cd "$S" && echo YES | env -u GOTOOLS_STRATEGY -u GOTOOLS_DIR \
     -u GOTOOLS_GO_VERSION -u GOTOOLS_MODULE_PREFIX PATH="$STUB_BIN:/usr/bin:/bin" \
     "$BASH" "$GOTOOLS_SH" purge --restore >/dev/null 2>&1; echo $?)
 assert_eq "failed restore exits 3" "3" "$rc"
-[[ -f "$S/.gotools.json" ]]
-assert_eq "failed restore keeps the manifest" "0" "$?"
+assert_file_exists "failed restore keeps the manifest" "$S/.gotools.json"
 
 # Successful restore: go get -tool runs per tool, then gotools wipes itself.
 S="$TMPDIR/purge-ok"
@@ -264,15 +255,22 @@ mkdir -p "$S"
 write_manifest "$S" split tool
 write_root_gomod "$S"
 make_go_stub restore-ok
-rc=$(cd "$S" && echo YES | env -u GOTOOLS_STRATEGY -u GOTOOLS_DIR \
+out=""
+rc=0
+out=$(cd "$S" && echo YES | env -u GOTOOLS_STRATEGY -u GOTOOLS_DIR \
     -u GOTOOLS_GO_VERSION -u GOTOOLS_MODULE_PREFIX PATH="$STUB_BIN:/usr/bin:/bin" \
     RESTORE_LOG="$S/restore.log" \
-    "$BASH" "$GOTOOLS_SH" purge --restore >/dev/null 2>&1; echo $?)
+    "$BASH" "$GOTOOLS_SH" purge --restore 2>&1) || rc=$?
 assert_eq "successful restore exits 0" "0" "$rc"
-[[ ! -f "$S/.gotools.json" ]]
-assert_eq "purge removes the manifest after restore" "0" "$?"
-[[ ! -d "$S/tools" ]]
-assert_eq "purge removes the tools dir after restore" "0" "$?"
+assert_contains "restore prints the re-init hint" "💡 To come back: gotools.sh init --strategy=split --go=1.24 --prefix=example.com/test" "$out"
+assert_file_absent "purge removes the manifest after restore" "$S/.gotools.json"
+if [[ -d "$S/tools" ]]; then
+    echo "    FAIL purge removes the tools dir after restore"
+    TEST_FAILED=$((TEST_FAILED + 1))
+else
+    echo "    PASS purge removes the tools dir after restore"
+    TEST_PASSED=$((TEST_PASSED + 1))
+fi
 grep -q "get -tool mvdan.cc/gofumpt@v0.8.0" "$S/restore.log"
 assert_eq "restore ran go get -tool at the pinned version" "0" "$?"
 
