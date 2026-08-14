@@ -787,6 +787,41 @@ offline mode.
   # Fingerprint mismatch → exit 6 → "run gotools sync locally"
 ```
 
+### Locking and timeouts
+
+Commands that can write (`install`, `sync`, `upgrade`, `remove`,
+`migrate`, `purge`) serialize on a lock directory in the tools dir.
+Three knobs cover CI edge cases:
+
+| Variable | Default | Effect |
+| :--- | :--- | :--- |
+| `GOTOOLS_LOCK_TIMEOUT` | `10` | Seconds to wait for a held lock before exiting 4 |
+| `GOTOOLS_LOCK_STALE_TIMEOUT` | `300` | Age at which a pid-less legacy lock counts as stale |
+| `GOTOOLS_NO_LOCK` | *(unset)* | `1` skips locking entirely — only for CI with serial workspace guarantees |
+
+Stale locks are detected automatically and removed before waiting:
+the lock records its holder's PID, and a lock whose process is dead is
+stale no matter its age (a *live* holder is never stale). Legacy locks
+created by older versions fall back to the age check. `sync --offline`
+never takes the lock at all — it cannot write (fingerprint match
+returns, anything else exits 6), so concurrent CI jobs sharing a
+workspace never contend.
+
+Every network-bound `go` operation (`go get -tool`, `go mod tidy`)
+runs under a per-operation timeout, so a stalled proxy connection
+cannot hang a CI job forever:
+
+```bash
+GOTOOLS_OPERATION_TIMEOUT=30 gotools sync   # 30s per go operation
+GOTOOLS_OPERATION_TIMEOUT=0  gotools sync   # disable (current behavior)
+```
+
+The default is 120 seconds. On timeout the operation exits with code 3
+(network error) and a `❌ ... timed out after Ns.` message; failed
+installs still clean up their half-created modfiles. `gotools exec`
+is deliberately not bounded — tools legitimately run for minutes.
+Slow connections or huge cold-cache tidies may need a higher value.
+
 ### Pre-commit Hook
 
 You can use `gotools.sh` with [pre-commit][pre-commit]
