@@ -35,7 +35,7 @@ cp "$SCRIPT_DIR/../go.mod" "$TMPDIR/"
 # per-command --help
 # -----------------------------------------------------------------------
 category "per-command --help"
-for cmd in init install sync exec list info upgrade remove migrate config purge check version; do
+for cmd in init install sync exec list info upgrade remove migrate config purge check doctor version; do
     result=$(bash "$GOTOOLS_SH" "$cmd" --help 2>&1 || true)
     assert_contains "help $cmd" "Usage:" "$result"
 done
@@ -84,20 +84,31 @@ assert_contains "dry-run purge" "[dry-run]" "$result"
 assert_file_exists "dry-run purge preserves manifest" "$TMPDIR/.gotools.json"
 
 # -----------------------------------------------------------------------
-# --json output
+# --json / --format json output
 # -----------------------------------------------------------------------
 category "list --json"
 result=$(cd "$TMPDIR" && bash "$GOTOOLS_SH" list --json 2>&1)
-assert_contains "list --json is JSON array" "[" "$result"
+assert_contains "list --json is JSON object with schema_version" '{"schema_version":1' "$result"
+assert_contains "list --json has tools array" '"tools":[{' "$result"
 assert_contains "list --json contains tool" "faketool" "$result"
+assert_contains "list --json alias matches --format=json" \
+    "$(cd "$TMPDIR" && bash "$GOTOOLS_SH" list --format=json 2>&1)" "$result"
 
 category "info --json"
 result=$(cd "$TMPDIR" && bash "$GOTOOLS_SH" info faketool --json 2>&1)
 assert_contains "info --json is JSON object" "{" "$result"
 assert_contains "info --json contains tool" "faketool" "$result"
+# faketool is manifest-only (no modfile on disk): runnable is probed only
+# when the modfile exists, so it reports false without invoking go.
+assert_contains "info --json has runnable field" '"runnable":false' "$result"
 
 result=$(cd "$TMPDIR" && bash "$GOTOOLS_SH" info nonexistent --json 2>&1 || true)
 assert_contains "info --json missing tool" "not found" "$result"
+
+category "version --json"
+result=$(cd "$TMPDIR" && bash "$GOTOOLS_SH" version --format=json 2>&1)
+assert_contains "version --format=json has schema_version" '"schema_version":1' "$result"
+assert_contains "version --format=json has version" '"version":"v0' "$result"
 
 # -----------------------------------------------------------------------
 # check command

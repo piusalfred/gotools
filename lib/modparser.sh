@@ -76,6 +76,37 @@ extract_version_for_pkg() {
     done
 }
 
+# extract_module_for_pkg <modfile> <pkg>
+#   Prints the module root (require path) that provides <pkg>, by walking
+#   progressively shorter path prefixes over the require block(s) — the same
+#   algorithm as extract_version_for_pkg, but returning the module path.
+#   E.g. honnef.co/go/tools/cmd/staticcheck → honnef.co/go/tools.
+extract_module_for_pkg() {
+    local modfile="$1" pkg="$2"
+    local candidate="$pkg"
+    while [[ -n "$candidate" ]]; do
+        local mod
+        mod=$(awk -v p="$candidate" '
+            /^require[[:space:]]+\(/ { in_req=1; next }
+            in_req && /^\)/ { in_req=0; next }
+            in_req {
+                gsub(/^[[:space:]]+/, "")
+                if ($1 == p) { print $1 }
+                next
+            }
+            $1 == "require" && $2 == p { print $2 }
+        ' "$modfile")
+        if [[ -n "$mod" ]]; then
+            echo "$mod"
+            return
+        fi
+        # Strip the last path component and try again.
+        local parent="${candidate%/*}"
+        [[ "$parent" == "$candidate" ]] && break
+        candidate="$parent"
+    done
+}
+
 # extract_pkg_from_mod <modfile>
 #   Returns the FIRST tool package from a go.mod (convenience for single-tool mods).
 extract_pkg_from_mod() {

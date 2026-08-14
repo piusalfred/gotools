@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Pius Alfred
 # License: MIT
 
-VERSION="v0.6.2"
+VERSION="v0.6.4"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -14,6 +14,8 @@ readonly E_NETWORK=3
 readonly E_LOCK=4
 readonly E_TOOL_NOT_FOUND=5
 readonly E_OFFLINE=6
+# Reserved for the documented public contract.
+# shellcheck disable=SC2034
 readonly E_POLICY=7
 readonly E_ENVIRONMENT=8
 
@@ -22,6 +24,10 @@ DEFAULT_STRATEGY="split"
 DEFAULT_DIR="tools"
 DEFAULT_GO_VERSION="inherit"
 DEFAULT_MODULE_PREFIX=""
+
+# Minimum Go version for tool directives. Shared by _require_go and the
+# doctor command's Go check — change in one place.
+MIN_GO_VERSION="1.24"
 
 # In-memory tool store. Each line is: name|source|package|version
 # Populated by _manifest_parse() and mutated by _manifest_tool_set/remove.
@@ -47,6 +53,11 @@ _VERBOSE="${GOTOOLS_VERBOSE:-0}"
 # "level" field: "info" (exit 0), "error" (tool ran but failed),
 # or "fatal" (gotools itself errored before executing the tool).
 _TRACE="${GOTOOLS_TRACE:-0}"
+
+# Output format — set by _parse_output_format(). "text" unless a --format/
+# --json/--text flag selects json. The helper resets it before scanning so
+# repeated in-process calls (unit tests source the bundle) never leak state.
+_OUTPUT_FORMAT="text"
 
 # _PROJECT_ROOT — set by _find_project_root(). The directory containing
 # .gotools.json, found by walking up from $PWD (like git finds .git).

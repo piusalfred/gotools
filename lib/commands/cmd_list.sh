@@ -2,14 +2,15 @@
 # License: MIT
 
 
-# _list_json — output the tool list as a JSON array.
-
-
+# _list_json — output the tool list as a JSON object: schema_version,
+# strategy/dir/go_version metadata, and a "tools" array of per-tool records.
+# Single compact line; values escaped via _json_escape.
 
 _list_json() {
     load_config
-    local first=true
-    echo "["
+    printf '{"schema_version":1,"strategy":"%s","dir":"%s","go_version":"%s","tools":[' \
+        "$(_json_escape "$GOTOOLS_STRATEGY")" "$(_json_escape "$GOTOOLS_DIR")" "$(_json_escape "$GOTOOLS_GO_VERSION")"
+    local first=true _n _s _p _v
     while IFS='|' read -r _n _s _p _v; do
         [[ -z "$_n" ]] && continue
         local go_ver="?"
@@ -18,21 +19,30 @@ _list_json() {
             split)   go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${_n}.mod" 2>/dev/null || echo "?") ;;
             module)  go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${_n}/go.mod" 2>/dev/null || echo "?") ;;
         esac
-        $first && first=false || echo ","
-        printf '  {"name":"%s","source":"%s","strategy":"%s","go":"%s","package":"%s","version":"%s"}' \
-            "$_n" "$_s" "$GOTOOLS_STRATEGY" "$go_ver" "$_p" "$_v"
+        $first && first=false || printf ','
+        printf '{"name":"%s","source":"%s","package":"%s","version":"%s","go":"%s"}' \
+            "$(_json_escape "$_n")" "$(_json_escape "$_s")" "$(_json_escape "$_p")" "$(_json_escape "$_v")" "$(_json_escape "$go_ver")"
     done <<< "$_MANIFEST_TOOLS"
-    echo ""
-    echo "]"
+    printf ']}\n'
 }
 
 # ---- list ----------------------------------------------------------------
 cmd_list() {
     load_config
-    local as_json=false
-    [[ "${1:-}" == "--json" ]] && as_json=true
+    _parse_output_format "$@"
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json|--text|--format=json|--format=text) ;;
+            *)
+                echo "❌ Unknown argument: $arg" >&2
+                echo "   Usage: $(basename "$0") list [--format=json|text]" >&2
+                exit $E_USAGE
+                ;;
+        esac
+    done
 
-    if $as_json; then
+    if [[ "$_OUTPUT_FORMAT" == "json" ]]; then
         _list_json
         return
     fi

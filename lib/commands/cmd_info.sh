@@ -2,9 +2,9 @@
 # License: MIT
 
 
-# _info_json — output a single tool as a JSON object.
-
-
+# _info_json <tool-name> — output a single tool as a JSON object with a
+# runnable flag (probed only when the tool's modfile exists; otherwise false
+# without invoking go).
 
 _info_json() {
     local name="$1"
@@ -24,22 +24,43 @@ _info_json() {
         split)   go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${name}.mod" 2>/dev/null || echo "?") ;;
         module)  go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${name}/go.mod" 2>/dev/null || echo "?") ;;
     esac
-    printf '{"name":"%s","source":"%s","strategy":"%s","go":"%s","package":"%s","version":"%s"}\n' \
-        "$name" "$_s" "$GOTOOLS_STRATEGY" "$go_ver" "$_p" "$_v"
+    local runnable=false
+    local modfile=""
+    case "$GOTOOLS_STRATEGY" in
+        unified) modfile="$GOTOOLS_DIR/go.mod" ;;
+        split)   modfile="$GOTOOLS_DIR/${name}.mod" ;;
+        module)  modfile="$GOTOOLS_DIR/${name}/go.mod" ;;
+    esac
+    if [[ -f "$modfile" ]] && tool_runnable "$name" >/dev/null 2>&1; then
+        runnable=true
+    fi
+    printf '{"schema_version":1,"name":"%s","source":"%s","strategy":"%s","go":"%s","package":"%s","version":"%s","runnable":%s}\n' \
+        "$(_json_escape "$name")" "$(_json_escape "$_s")" "$(_json_escape "$GOTOOLS_STRATEGY")" \
+        "$(_json_escape "$go_ver")" "$(_json_escape "$_p")" "$(_json_escape "$_v")" "$runnable"
 }
 
 # ---- info ----------------------------------------------------------------
 cmd_info() {
     load_config
-    if [[ $# -eq 0 ]]; then
-        echo "❌ Usage: $(basename "$0") info <tool-name> [--json]" >&2
+    _parse_output_format "$@"
+    local -a positional
+    positional=()
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json|--text|--format=json|--format=text) ;;
+            *) positional+=("$arg") ;;
+        esac
+    done
+
+    if [[ ${#positional[@]} -eq 0 || ${#positional[@]} -gt 1 ]]; then
+        echo "❌ Usage: $(basename "$0") info <tool-name> [--format=json|text]" >&2
         exit $E_USAGE
     fi
 
-    local tool_name="$1" as_json=false
-    [[ "${2:-}" == "--json" ]] && as_json=true
+    local tool_name="${positional[0]}"
 
-    if $as_json; then
+    if [[ "$_OUTPUT_FORMAT" == "json" ]]; then
         _info_json "$tool_name" || exit $E_TOOL_NOT_FOUND
         return
     fi

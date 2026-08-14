@@ -264,14 +264,15 @@ gotools.sh list
 | `exec <name> [args]` | Run a managed tool. |
 | `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch; skips work via a state fingerprint when nothing changed. |
 | `upgrade <name\|all>` | Upgrade tools to `@latest`. |
-| `list` | List all managed tools with Go version and modfile path. |
-| `info <name>` | Show detailed information about a specific tool. |
+| `list [--format=json\|text]` | List all managed tools with Go version and modfile path. |
+| `info <name> [--format=json\|text]` | Show detailed information about a specific tool. |
+| `doctor [--format=json\|text] [--offline]` | Diagnose the environment: Go, proxy, config, tools, lock, integrity, disk. Read-only, always exits 0. |
 | `remove <name...>` | Remove specific tools. |
 | `migrate <strategy>` | Migrate to a different strategy. |
 | `config [key [value]]` | View or edit config. |
 | `purge` | Remove all tools and config. |
 | `uninstall` | Remove the script itself. |
-| `version` | Print the script version. |
+| `version [--format=json\|text]` | Print the script version. |
 | `self-update` | Update to the latest release (SHA-256 checksum verified). |
 | `completion [shell\|install]` | Generate or install shell completions (bash/zsh/fish). |
 
@@ -315,6 +316,58 @@ managed tool back to the root `go.mod` at its pinned version
 (`go get -tool pkg@version`) and then removes the tools directory and the
 manifest — leaving the project exactly as Go's built-in tool management
 would have it.
+
+### doctor — environment diagnostics
+
+`gotools.sh doctor` runs seven read-only checks and prints a report:
+
+1. **Go installation** — installed, in `PATH`, version ≥ 1.24
+2. **Module proxy** — `GOPROXY` value + a 5-second `@latest` reachability probe (failure is a warning, never an error)
+3. **Configuration** — `.gotools.json` exists, is parseable, and its strategy matches the tools on disk
+4. **Managed tools** — each declared tool is runnable via `go tool` (only go-level failures count as "not runnable" — a tool that starts and prints its own usage error *is* runnable)
+5. **Lock file** — no stale lock directory (> 5 min old)
+6. **Module integrity** — `go mod verify` on every tool modfile
+7. **Disk usage** — total size of the tools directory (informational)
+
+```text
+$ gotools.sh doctor
+🔍 gotools doctor — checking your environment...
+  ✅ All checks passed. Your environment is healthy.
+```
+
+Doctor is **read-only and always exits 0** — diagnostics are not failures
+(invalid flags still exit 2). It never modifies tools, the manifest, or the
+lock; probes never auto-download a toolchain. With `--offline` (or
+`GOTOOLS_OFFLINE=1`) the proxy check is skipped and the tool/module probes
+fail fast (`GOPROXY=off`) instead of touching the network.
+
+For CI pre-flight, parse the JSON instead of exit codes:
+
+```bash
+gotools.sh doctor --format=json | jq '.healthy'   # true/false
+```
+
+### Machine-readable output (`--format json`)
+
+`list`, `info`, `doctor`, and `version` support `--format=json` (aliases:
+`--json`) and `--format=text` (aliases: `--text`, the default). JSON output
+is **write-only** — gotools never parses JSON input — and every document
+carries a `"schema_version": 1` field so automation can detect format
+changes. Invalid `--format=<x>` values exit 2.
+
+```bash
+$ gotools.sh list --format=json
+{"schema_version":1,"strategy":"split","dir":"tools","go_version":"inherit","tools":[{"name":"goimports","source":"go","package":"golang.org/x/tools/cmd/goimports","version":"v0.30.0","go":"1.24"}]}
+
+$ gotools.sh info goimports --format=json
+{"schema_version":1,"name":"goimports","source":"go","strategy":"split","go":"1.24","package":"golang.org/x/tools/cmd/goimports","version":"v0.30.0","runnable":true}
+
+$ gotools.sh doctor --format=json | jq '.checks[] | select(.name | startswith("tools.")) | select(.status != "pass")'
+```
+
+> **Note:** `list --json` previously emitted a bare array. It now emits an
+> object with top-level metadata and a `tools` array — update any scripts
+> written against the old shape.
 
 ### Examples
 

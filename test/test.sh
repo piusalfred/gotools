@@ -129,6 +129,13 @@ test_strategy_lifecycle() {
     run_cmd "sync hits the fast path" bash -c "\"$GOTOOLS\" sync | grep -q 'Tools up to date.'"
     run_cmd "sync --offline hits the fast path" bash -c "\"$GOTOOLS\" sync --offline | grep -q 'fingerprint match'"
 
+    # Real doctor run: real go tool probes (incl. go mod verify -modfile for
+    # split) and the proxy @latest reachability check.
+    suite "lifecycle: $strategy — doctor"
+    run_cmd "doctor healthy" "$GOTOOLS" doctor
+    run_cmd "doctor --format=json healthy" bash -c "\"$GOTOOLS\" doctor --format=json | grep -q '\"healthy\":true'"
+    run_cmd "list --format=json emits tools array" bash -c "\"$GOTOOLS\" list --format=json | grep -Fq '\"tools\":[{'"
+
     run_cmd "config read GOTOOLS_STRATEGY" "$GOTOOLS" config GOTOOLS_STRATEGY
     run_cmd "config write GOTOOLS_DIR" "$GOTOOLS" config GOTOOLS_DIR tools
 
@@ -355,6 +362,57 @@ test_robustness() {
 }
 
 # ---------------------------------------------------------------------------
+# Doctor — warn/fail paths and JSON parity (issue #28, #29)
+# ---------------------------------------------------------------------------
+test_doctor() {
+    local tmpdir="$TMP_BASE/doctor"
+    setup_project "$tmpdir"
+    cd "$tmpdir" || return
+
+    # --- warn path: init only, nothing synced ---
+    suite "doctor: warn path"
+    run_cmd "init split" "$GOTOOLS" init --strategy=split --no-migrate
+    local output
+    output=$("$GOTOOLS" doctor 2>&1) || true
+    if [[ "$output" == *"tools not synced"* ]]; then
+        pass "doctor reports unsynced tools"
+    else
+        fail_detail "doctor reports unsynced tools" "expected: 'tools not synced' in output" "actual:   $output"
+    fi
+    run_cmd "doctor exits 0 on warnings" "$GOTOOLS" doctor
+
+    # --- stale lock warn ---
+    mkdir -p tools/.gotools.lock
+    touch -t 202001010000 tools/.gotools.lock
+    output=$("$GOTOOLS" doctor 2>&1) || true
+    if [[ "$output" == *"stale lock directory"* ]]; then
+        pass "doctor reports stale lock"
+    else
+        fail_detail "doctor reports stale lock" "expected: 'stale lock directory' in output" "actual:   $output"
+    fi
+    rmdir tools/.gotools.lock
+
+    # --- fail path: fresh dir without init ---
+    suite "doctor: fail path"
+    local fresh="$TMP_BASE/doctor-fresh"
+    mkdir -p "$fresh"
+    cd "$fresh" || return
+    run_cmd "doctor exits 0 without manifest" "$GOTOOLS" doctor
+    output=$("$GOTOOLS" doctor 2>&1) || true
+    if [[ "$output" == *"no .gotools.json"* ]]; then
+        pass "doctor reports missing manifest"
+    else
+        fail_detail "doctor reports missing manifest" "expected: 'no .gotools.json' in output" "actual:   $output"
+    fi
+
+    # --- JSON parity ---
+    suite "doctor: json parity"
+    cd "$tmpdir" || return
+    run_cmd "doctor --format=json emits schema" bash -c "\"$GOTOOLS\" doctor --format=json | grep -q '\"schema_version\":1'"
+    run_cmd "version --format=json emits schema" bash -c "\"$GOTOOLS\" version --format=json | grep -q '\"schema_version\":1'"
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 echo "gotools.sh integration tests"
@@ -374,6 +432,7 @@ test_gomod_adoption
 test_parallel_sync
 test_smoke
 test_robustness
+test_doctor
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"
