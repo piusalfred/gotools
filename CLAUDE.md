@@ -33,6 +33,9 @@ test/
   test.sh            # Integration test suite (requires network)
   unit/              # Unit tests (runnable offline, no network)
   fixtures/          # Test fixture go.mod files
+docs/                # User docs: USAGE, INSTALLATION, STRATEGIES, MIGRATION,
+                     # CONFIGURATION, CI, DEVELOPMENT (README.md is a slim
+                     # landing page; README itself carries only go install)
 tools/               # Managed tools directory (split strategy, committed)
 .gotools.json        # Tool manifest (JSON config + tool declarations)
 ```
@@ -137,7 +140,7 @@ shellcheck gotools.sh --severity=warning
 - **Verbose:** `_go` wrapper prints `go` commands when `_VERBOSE=1` (set via `GOTOOLS_VERBOSE=1` env var)
 - **Trace:** `_trace_exec` logs each tool invocation as a JSON Lines record to `$PROJECT_ROOT/.gotools_trace.log` when `_TRACE=1` (set via `GOTOOLS_TRACE=1` env var). Each record contains `ts`, `tool`, `binary`, `cmd` (copy-pasteable full invocation), `strategy`, `stdin` (pipe|terminal), `args` (array), and `env` (resolved GOTOOLS_* values). Uses `>>` append — never overwrites. String values are escaped via `_json_escape` (handles `"`, `\`, and control chars). Pipeable to `jq`.
 - **Stdin pipe mode:** When no arguments are given and stdin is not a terminal, `_stdin_install` reads lines from stdin, strips the `go install` prefix, and delegates each line to `cmd_install`. Supports pipe (`|`), herestring (`<<<`), heredoc (`<<`), and file redirect (`<`).
-- **Error handling:** Failures print to stderr with `❌` prefix. Exit codes are structured via readonly constants (`E_GENERIC=1`, `E_USAGE=2`, `E_NETWORK=3`, `E_LOCK=4`, `E_TOOL_NOT_FOUND=5`, `E_OFFLINE=6`, `E_POLICY=7`, `E_ENVIRONMENT=8`) — always `exit $E_*` / `return $E_*`, never a raw `exit 1`. The user-facing table lives in `usage()` and README's "Exit Codes" section; keep all three in sync.
+- **Error handling:** Failures print to stderr with `❌` prefix. Exit codes are structured via readonly constants (`E_GENERIC=1`, `E_USAGE=2`, `E_NETWORK=3`, `E_LOCK=4`, `E_TOOL_NOT_FOUND=5`, `E_OFFLINE=6`, `E_POLICY=7`, `E_ENVIRONMENT=8`) — always `exit $E_*` / `return $E_*`, never a raw `exit 1`. The user-facing table lives in `usage()` and `docs/USAGE.md`'s "Exit Codes" section; keep all three in sync.
 - **No external dependencies:** JSON parsing uses `awk`, JSON generation uses pure Bash string escaping. Path normalization is pure Bash (`relative_path()`).
 - **Platform:** Works on macOS and Linux; avoids GNU-specific tools like `realpath`
 
@@ -193,7 +196,7 @@ Guidelines for new helpers:
 
 Run through this checklist:
 
-1. **Is it already possible?** Check `./gotools.sh help` and the README —
+1. **Is it already possible?** Check `./gotools.sh help` and the docs (`README.md` + `docs/`) —
    don't add a command that duplicates existing functionality.
 
 2. **Is it useful?** The feature should solve a concrete problem a user will
@@ -218,9 +221,17 @@ Every user-visible change must be reflected in three places:
 
 | What changed | Update this |
 | --- | --- |
-| New command, flag, or behavior | `./gotools.sh help` text (the usage function) |
-| User-facing feature | `README.md` |
+| New command, flag, or behavior | `./gotools.sh help` text (the usage function) + the matching `docs/` page |
+| User-facing feature | The matching `docs/` page — `README.md` stays a slim landing page (what the tool is, quick start, documentation index); only features that define the tool belong there |
 | Architecture, conventions, or internal patterns | `CLAUDE.md` |
+
+The `docs/` split: `USAGE.md` (commands, examples, risks, doctor, JSON output,
+completions, cleanup, exit codes), `INSTALLATION.md` (all install methods —
+README carries only the primary `go install`), `STRATEGIES.md`, `MIGRATION.md`,
+`CONFIGURATION.md` (manifest, schema versioning, module prefix), `CI.md`
+(CI integration, offline, locking/timeouts, pre-commit), `DEVELOPMENT.md`
+(contributor guide). Keep the README's documentation index table in sync when
+adding a page.
 
 Out-of-sync docs are worse than no docs — they actively mislead. If you change
 a command's output format or a config key name, grep the repo for old
