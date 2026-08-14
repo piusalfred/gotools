@@ -29,7 +29,7 @@ GCI_SECTIONS := \
 
 .PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean install help test test-unit test-integration \
         lint lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt \
-        version-check get-version set-version govulncheck check bundle check-bundle generate
+        version-check get-version set-version govulncheck check bundle check-bundle generate sync-main
 
 
 fmt: fmt-license fmt-imports fmt-go fmt-mod fmt-md
@@ -170,4 +170,14 @@ set-version: bundle
 	@sed -i '' 's/^VERSION=.*/VERSION="$(VER)"/' lib/config.sh
 	@$(MAKE) bundle
 	@echo "Version set to $(VER)"
+
+sync-main:
+	@echo "⚠️syncing main with dev branch (fast-forward only)"
+	git checkout dev
+	git pull origin dev
+	git checkout main
+	git pull origin main
+	git merge dev --ff-only
+	git push origin main
+	@echo "✅ main synced with dev"
 

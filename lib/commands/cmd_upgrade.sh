@@ -9,12 +9,29 @@
 cmd_upgrade() {
     _require_go
     _DRY_RUN=false
-    for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
+    # Filter flags out so they never leak into the target list.
+    local filtered=()
+    for a in "$@"; do
+        case "$a" in
+            --dry-run) _DRY_RUN=true ;;
+            --offline) _OFFLINE=true ;;
+            *) filtered+=("$a") ;;
+        esac
+    done
+    _parse_offline "$@"
+    set -- ${filtered[@]+"${filtered[@]}"}
+
     load_config
     _acquire_lock
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") upgrade <name|all> [--dry-run]" >&2
         exit $E_USAGE
+    fi
+
+    # Upgrading resolves @latest from the proxy — refuse in offline mode.
+    if ${_OFFLINE:-false}; then
+        echo "❌ Offline mode: cannot upgrade tools without network." >&2
+        exit $E_OFFLINE
     fi
 
     local targets=()

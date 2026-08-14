@@ -42,12 +42,13 @@ _tool_version_matches() {
     [[ -n "$disk" && "$disk" == "$expected" ]]
 }
 
-# _sync_fast_path <go-version> — skip the full reconciliation when nothing
-# changed. The fingerprint must match AND (defense in depth) every modfile
-# must exist with the manifest version — catches manual edits that bypassed
-# the manifest. Returns 0 and prints "Tools up to date." on a hit.
+# _sync_fast_path <go-version> [message] — skip the full reconciliation when
+# nothing changed. The fingerprint must match AND (defense in depth) every
+# modfile must exist with the manifest version — catches manual edits that
+# bypassed the manifest. Returns 0 and prints the success message on a hit.
 _sync_fast_path() {
     local go_ver="$1"
+    local success_message="${2:-✅ Tools up to date.}"
     local fingerprint_file="$GOTOOLS_DIR/.gotools.fingerprint"
     local current_fp
     current_fp=$(_sync_fingerprint "$go_ver")
@@ -64,7 +65,7 @@ _sync_fast_path() {
             _tool_version_matches "$_n" "$_p" "$_v" || { all_ok=false; break; }
         done <<< "$_MANIFEST_TOOLS"
         if $all_ok; then
-            echo "✅ Tools up to date."
+            echo "$success_message"
             return 0
         fi
     fi
@@ -75,11 +76,25 @@ cmd_sync() {
     _require_go
     _DRY_RUN=false
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
+    _parse_offline "$@"
 
     load_config
     _acquire_lock
     local target_v
     target_v=$(resolve_go_version)
+
+    # Offline mode: hermetic CI runs take ONLY the fingerprint fast path.
+    # Anything that would need the network refuses with exit 6 instead of
+    # making the build depend on proxy conditions. Also covers a strategy
+    # mismatch (migrating needs the network).
+    if ${_OFFLINE:-false}; then
+        if _sync_fast_path "$target_v" "✅ Tools up to date (fingerprint match)."; then
+            return 0
+        fi
+        echo "❌ Offline mode: manifest has changed. Network required." >&2
+        echo "   Run 'gotools sync' locally and commit the updated files." >&2
+        exit $E_OFFLINE
+    fi
 
     local disk_strategy
     disk_strategy=$(detect_strategy "$GOTOOLS_DIR")

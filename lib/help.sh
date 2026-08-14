@@ -56,7 +56,8 @@ _cmd_help() {
             echo "    # The 'go install' prefix is optional — bare pkg@version works too"
             echo ""
             echo "  Options:"
-            echo "    --force   Overwrite an existing tool with the same name"
+            echo "    --force    Overwrite an existing tool with the same name"
+            echo "    --offline  Refuse to install (needs the network), exit 6"
             ;;
         sync)
             echo "Usage: gotools.sh sync [--dry-run]"
@@ -73,6 +74,8 @@ _cmd_help() {
             echo ""
             echo "  Options:"
             echo "    --dry-run   Show what would be done without making changes"
+            echo "    --offline   Hermetic: fingerprint match only, exit 6 otherwise"
+            echo "                (GOTOOLS_OFFLINE=1 does the same)"
             ;;
         exec)
             echo "Usage: gotools.sh exec <tool-name> [args...]"
@@ -108,6 +111,7 @@ _cmd_help() {
             echo ""
             echo "  Options:"
             echo "    --dry-run   Show what would be upgraded without making changes"
+            echo "    --offline   Refuse to upgrade (needs the network), exit 6"
             ;;
         remove)
             echo "Usage: gotools.sh remove <name1> [name2...] [--dry-run]"

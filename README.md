@@ -700,6 +700,27 @@ PRs intended for `main` and direct pushes to `main` must bump `VERSION`
 PRs targeting `dev` don't bump. Releases are only cut after the Test workflow
 passed on that main push, so an untested commit can never ship.
 
+### Hermetic offline sync
+
+`sync --offline` (or `GOTOOLS_OFFLINE=1`) makes CI deterministic: it takes
+only the fingerprint fast path and refuses — with exit code 6 — the moment
+anything would need the network. `install` and `upgrade` refuse outright in
+offline mode.
+
+```yaml
+# GitHub Actions — hermetic, deterministic
+- name: Restore Go module cache
+  uses: actions/cache@v4
+  with:
+    path: ~/go/pkg/mod
+    key: gomod-${{ hashFiles('.gotools.fingerprint') }}
+
+- name: Sync tools
+  run: GOTOOLS_OFFLINE=1 gotools sync
+  # Fingerprint match → instant no-op (no network)
+  # Fingerprint mismatch → exit 6 → "run gotools sync locally"
+```
+
 ### Pre-commit Hook
 
 You can use `gotools.sh` with [pre-commit][pre-commit]

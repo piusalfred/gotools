@@ -32,6 +32,11 @@ _MANIFEST_TOOLS=""
 # print what they would do but make no changes.
 _DRY_RUN=false
 
+# Offline mode — set via the --offline flag or GOTOOLS_OFFLINE=1. When true,
+# commands refuse to do anything that would need the network: sync only takes
+# the fingerprint fast path, install/upgrade refuse outright.
+_OFFLINE=false
+
 # Verbose mode — set via GOTOOLS_VERBOSE=1 env var or --verbose flag.
 # When true, print every go command before executing it.
 _VERBOSE="${GOTOOLS_VERBOSE:-0}"

@@ -130,6 +130,18 @@ relative_path() {
     echo "${rel:-.}"
 }
 
+# _parse_offline [args...] — set _OFFLINE from a --offline flag in the args
+# or the GOTOOLS_OFFLINE=1 env var. Call at the top of commands that support
+# offline mode. Always returns 0 (the env check must not trip set -e).
+_parse_offline() {
+    for arg in "$@"; do
+        case "$arg" in --offline) _OFFLINE=true ;; esac
+    done
+    if [[ "${GOTOOLS_OFFLINE:-0}" == "1" ]]; then
+        _OFFLINE=true
+    fi
+}
+
 # _sha256 <file> — print the SHA-256 hash of a file.
 # Uses sha256sum (Linux) or shasum -a 256 (macOS); returns 1 if neither exists.
 _sha256() {
