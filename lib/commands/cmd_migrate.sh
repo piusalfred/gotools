@@ -79,7 +79,7 @@ cmd_migrate() {
 
     case "$target_strategy" in
         unified)
-            (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$go_ver")
+            (cd "$GOTOOLS_DIR" && _go mod init "$(tool_module_path)" && go mod edit -go="$go_ver")
             ;;
         split|module)
             ;;

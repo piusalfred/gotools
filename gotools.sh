@@ -168,15 +168,49 @@ _require_go() {
 _LOCK_FILE=""
 _LOCK_HELD=false
 
+# _lock_detect_stale <lock-dir> — a lock older than
+# GOTOOLS_LOCK_STALE_TIMEOUT seconds (default 300) belongs to a crashed
+# process. Removes it and returns 0 so the caller can retry immediately.
+# Returns 1 when the lock is fresh.
+_lock_detect_stale() {
+    local lock_dir="$1"
+    local stale_timeout=${GOTOOLS_LOCK_STALE_TIMEOUT:-300}
+    [[ -d "$lock_dir" ]] || return 1
+    local lock_age
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        lock_age=$(($(date +%s) - $(stat -f %m "$lock_dir" 2>/dev/null || echo 0)))
+    else
+        lock_age=$(($(date +%s) - $(stat -c %Y "$lock_dir" 2>/dev/null || echo 0)))
+    fi
+    if [[ $lock_age -gt $stale_timeout ]]; then
+        echo "  ⚠ Stale lock detected (> ${stale_timeout}s old). Removing..." >&2
+        rmdir "$lock_dir" 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
 # _acquire_lock — try to acquire the gotools lockfile. Reentrant: if this
-# process already holds the lock, returns immediately.
+# process already holds the lock, returns immediately. Configurable via
+# GOTOOLS_LOCK_TIMEOUT (default 10s), GOTOOLS_LOCK_STALE_TIMEOUT (default
+# 300s), and GOTOOLS_NO_LOCK=1 (skip locking — for CI with guaranteed
+# serial job access).
 _acquire_lock() {
     if $_LOCK_HELD; then return; fi
+    if [[ "${GOTOOLS_NO_LOCK:-0}" == "1" ]]; then
+        _LOCK_HELD=true
+        return
+    fi
     local lock_dir="${GOTOOLS_DIR:-tools}"
     mkdir -p "$lock_dir"
     _LOCK_FILE="$lock_dir/.gotools.lock"
-    local timeout=10 waited=0
+    local timeout=${GOTOOLS_LOCK_TIMEOUT:-10} waited=0
+    [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=10
     while ! mkdir "$_LOCK_FILE" 2>/dev/null; do
+        # A crashed process leaves a stale lock — drop it and retry now.
+        if _lock_detect_stale "$_LOCK_FILE"; then
+            continue
+        fi
         if [[ $waited -ge $timeout ]]; then
             echo "❌ Another gotools process is running. Try again later." >&2
             exit $E_LOCK
@@ -196,13 +230,49 @@ _release_lock() {
     fi
 }
 
-# _go — run a go command, printing it first if verbose mode is on.
+# _go_with_timeout — run `go` with a per-operation timeout
+# (GOTOOLS_OPERATION_TIMEOUT, default 120s; 0 disables). Uses timeout(1)
+# when available (Linux, coreutils on macOS), otherwise a portable
+# background+watchdog fallback. A timed-out operation exits E_NETWORK.
+_go_with_timeout() {
+    local timeout="${GOTOOLS_OPERATION_TIMEOUT:-120}"
+    if [[ "$timeout" -eq 0 ]]; then
+        command go "$@"
+        return $?
+    fi
+
+    if command -v timeout &>/dev/null; then
+        timeout "$timeout" go "$@"
+        return $?
+    fi
+
+    # Portable fallback: run go in a backgrounded subshell (exec so $pid IS
+    # the go process), kill it from a watchdog after the timeout.
+    local pid
+    ( exec go "$@" ) &
+    pid=$!
+    local watchdog
+    ( sleep "$timeout"; kill -9 "$pid" 2>/dev/null ) &
+    watchdog=$!
+    local rc=0
+    wait "$pid" || rc=$?
+    kill "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+    if [[ $rc -eq 137 ]]; then
+        echo "❌ Operation timed out after ${timeout}s." >&2
+        return $E_NETWORK
+    fi
+    return $rc
+}
+
+# _go — run a go command with the per-operation timeout, printing it first
+# if verbose mode is on.
 # Usage: _go [args...]  (calls `go` with the same args)
 _go() {
     if [[ "$_VERBOSE" == "1" || "$_VERBOSE" == "true" ]]; then
         echo "  ↳ go $*" >&2
     fi
-    go "$@"
+    _go_with_timeout "$@"
 }
 
 # _parse_dry_run — check remaining args for --dry-run, remove it, set _DRY_RUN.
@@ -1168,6 +1238,12 @@ _cmd_help() {
             echo "    --jobs N    Reinstall tools N at a time (default: 1, serial)."
             echo "                Parallel needs split/module; unified stays serial."
             echo "                GOTOOLS_JOBS=N does the same."
+            echo ""
+            echo "  Reliability env vars:"
+            echo "    GOTOOLS_LOCK_TIMEOUT          Lock wait budget (default 10s)"
+            echo "    GOTOOLS_LOCK_STALE_TIMEOUT    Remove locks older than this (default 300s)"
+            echo "    GOTOOLS_NO_LOCK=1             Skip locking (serial-guaranteed CI)"
+            echo "    GOTOOLS_OPERATION_TIMEOUT     Per go-operation timeout (default 120s, 0 disables)"
             ;;
         exec)
             echo "Usage: gotools.sh exec <tool-name> [args...]"
@@ -1924,7 +2000,7 @@ _install_failed() {
     local name="$1" output="$2"
     echo "❌ Failed to install $name" >&2
     [[ -n "$output" ]] && echo "$output" >&2
-    if echo "$output" | grep -qiE 'dial tcp|i/o timeout|connection timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded'; then
+    if echo "$output" | grep -qiE 'dial tcp|i/o timeout|connection timed out|operation timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded'; then
         exit $E_NETWORK
     fi
     if echo "$output" | grep -qiE 'invalid module version syntax|malformed module path|invalid package path|can.t request version'; then
@@ -1985,9 +2061,9 @@ cmd_install() {
         unified)
             mkdir -p "$GOTOOLS_DIR"
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
-                (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$target_v")
+                (cd "$GOTOOLS_DIR" && _go mod init "$(tool_module_path)" && go mod edit -go="$target_v")
             fi
-            if ! _get_out=$(cd "$GOTOOLS_DIR" && go get -tool "$pkg" 2>&1); then
+            if ! _get_out=$(cd "$GOTOOLS_DIR" && _go get -tool "$pkg" 2>&1); then
                 _install_failed "$name" "$_get_out"
             fi
             ;;
@@ -2005,7 +2081,7 @@ module $mod_path
 go $target_v
 MODEOF
             fi
-            if ! _get_out=$(cd "$GOTOOLS_DIR" && go get -tool -modfile="$modfile" "$pkg" 2>&1); then
+            if ! _get_out=$(cd "$GOTOOLS_DIR" && _go get -tool -modfile="$modfile" "$pkg" 2>&1); then
                 if $_created_mod; then
                     rm -f "$GOTOOLS_DIR/$modfile" "$GOTOOLS_DIR/${modfile%.mod}.sum"
                 fi
@@ -2017,9 +2093,9 @@ MODEOF
             mkdir -p "$GOTOOLS_DIR/$name"
             if [[ ! -f "$GOTOOLS_DIR/$name/go.mod" ]]; then
                 _created_mod=true
-                (cd "$GOTOOLS_DIR/$name" && go mod init "$(tool_module_path "$name")" && go mod edit -go="$target_v")
+                (cd "$GOTOOLS_DIR/$name" && _go mod init "$(tool_module_path "$name")" && go mod edit -go="$target_v")
             fi
-            if ! _get_out=$(cd "$GOTOOLS_DIR/$name" && go get -tool "$pkg" 2>&1); then
+            if ! _get_out=$(cd "$GOTOOLS_DIR/$name" && _go get -tool "$pkg" 2>&1); then
                 if $_created_mod; then
                     rm -rf "${GOTOOLS_DIR:?}/$name"
                 fi
@@ -2051,15 +2127,15 @@ MODEOF
     case "$GOTOOLS_STRATEGY" in
         unified)
             _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/go.mod")
-            _verify_err=$(cd "$GOTOOLS_DIR" && go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            _verify_err=$(cd "$GOTOOLS_DIR" && _go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
             ;;
         split)
             _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/$modfile")
-            _verify_err=$(cd "$GOTOOLS_DIR" && go tool -modfile="$modfile" "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            _verify_err=$(cd "$GOTOOLS_DIR" && _go tool -modfile="$modfile" "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
             ;;
         module)
             _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/$name/go.mod")
-            _verify_err=$(cd "$GOTOOLS_DIR/$name" && go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            _verify_err=$(cd "$GOTOOLS_DIR/$name" && _go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
             ;;
     esac
     if echo "$_verify_err" | grep -qiE '^(go: )?(no such tool|unknown command|tool not found)'; then
@@ -2267,7 +2343,7 @@ cmd_migrate() {
 
     case "$target_strategy" in
         unified)
-            (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$go_ver")
+            (cd "$GOTOOLS_DIR" && _go mod init "$(tool_module_path)" && go mod edit -go="$go_ver")
             ;;
         split|module)
             ;;
@@ -2327,7 +2403,7 @@ _purge_restore_tools() {
         fi
         echo "  ⬆ $_n (${_p}@${_v}) → go.mod"
         local _get_out
-        if ! _get_out=$(go get -tool "${_p}@${_v}" 2>&1); then
+        if ! _get_out=$(_go get -tool "${_p}@${_v}" 2>&1); then
             echo "❌ Failed to restore $_n" >&2
             echo "$_get_out" >&2
             if echo "$_get_out" | grep -qiE 'dial tcp|i/o timeout|connection timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded'; then
@@ -2423,7 +2499,7 @@ cmd_remove() {
                 if [[ -f "$modfile" ]]; then
                     local pkg
                     if pkg=$(pkg_for_tool "$name"); then
-                        (cd "$GOTOOLS_DIR" && go mod edit -droptool="$pkg" && go mod tidy)
+                        (cd "$GOTOOLS_DIR" && _go mod edit -droptool="$pkg" && go mod tidy)
                         echo "  ✅ Dropped $name from $modfile"
                     else
                         echo "  ⚠️  Tool $name not found in $modfile"
@@ -2696,14 +2772,14 @@ cmd_sync() {
     fi
 
     load_config
-    _acquire_lock
     local target_v
     target_v=$(resolve_go_version)
 
     # Offline mode: hermetic CI runs take ONLY the fingerprint fast path.
     # Anything that would need the network refuses with exit 6 instead of
     # making the build depend on proxy conditions. Also covers a strategy
-    # mismatch (migrating needs the network).
+    # mismatch (migrating needs the network). Runs BEFORE the lock: an
+    # offline sync is read-only, so lock contention must not block it.
     if ${_OFFLINE:-false}; then
         if _sync_fast_path "$target_v" "✅ Tools up to date (fingerprint match)."; then
             return 0
@@ -2712,6 +2788,8 @@ cmd_sync() {
         echo "   Run 'gotools sync' locally and commit the updated files." >&2
         exit $E_OFFLINE
     fi
+
+    _acquire_lock
 
     local disk_strategy
     disk_strategy=$(detect_strategy "$GOTOOLS_DIR")
@@ -2747,9 +2825,9 @@ cmd_sync() {
             else
                 mkdir -p "$GOTOOLS_DIR"
                 if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
-                    (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)")
+                    (cd "$GOTOOLS_DIR" && _go mod init "$(tool_module_path)")
                 fi
-                (cd "$GOTOOLS_DIR" && go mod edit -go="$target_v" && go mod tidy)
+                (cd "$GOTOOLS_DIR" && _go mod edit -go="$target_v" && go mod tidy)
             fi
             ;;
 
@@ -2780,9 +2858,9 @@ cmd_sync() {
                     cp "$f" "$tmpdir/go.mod"
                     [[ -f "$sumfile" ]] && cp "$sumfile" "$tmpdir/go.sum"
                     if [[ -n "$parent_mod" ]]; then
-                        (cd "$tmpdir" && go mod edit -replace="${parent_mod}=${PWD}" && go mod edit -go="$target_v" && go mod tidy && go mod edit -dropreplace="$parent_mod")
+                        (cd "$tmpdir" && _go mod edit -replace="${parent_mod}=${PWD}" && go mod edit -go="$target_v" && go mod tidy && go mod edit -dropreplace="$parent_mod")
                     else
-                        (cd "$tmpdir" && go mod edit -go="$target_v" && go mod tidy)
+                        (cd "$tmpdir" && _go mod edit -go="$target_v" && go mod tidy)
                     fi
                     cp "$tmpdir/go.mod" "$f"
                     cp "$tmpdir/go.sum" "$sumfile"
@@ -2807,7 +2885,7 @@ cmd_sync() {
                     local name
                     name=$(basename "$d")
                     echo "  ↻ $name"
-                    (cd "$d" && go mod edit -go="$target_v" && go mod tidy)
+                    (cd "$d" && _go mod edit -go="$target_v" && go mod tidy)
                 done
             fi
             ;;
@@ -3021,13 +3099,13 @@ cmd_upgrade() {
         echo "🚀 Upgrading $t ($pkg) from ${old_ver:-?}..."
         case "$GOTOOLS_STRATEGY" in
             unified)
-                (cd "$GOTOOLS_DIR" && go get -tool "${pkg}@latest")
+                (cd "$GOTOOLS_DIR" && _go get -tool "${pkg}@latest")
                 ;;
             split)
-                (cd "$GOTOOLS_DIR" && go get -tool -modfile="$t.mod" "${pkg}@latest")
+                (cd "$GOTOOLS_DIR" && _go get -tool -modfile="$t.mod" "${pkg}@latest")
                 ;;
             module)
-                (cd "$GOTOOLS_DIR/$t" && go get -tool "${pkg}@latest")
+                (cd "$GOTOOLS_DIR/$t" && _go get -tool "${pkg}@latest")
                 ;;
         esac
 

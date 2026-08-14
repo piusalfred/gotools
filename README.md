@@ -713,6 +713,17 @@ serial and warns when `--jobs > 1` is requested explicitly.
   run: gotools sync --jobs $(nproc) --offline
 ```
 
+### Reliability knobs for CI
+
+| Env var | Default | Purpose |
+| :--- | :--- | :--- |
+| `GOTOOLS_LOCK_TIMEOUT` | `10` | Seconds to wait for the lock before failing with exit 4. |
+| `GOTOOLS_LOCK_STALE_TIMEOUT` | `300` | Locks older than this belong to a crashed process — removed automatically. |
+| `GOTOOLS_NO_LOCK` | *(off)* | `1` skips locking entirely (CI with guaranteed serial access). |
+| `GOTOOLS_OPERATION_TIMEOUT` | `120` | Per `go get`/`go mod tidy` timeout; a hung operation exits 3 (network error, retryable). `0` disables. |
+
+An offline fast-path sync never takes the lock — it is read-only.
+
 ### Hermetic offline sync
 
 `sync --offline` (or `GOTOOLS_OFFLINE=1`) makes CI deterministic: it takes

@@ -31,15 +31,49 @@ _require_go() {
 _LOCK_FILE=""
 _LOCK_HELD=false
 
+# _lock_detect_stale <lock-dir> — a lock older than
+# GOTOOLS_LOCK_STALE_TIMEOUT seconds (default 300) belongs to a crashed
+# process. Removes it and returns 0 so the caller can retry immediately.
+# Returns 1 when the lock is fresh.
+_lock_detect_stale() {
+    local lock_dir="$1"
+    local stale_timeout=${GOTOOLS_LOCK_STALE_TIMEOUT:-300}
+    [[ -d "$lock_dir" ]] || return 1
+    local lock_age
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        lock_age=$(($(date +%s) - $(stat -f %m "$lock_dir" 2>/dev/null || echo 0)))
+    else
+        lock_age=$(($(date +%s) - $(stat -c %Y "$lock_dir" 2>/dev/null || echo 0)))
+    fi
+    if [[ $lock_age -gt $stale_timeout ]]; then
+        echo "  ⚠ Stale lock detected (> ${stale_timeout}s old). Removing..." >&2
+        rmdir "$lock_dir" 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
 # _acquire_lock — try to acquire the gotools lockfile. Reentrant: if this
-# process already holds the lock, returns immediately.
+# process already holds the lock, returns immediately. Configurable via
+# GOTOOLS_LOCK_TIMEOUT (default 10s), GOTOOLS_LOCK_STALE_TIMEOUT (default
+# 300s), and GOTOOLS_NO_LOCK=1 (skip locking — for CI with guaranteed
+# serial job access).
 _acquire_lock() {
     if $_LOCK_HELD; then return; fi
+    if [[ "${GOTOOLS_NO_LOCK:-0}" == "1" ]]; then
+        _LOCK_HELD=true
+        return
+    fi
     local lock_dir="${GOTOOLS_DIR:-tools}"
     mkdir -p "$lock_dir"
     _LOCK_FILE="$lock_dir/.gotools.lock"
-    local timeout=10 waited=0
+    local timeout=${GOTOOLS_LOCK_TIMEOUT:-10} waited=0
+    [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=10
     while ! mkdir "$_LOCK_FILE" 2>/dev/null; do
+        # A crashed process leaves a stale lock — drop it and retry now.
+        if _lock_detect_stale "$_LOCK_FILE"; then
+            continue
+        fi
         if [[ $waited -ge $timeout ]]; then
             echo "❌ Another gotools process is running. Try again later." >&2
             exit $E_LOCK
@@ -59,13 +93,49 @@ _release_lock() {
     fi
 }
 
-# _go — run a go command, printing it first if verbose mode is on.
+# _go_with_timeout — run `go` with a per-operation timeout
+# (GOTOOLS_OPERATION_TIMEOUT, default 120s; 0 disables). Uses timeout(1)
+# when available (Linux, coreutils on macOS), otherwise a portable
+# background+watchdog fallback. A timed-out operation exits E_NETWORK.
+_go_with_timeout() {
+    local timeout="${GOTOOLS_OPERATION_TIMEOUT:-120}"
+    if [[ "$timeout" -eq 0 ]]; then
+        command go "$@"
+        return $?
+    fi
+
+    if command -v timeout &>/dev/null; then
+        timeout "$timeout" go "$@"
+        return $?
+    fi
+
+    # Portable fallback: run go in a backgrounded subshell (exec so $pid IS
+    # the go process), kill it from a watchdog after the timeout.
+    local pid
+    ( exec go "$@" ) &
+    pid=$!
+    local watchdog
+    ( sleep "$timeout"; kill -9 "$pid" 2>/dev/null ) &
+    watchdog=$!
+    local rc=0
+    wait "$pid" || rc=$?
+    kill "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+    if [[ $rc -eq 137 ]]; then
+        echo "❌ Operation timed out after ${timeout}s." >&2
+        return $E_NETWORK
+    fi
+    return $rc
+}
+
+# _go — run a go command with the per-operation timeout, printing it first
+# if verbose mode is on.
 # Usage: _go [args...]  (calls `go` with the same args)
 _go() {
     if [[ "$_VERBOSE" == "1" || "$_VERBOSE" == "true" ]]; then
         echo "  ↳ go $*" >&2
     fi
-    go "$@"
+    _go_with_timeout "$@"
 }
 
 # _parse_dry_run — check remaining args for --dry-run, remove it, set _DRY_RUN.

@@ -79,6 +79,12 @@ _cmd_help() {
             echo "    --jobs N    Reinstall tools N at a time (default: 1, serial)."
             echo "                Parallel needs split/module; unified stays serial."
             echo "                GOTOOLS_JOBS=N does the same."
+            echo ""
+            echo "  Reliability env vars:"
+            echo "    GOTOOLS_LOCK_TIMEOUT          Lock wait budget (default 10s)"
+            echo "    GOTOOLS_LOCK_STALE_TIMEOUT    Remove locks older than this (default 300s)"
+            echo "    GOTOOLS_NO_LOCK=1             Skip locking (serial-guaranteed CI)"
+            echo "    GOTOOLS_OPERATION_TIMEOUT     Per go-operation timeout (default 120s, 0 disables)"
             ;;
         exec)
             echo "Usage: gotools.sh exec <tool-name> [args...]"

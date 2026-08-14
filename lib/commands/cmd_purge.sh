@@ -41,7 +41,7 @@ _purge_restore_tools() {
         fi
         echo "  ⬆ $_n (${_p}@${_v}) → go.mod"
         local _get_out
-        if ! _get_out=$(go get -tool "${_p}@${_v}" 2>&1); then
+        if ! _get_out=$(_go get -tool "${_p}@${_v}" 2>&1); then
             echo "❌ Failed to restore $_n" >&2
             echo "$_get_out" >&2
             if echo "$_get_out" | grep -qiE 'dial tcp|i/o timeout|connection timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded'; then

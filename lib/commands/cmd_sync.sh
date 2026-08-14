@@ -141,14 +141,14 @@ cmd_sync() {
     fi
 
     load_config
-    _acquire_lock
     local target_v
     target_v=$(resolve_go_version)
 
     # Offline mode: hermetic CI runs take ONLY the fingerprint fast path.
     # Anything that would need the network refuses with exit 6 instead of
     # making the build depend on proxy conditions. Also covers a strategy
-    # mismatch (migrating needs the network).
+    # mismatch (migrating needs the network). Runs BEFORE the lock: an
+    # offline sync is read-only, so lock contention must not block it.
     if ${_OFFLINE:-false}; then
         if _sync_fast_path "$target_v" "✅ Tools up to date (fingerprint match)."; then
             return 0
@@ -157,6 +157,8 @@ cmd_sync() {
         echo "   Run 'gotools sync' locally and commit the updated files." >&2
         exit $E_OFFLINE
     fi
+
+    _acquire_lock
 
     local disk_strategy
     disk_strategy=$(detect_strategy "$GOTOOLS_DIR")
@@ -192,9 +194,9 @@ cmd_sync() {
             else
                 mkdir -p "$GOTOOLS_DIR"
                 if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
-                    (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)")
+                    (cd "$GOTOOLS_DIR" && _go mod init "$(tool_module_path)")
                 fi
-                (cd "$GOTOOLS_DIR" && go mod edit -go="$target_v" && go mod tidy)
+                (cd "$GOTOOLS_DIR" && _go mod edit -go="$target_v" && go mod tidy)
             fi
             ;;
 
@@ -225,9 +227,9 @@ cmd_sync() {
                     cp "$f" "$tmpdir/go.mod"
                     [[ -f "$sumfile" ]] && cp "$sumfile" "$tmpdir/go.sum"
                     if [[ -n "$parent_mod" ]]; then
-                        (cd "$tmpdir" && go mod edit -replace="${parent_mod}=${PWD}" && go mod edit -go="$target_v" && go mod tidy && go mod edit -dropreplace="$parent_mod")
+                        (cd "$tmpdir" && _go mod edit -replace="${parent_mod}=${PWD}" && go mod edit -go="$target_v" && go mod tidy && go mod edit -dropreplace="$parent_mod")
                     else
-                        (cd "$tmpdir" && go mod edit -go="$target_v" && go mod tidy)
+                        (cd "$tmpdir" && _go mod edit -go="$target_v" && go mod tidy)
                     fi
                     cp "$tmpdir/go.mod" "$f"
                     cp "$tmpdir/go.sum" "$sumfile"
@@ -252,7 +254,7 @@ cmd_sync() {
                     local name
                     name=$(basename "$d")
                     echo "  ↻ $name"
-                    (cd "$d" && go mod edit -go="$target_v" && go mod tidy)
+                    (cd "$d" && _go mod edit -go="$target_v" && go mod tidy)
                 done
             fi
             ;;
