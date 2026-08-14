@@ -103,10 +103,17 @@ assert_contains "info --json missing tool" "not found" "$result"
 # check command
 # -----------------------------------------------------------------------
 category "check (empty manifest)"
-# Fresh init = empty manifest
-cd "$TMPDIR" && bash "$GOTOOLS_SH" init --strategy=split >/dev/null 2>&1
-result=$(cd "$TMPDIR" && bash "$GOTOOLS_SH" check 2>&1)
+# Fresh init = empty manifest. Use a fresh directory: init now MERGES an
+# existing manifest instead of wiping it, so re-initing the shared sandbox
+# (which has faketool) would try real installs.
+CHECK_DIR=$(mktemp -d)
+trap 'rm -rf "$CHECK_DIR"' EXIT
+cp "$SCRIPT_DIR/../main.go" "$SCRIPT_DIR/../go.mod" "$CHECK_DIR/"
+(cd "$CHECK_DIR" && bash "$GOTOOLS_SH" init --strategy=split >/dev/null 2>&1)
+result=$(cd "$CHECK_DIR" && bash "$GOTOOLS_SH" check 2>&1)
 assert_contains "check empty project" "Checking" "$result"
+rm -rf "$CHECK_DIR"
+trap 'rm -rf "$TMPDIR"' EXIT
 
 # -----------------------------------------------------------------------
 # duplicate detection

@@ -7,6 +7,11 @@
 
 
 cmd_config() {
+    # Load the project config first: _manifest_config_set flushes the whole
+    # manifest from in-memory state, so without this a write would reset the
+    # strategy to the default and wipe the entire tools list.
+    load_config
+
     if [[ $# -eq 0 ]]; then
         # Show all config.
         if [[ ! -f "$MANIFEST_FILE" ]]; then

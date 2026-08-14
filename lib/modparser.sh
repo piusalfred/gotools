@@ -82,6 +82,42 @@ extract_pkg_from_mod() {
     extract_tools_from_mod "$1" | head -n1
 }
 
+# strip_tools_from_mod <modfile>
+#   Prints the file with all `tool` directives removed. Handles both forms:
+#     tool pkg
+#     tool (
+#       pkg1
+#       pkg2
+#     )
+#   Every other line (module, go, require blocks, replace, exclude, comments,
+#   blank lines) is passed through verbatim. The caller owns writing the
+#   output back (atomically — temp file + mv, like _manifest_flush).
+strip_tools_from_mod() {
+    local modfile="$1"
+    awk '
+        /^tool[[:space:]]+\(/ { in_block=1; next }
+        in_block && /^\)/ { in_block=0; next }
+        in_block { next }
+        $1 == "tool" { next }
+        { print }
+    ' "$modfile"
+}
+
+# _gomod_tool_scan <modfile>
+#   Prints one line per tool directive:  name pkg@version
+#   Versions are resolved from the require blocks; a missing pin falls back
+#   to @latest (same policy as extract_tools_with_versions).
+_gomod_tool_scan() {
+    local modfile="$1"
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        local name ver
+        name=$(infer_binary_name_from_pkg "$pkg")
+        ver=$(extract_version_for_pkg "$modfile" "$pkg")
+        echo "$name ${pkg}@${ver:-latest}"
+    done < <(extract_tools_from_mod "$modfile")
+}
+
 # infer_binary_name_from_pkg <package-path>
 #   Converts a Go package path (without @version) into the expected binary name.
 #   Examples:
