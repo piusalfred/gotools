@@ -5,20 +5,15 @@
   "go_version": "inherit",
   "module_prefix": "github.com/piusalfred/gotools",
   "tools": {
-    "addlicense": {
-      "source": "go",
-      "package": "github.com/google/addlicense",
-      "version": "v1.2.0"
-    },
     "gci": {
       "source": "go",
       "package": "github.com/daixiang0/gci",
       "version": "v0.14.0"
     },
-    "gofumpt": {
+    "addlicense": {
       "source": "go",
-      "package": "mvdan.cc/gofumpt",
-      "version": "v0.10.0"
+      "package": "github.com/google/addlicense",
+      "version": "v1.2.0"
     },
     "govulncheck": {
       "source": "go",
@@ -29,6 +24,11 @@
       "source": "go",
       "package": "honnef.co/go/tools/cmd/staticcheck",
       "version": "v0.7.0"
+    },
+    "gofumpt": {
+      "source": "go",
+      "package": "mvdan.cc/gofumpt",
+      "version": "v0.10.0"
     }
   }
 }

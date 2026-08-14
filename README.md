@@ -693,6 +693,13 @@ steps:
     run: gotools.sh exec addlicense -check .
 ```
 
+### Version guard
+
+PRs intended for `main` and direct pushes to `main` must bump `VERSION`
+(`make set-version VER=x.y.z`) — the Version Guard workflow fails otherwise.
+PRs targeting `dev` don't bump. Releases are only cut after the Test workflow
+passed on that main push, so an untested commit can never ship.
+
 ### Pre-commit Hook
 
 You can use `gotools.sh` with [pre-commit][pre-commit]

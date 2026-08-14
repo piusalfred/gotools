@@ -52,6 +52,7 @@ cmd_self_update() {
             echo "❌ Error: go install failed." >&2
             return $E_GENERIC
         }
+        echo "  🔐 Integrity verified by the Go module checksum database."
         echo "✨ Successfully updated to $latest_tag!"
         return 0
     fi
