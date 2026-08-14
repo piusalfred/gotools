@@ -79,7 +79,7 @@ cmd_install() {
             fi
             _get_out=$(cd "$GOTOOLS_DIR" && _go_timeout get -tool "$pkg" 2>&1) || _get_rc=$?
             if [[ $_get_rc -eq 124 ]]; then
-                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                echo "❌ Operation timed out after ${_OPERATION_TIMEOUT:-120}s installing $name." >&2
                 exit $E_NETWORK
             fi
             if [[ $_get_rc -ne 0 ]]; then
@@ -105,7 +105,7 @@ MODEOF
                 if $_created_mod; then
                     rm -f "$GOTOOLS_DIR/$modfile" "$GOTOOLS_DIR/${modfile%.mod}.sum"
                 fi
-                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                echo "❌ Operation timed out after ${_OPERATION_TIMEOUT:-120}s installing $name." >&2
                 exit $E_NETWORK
             fi
             if [[ $_get_rc -ne 0 ]]; then
@@ -127,7 +127,7 @@ MODEOF
                 if $_created_mod; then
                     rm -rf "${GOTOOLS_DIR:?}/$name"
                 fi
-                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                echo "❌ Operation timed out after ${_OPERATION_TIMEOUT:-120}s installing $name." >&2
                 exit $E_NETWORK
             fi
             if [[ $_get_rc -ne 0 ]]; then

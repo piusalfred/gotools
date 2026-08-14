@@ -52,6 +52,94 @@ _manifest_validate() {
     return 0
 }
 
+# _SETTINGS — in-memory runtime-settings store, same pipe-delimited shape
+# as _MANIFEST_TOOLS: one "key|value" line per setting. Populated by
+# _manifest_parse from the manifest's "settings" block (which may be
+# absent — defaults then apply), mutated by _manifest_config_set.
+_SETTINGS=""
+
+# _settings_default <key> — the built-in default for a settings key.
+_settings_default() {
+    case "$1" in
+        offline)           echo "false" ;;
+        jobs)              echo "1" ;;
+        lock_stale_timeout) echo "300" ;;
+        lock_timeout)      echo "10" ;;
+        no_lock)           echo "false" ;;
+        operation_timeout) echo "120" ;;
+        trace)             echo "false" ;;
+        verbose)           echo "false" ;;
+        *)                 return 1 ;;
+    esac
+}
+
+# _settings_get <key> — echo the manifest value for a settings key.
+# rc 1 when the manifest carries no entry for it.
+_settings_get() {
+    local want="$1" _k _v
+    while IFS='|' read -r _k _v; do
+        if [[ "$_k" == "$want" ]]; then
+            echo "$_v"
+            return 0
+        fi
+    done <<< "$_SETTINGS"
+    return 1
+}
+
+# _settings_resolve <key> — the effective value with full precedence:
+# startup env (explicit, even "0"/"false") > manifest settings > default.
+# Booleans come back normalized to true/false; numbers as their digits.
+_settings_resolve() {
+    local key="$1" env_var=""
+    case "$key" in
+        offline)           env_var="$_ORIG_ENV_OFFLINE" ;;
+        jobs)              env_var="$_ORIG_ENV_JOBS" ;;
+        lock_stale_timeout) env_var="$_ORIG_ENV_LOCK_STALE_TIMEOUT" ;;
+        lock_timeout)      env_var="$_ORIG_ENV_LOCK_TIMEOUT" ;;
+        no_lock)           env_var="$_ORIG_ENV_NO_LOCK" ;;
+        operation_timeout) env_var="$_ORIG_ENV_OPERATION_TIMEOUT" ;;
+        trace)             env_var="$_ORIG_ENV_TRACE" ;;
+        verbose)           env_var="$_ORIG_ENV_VERBOSE" ;;
+    esac
+    local value=""
+    if [[ -n "$env_var" ]]; then
+        value="$env_var"
+    else
+        value=$(_settings_get "$key") || value=$(_settings_default "$key")
+    fi
+    _settings_normalize "$key" "$value"
+}
+
+# _settings_normalize <key> <raw> — validate and normalize a settings
+# value: booleans become true/false (accepting 0/1), integers stay as
+# digits. Anything else falls back to the default.
+_settings_normalize() {
+    local key="$1" raw="$2"
+    case "$key" in
+        offline|no_lock|verbose)
+            case "$raw" in
+                true|1)  echo "true" ;;
+                false|0) echo "false" ;;
+                *)       _settings_default "$key" ;;
+            esac
+            ;;
+        trace)
+            # "stdout" selects stdout streaming — valid for the env var
+            # only, but harmless to accept here too.
+            case "$raw" in
+                stdout)       echo "stdout" ;;
+                true|1)       echo "true" ;;
+                false|0|"")   echo "false" ;;
+                *)            _settings_default "$key" ;;
+            esac
+            ;;
+        jobs|operation_timeout|lock_timeout|lock_stale_timeout)
+            [[ "$raw" =~ ^[0-9]+$ ]] && echo "$raw" || _settings_default "$key"
+            ;;
+        *) _settings_default "$key" ;;
+    esac
+}
+
 # _manifest_check_version — refuse manifests written by a NEWER gotools so
 # old versions fail loudly instead of silently misparsing. Pre-version
 # manifests (no top-level "version" key) default to v1. A non-numeric match
@@ -89,6 +177,7 @@ _manifest_parse() {
     #       "version": "ver"
     #     }
     _MANIFEST_TOOLS=""
+    _SETTINGS=""
     local in_tools=false _tname="" _tsource="" _tpkg="" _tver=""
     while IFS= read -r line; do
         # Detect start/end of "tools" object
@@ -128,6 +217,28 @@ _manifest_parse() {
             fi
         fi
     done < "$mf"
+
+    # Second pass: the optional "settings" block ("key": value lines).
+    # Unknown keys and malformed values are ignored — defaults apply.
+    local in_settings=false _sk="" _sv=""
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*\"settings\"[[:space:]]*:[[:space:]]*\{ ]]; then
+            in_settings=true
+            continue
+        fi
+        if $in_settings && [[ "$line" =~ ^[[:space:]]*\} ]]; then
+            break
+        fi
+        if $in_settings && [[ "$line" =~ \"([a-z_]+)\":[[:space:]]*([^,]+) ]]; then
+            _sk="${BASH_REMATCH[1]}"
+            _sv="${BASH_REMATCH[2]}"
+            _sv="${_sv##[[:space:]]}"
+            _sv="${_sv%%[[:space:]]}"
+            if _settings_default "$_sk" >/dev/null 2>&1; then
+                _SETTINGS+="${_sk}|${_sv}"$'\n'
+            fi
+        fi
+    done < "$mf"
 }
 
 # _manifest_flush — write config vars and _MANIFEST_TOOLS back to .gotools.json.
@@ -145,6 +256,27 @@ _manifest_flush() {
     if [[ -z "$prefix" ]]; then
         prefix="$dir"
     fi
+
+    # Build settings JSON block. Every key is emitted — including keys the
+    # manifest never carried — so the committed file always shows the full
+    # knob surface with its effective values (visibility by default).
+    local settings_json="" skey sval
+    local settings_sorted
+    settings_sorted=$(printf '%s\n' "$_SETTINGS" | LC_ALL=C sort -t'|' -k1,1)
+    local seen=""
+    local first_setting=true
+    while IFS='|' read -r skey sval; do
+        [[ -z "$skey" ]] && continue
+        seen="${seen} ${skey}"
+        if $first_setting; then first_setting=false; else settings_json+=","$'\n'; fi
+        settings_json+="    \"${skey}\": ${sval}"
+    done <<< "$settings_sorted"
+    for skey in jobs lock_stale_timeout lock_timeout no_lock offline operation_timeout trace verbose; do
+        if [[ " $seen " != *" $skey "* ]]; then
+            if $first_setting; then first_setting=false; else settings_json+=","$'\n'; fi
+            settings_json+="    \"${skey}\": $(_settings_default "$skey")"
+        fi
+    done
 
     # Build tools JSON block
     local tools_json=""
@@ -179,6 +311,9 @@ _manifest_flush() {
   "dir": "${dir}",
   "go_version": "${go_ver}",
   "module_prefix": "${prefix}",
+  "settings": {
+${settings_json}
+  },
   "tools": {
 ${tools_json}
   }
@@ -256,6 +391,14 @@ _manifest_config_get() {
         GOTOOLS_DIR)          awk -F'"' '/"dir":/       {print $4; exit}' "$mf" ;;
         GOTOOLS_GO_VERSION)   awk -F'"' '/"go_version":/{print $4; exit}' "$mf" ;;
         GOTOOLS_MODULE_PREFIX) awk -F'"' '/"module_prefix":/{print $4; exit}' "$mf" ;;
+        GOTOOLS_OFFLINE)           _settings_get offline || _settings_default offline ;;
+        GOTOOLS_JOBS)              _settings_get jobs || _settings_default jobs ;;
+        GOTOOLS_OPERATION_TIMEOUT) _settings_get operation_timeout || _settings_default operation_timeout ;;
+        GOTOOLS_LOCK_TIMEOUT)      _settings_get lock_timeout || _settings_default lock_timeout ;;
+        GOTOOLS_LOCK_STALE_TIMEOUT) _settings_get lock_stale_timeout || _settings_default lock_stale_timeout ;;
+        GOTOOLS_NO_LOCK)           _settings_get no_lock || _settings_default no_lock ;;
+        GOTOOLS_TRACE)             _settings_get trace || _settings_default trace ;;
+        GOTOOLS_VERBOSE)           _settings_get verbose || _settings_default verbose ;;
         *) echo "❌ Unknown config key: $key" >&2; return 1 ;;
     esac
 }
@@ -263,12 +406,55 @@ _manifest_config_get() {
 # _manifest_config_set — update a config field in the manifest file.
 _manifest_config_set() {
     local key="$1" value="$2"
+    local setting_key="" normalized=""
     case "$key" in
         GOTOOLS_STRATEGY)     GOTOOLS_STRATEGY="$value"     ;;
         GOTOOLS_DIR)          GOTOOLS_DIR="$value"          ;;
         GOTOOLS_GO_VERSION)   GOTOOLS_GO_VERSION="$value"    ;;
         GOTOOLS_MODULE_PREFIX) GOTOOLS_MODULE_PREFIX="$value" ;;
+        GOTOOLS_OFFLINE)           setting_key="offline" ;;
+        GOTOOLS_JOBS)              setting_key="jobs" ;;
+        GOTOOLS_OPERATION_TIMEOUT) setting_key="operation_timeout" ;;
+        GOTOOLS_LOCK_TIMEOUT)      setting_key="lock_timeout" ;;
+        GOTOOLS_LOCK_STALE_TIMEOUT) setting_key="lock_stale_timeout" ;;
+        GOTOOLS_NO_LOCK)           setting_key="no_lock" ;;
+        GOTOOLS_TRACE)             setting_key="trace" ;;
+        GOTOOLS_VERBOSE)           setting_key="verbose" ;;
         *) echo "❌ Unknown config key: $key" >&2; return 1 ;;
     esac
+    if [[ -n "$setting_key" ]]; then
+        normalized=$(_settings_normalize "$setting_key" "$value")
+        _settings_set "$setting_key" "$normalized"
+        case "$setting_key" in
+            offline) _OFFLINE=$normalized ;;
+            trace)   _TRACE=$normalized ;;
+            verbose) _VERBOSE=$normalized ;;
+            jobs)    _JOBS=$normalized ;;
+            operation_timeout) _OPERATION_TIMEOUT=$normalized ;;
+            lock_timeout) _LOCK_TIMEOUT=$normalized ;;
+            lock_stale_timeout) _LOCK_STALE_TIMEOUT=$normalized ;;
+            no_lock) _NO_LOCK=$normalized ;;
+        esac
+    fi
     _manifest_flush
+}
+
+# _settings_set <key> <value> — update a settings entry in memory
+# (does NOT flush).
+_settings_set() {
+    local want="$1" value="$2"
+    local new_settings="" found=false _k _v
+    while IFS='|' read -r _k _v; do
+        [[ -z "$_k" ]] && continue
+        if [[ "$_k" == "$want" ]]; then
+            new_settings+="${_k}|${value}"$'\n'
+            found=true
+        else
+            new_settings+="${_k}|${_v}"$'\n'
+        fi
+    done <<< "$_SETTINGS"
+    if ! $found; then
+        new_settings+="${want}|${value}"$'\n'
+    fi
+    _SETTINGS="$new_settings"
 }

@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-VERSION="v0.6.6"
+VERSION="v0.6.7"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -107,6 +107,26 @@ _ORIG_ENV_DIR="${GOTOOLS_DIR:-}"
 _ORIG_ENV_GO_VERSION="${GOTOOLS_GO_VERSION:-}"
 _ORIG_ENV_MODULE_PREFIX="${GOTOOLS_MODULE_PREFIX:-}"
 
+# Runtime settings — startup env > manifest "settings" block > defaults
+# (resolved in load_config). Captured once at startup, like the layout
+# keys, so an explicit GOTOOLS_X=0 in the environment can override a
+# manifest setting that is "true". Flags (e.g. --offline) always win.
+_ORIG_ENV_OFFLINE="${GOTOOLS_OFFLINE:-}"
+_ORIG_ENV_JOBS="${GOTOOLS_JOBS:-}"
+_ORIG_ENV_OPERATION_TIMEOUT="${GOTOOLS_OPERATION_TIMEOUT:-}"
+_ORIG_ENV_LOCK_TIMEOUT="${GOTOOLS_LOCK_TIMEOUT:-}"
+_ORIG_ENV_LOCK_STALE_TIMEOUT="${GOTOOLS_LOCK_STALE_TIMEOUT:-}"
+_ORIG_ENV_NO_LOCK="${GOTOOLS_NO_LOCK:-}"
+_ORIG_ENV_TRACE="${GOTOOLS_TRACE:-}"
+_ORIG_ENV_VERBOSE="${GOTOOLS_VERBOSE:-}"
+
+# Resolved settings globals (set by load_config; consumed by the code).
+_JOBS=1
+_OPERATION_TIMEOUT=120
+_LOCK_TIMEOUT=10
+_LOCK_STALE_TIMEOUT=300
+_NO_LOCK=0
+
 _CONFIG_LOADED=false
 
 # ---------------------------------------------------------------------------
@@ -141,6 +161,20 @@ load_config() {
     # Normalize: treat empty module_prefix as unset so auto-detection kicks in
     # in resolve_module_prefix.
     [[ -n "${GOTOOLS_MODULE_PREFIX:-}" ]] || GOTOOLS_MODULE_PREFIX=""
+
+    # Runtime settings: startup env > manifest "settings" block > defaults.
+    # Flags (e.g. --offline) set _OFFLINE before load_config in some
+    # commands — a flag-set true must never be clobbered back to false.
+    if ! $_OFFLINE; then
+        _OFFLINE=$(_settings_resolve offline) || true
+    fi
+    _VERBOSE=$(_settings_resolve verbose) || true
+    _TRACE=$(_settings_resolve trace) || true
+    _JOBS=$(_settings_resolve jobs) || true
+    _OPERATION_TIMEOUT=$(_settings_resolve operation_timeout) || true
+    _LOCK_TIMEOUT=$(_settings_resolve lock_timeout) || true
+    _LOCK_STALE_TIMEOUT=$(_settings_resolve lock_stale_timeout) || true
+    _NO_LOCK=$(_settings_resolve no_lock) || true
 
     _CONFIG_LOADED=true
 }
@@ -243,7 +277,7 @@ _lock_detect_stale() {
     mtime=$(_file_mtime "$lock_dir" 2>/dev/null) || true
     [[ -z "$mtime" ]] && return 1
     age=$((now - mtime))
-    local stale_timeout="${GOTOOLS_LOCK_STALE_TIMEOUT:-300}"
+    local stale_timeout="${_LOCK_STALE_TIMEOUT:-300}"
     [[ "$stale_timeout" =~ ^[0-9]+$ ]] || stale_timeout=300
     if [[ $age -gt "$stale_timeout" ]]; then
         echo "  ⚠️  Stale lock detected (age ${age}s). Removing $lock_dir..." >&2
@@ -261,14 +295,14 @@ _lock_detect_stale() {
 # acquisition entirely — only for CI with serial workspace guarantees.
 _acquire_lock() {
     if $_LOCK_HELD; then return; fi
-    if [[ "${GOTOOLS_NO_LOCK:-0}" == "1" ]]; then
+    if [[ "${_NO_LOCK:-0}" == "true" || "${_NO_LOCK:-0}" == "1" ]]; then
         _LOCK_HELD=true
         return
     fi
     local lock_dir="${GOTOOLS_DIR:-tools}"
     mkdir -p "$lock_dir"
     _LOCK_FILE="$lock_dir/.gotools.lock"
-    local timeout="${GOTOOLS_LOCK_TIMEOUT:-10}"
+    local timeout="${_LOCK_TIMEOUT:-10}"
     [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=10
     local waited=0
     while ! mkdir "$_LOCK_FILE" 2>/dev/null; do
@@ -426,7 +460,7 @@ _run_with_timeout() {
 # Returns go's exit code, or 124 when the timeout fired — the single rc for
 # "timed out" across both mechanisms.
 _go_timeout() {
-    local t="${GOTOOLS_OPERATION_TIMEOUT:-120}"
+    local t="${_OPERATION_TIMEOUT:-120}"
     [[ "$t" =~ ^[0-9]+$ ]] || t=120
     if [[ "$_VERBOSE" == "1" || "$_VERBOSE" == "true" ]]; then
         echo "  ↳ go $*" >&2
@@ -448,7 +482,7 @@ _go_timeout() {
 _timeout_fatal() {
     local rc="$1" what="$2"
     if [[ "$rc" -eq 124 ]]; then
-        echo "❌ $what timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s." >&2
+        echo "❌ $what timed out after ${_OPERATION_TIMEOUT:-120}s." >&2
         exit $E_NETWORK
     fi
     exit "$rc"
@@ -593,7 +627,7 @@ _json_escape() {
 #   {"ts":"<iso8601>","level":"<info|error>","tool":"<name>","binary":"<path>","cmd":"<reconstructed>","strategy":"<s>","stdin":"<pipe|terminal>","exit_code":<int>,"args":["...",...],"env":{...}}
 # _trace_exec BINARY EXIT_CODE TOOL_NAME [ARGS...]
 _trace_exec() {
-    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
+    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" && "$_TRACE" != "stdout" ]]; then
         return
     fi
     local _bin="$1"
@@ -631,7 +665,8 @@ _trace_exec() {
         fi
     done
 
-    printf '{"ts":"%s","level":"%s","tool":"%s","binary":"%s","cmd":"%s","strategy":"%s","stdin":"%s","exit_code":%d,"args":[%s],"env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
+    local _record
+    _record=$(printf '{"ts":"%s","level":"%s","tool":"%s","binary":"%s","cmd":"%s","strategy":"%s","stdin":"%s","exit_code":%d,"args":[%s],"env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
         "$_ts" \
         "$_level" \
         "$(_json_escape "$_tool")" \
@@ -646,15 +681,22 @@ _trace_exec() {
         "$(_json_escape "$(resolve_go_version)")" \
         "$(_json_escape "$(resolve_module_prefix)")" \
         "$(_json_escape "${GOTOOLS_VERBOSE:-0}")" \
-        "$(_json_escape "${GOTOOLS_TRACE:-0}")" \
-        >> "$_PROJECT_ROOT/.gotools_trace.log"
+        "$(_json_escape "${GOTOOLS_TRACE:-0}")")
+    printf '%s\n' "$_record" >> "$_PROJECT_ROOT/.gotools_trace.log"
+    # Live stream: stderr by default, stdout only when explicitly asked.
+    # stderr keeps the tool's own stdout clean for pipes and CI logs.
+    if [[ "$_TRACE" == "stdout" ]]; then
+        printf '%s\n' "$_record"
+    else
+        printf '%s\n' "$_record" >&2
+    fi
 }
 
 # _trace_fatal — emit a "fatal" trace record when gotools itself errors
 # out before a tool is executed (missing go.mod, unknown tool, etc.).
 # _trace_fatal MESSAGE [TOOL_NAME]
 _trace_fatal() {
-    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
+    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" && "$_TRACE" != "stdout" ]]; then
         return
     fi
     local _message="$1"
@@ -662,7 +704,8 @@ _trace_fatal() {
     local _ts _stdin
     _ts=$(date '+%Y-%m-%dT%H:%M:%S')
     _stdin=$([ -t 0 ] && echo "terminal" || echo "pipe")
-    printf '{"ts":"%s","level":"fatal","tool":"%s","error":"%s","strategy":"%s","stdin":"%s","env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
+    local _record
+    _record=$(printf '{"ts":"%s","level":"fatal","tool":"%s","error":"%s","strategy":"%s","stdin":"%s","env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
         "$_ts" \
         "$(_json_escape "$_tool")" \
         "$(_json_escape "$_message")" \
@@ -673,8 +716,14 @@ _trace_fatal() {
         "$(_json_escape "$(resolve_go_version)")" \
         "$(_json_escape "$(resolve_module_prefix)")" \
         "$(_json_escape "${GOTOOLS_VERBOSE:-0}")" \
-        "$(_json_escape "${GOTOOLS_TRACE:-0}")" \
-        >> "$_PROJECT_ROOT/.gotools_trace.log"
+        "$(_json_escape "${GOTOOLS_TRACE:-0}")")
+    printf '%s\n' "$_record" >> "$_PROJECT_ROOT/.gotools_trace.log"
+    # Live stream: stderr by default, stdout only when explicitly asked.
+    if [[ "$_TRACE" == "stdout" ]]; then
+        printf '%s\n' "$_record"
+    else
+        printf '%s\n' "$_record" >&2
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -727,6 +776,94 @@ _manifest_validate() {
     return 0
 }
 
+# _SETTINGS — in-memory runtime-settings store, same pipe-delimited shape
+# as _MANIFEST_TOOLS: one "key|value" line per setting. Populated by
+# _manifest_parse from the manifest's "settings" block (which may be
+# absent — defaults then apply), mutated by _manifest_config_set.
+_SETTINGS=""
+
+# _settings_default <key> — the built-in default for a settings key.
+_settings_default() {
+    case "$1" in
+        offline)           echo "false" ;;
+        jobs)              echo "1" ;;
+        lock_stale_timeout) echo "300" ;;
+        lock_timeout)      echo "10" ;;
+        no_lock)           echo "false" ;;
+        operation_timeout) echo "120" ;;
+        trace)             echo "false" ;;
+        verbose)           echo "false" ;;
+        *)                 return 1 ;;
+    esac
+}
+
+# _settings_get <key> — echo the manifest value for a settings key.
+# rc 1 when the manifest carries no entry for it.
+_settings_get() {
+    local want="$1" _k _v
+    while IFS='|' read -r _k _v; do
+        if [[ "$_k" == "$want" ]]; then
+            echo "$_v"
+            return 0
+        fi
+    done <<< "$_SETTINGS"
+    return 1
+}
+
+# _settings_resolve <key> — the effective value with full precedence:
+# startup env (explicit, even "0"/"false") > manifest settings > default.
+# Booleans come back normalized to true/false; numbers as their digits.
+_settings_resolve() {
+    local key="$1" env_var=""
+    case "$key" in
+        offline)           env_var="$_ORIG_ENV_OFFLINE" ;;
+        jobs)              env_var="$_ORIG_ENV_JOBS" ;;
+        lock_stale_timeout) env_var="$_ORIG_ENV_LOCK_STALE_TIMEOUT" ;;
+        lock_timeout)      env_var="$_ORIG_ENV_LOCK_TIMEOUT" ;;
+        no_lock)           env_var="$_ORIG_ENV_NO_LOCK" ;;
+        operation_timeout) env_var="$_ORIG_ENV_OPERATION_TIMEOUT" ;;
+        trace)             env_var="$_ORIG_ENV_TRACE" ;;
+        verbose)           env_var="$_ORIG_ENV_VERBOSE" ;;
+    esac
+    local value=""
+    if [[ -n "$env_var" ]]; then
+        value="$env_var"
+    else
+        value=$(_settings_get "$key") || value=$(_settings_default "$key")
+    fi
+    _settings_normalize "$key" "$value"
+}
+
+# _settings_normalize <key> <raw> — validate and normalize a settings
+# value: booleans become true/false (accepting 0/1), integers stay as
+# digits. Anything else falls back to the default.
+_settings_normalize() {
+    local key="$1" raw="$2"
+    case "$key" in
+        offline|no_lock|verbose)
+            case "$raw" in
+                true|1)  echo "true" ;;
+                false|0) echo "false" ;;
+                *)       _settings_default "$key" ;;
+            esac
+            ;;
+        trace)
+            # "stdout" selects stdout streaming — valid for the env var
+            # only, but harmless to accept here too.
+            case "$raw" in
+                stdout)       echo "stdout" ;;
+                true|1)       echo "true" ;;
+                false|0|"")   echo "false" ;;
+                *)            _settings_default "$key" ;;
+            esac
+            ;;
+        jobs|operation_timeout|lock_timeout|lock_stale_timeout)
+            [[ "$raw" =~ ^[0-9]+$ ]] && echo "$raw" || _settings_default "$key"
+            ;;
+        *) _settings_default "$key" ;;
+    esac
+}
+
 # _manifest_check_version — refuse manifests written by a NEWER gotools so
 # old versions fail loudly instead of silently misparsing. Pre-version
 # manifests (no top-level "version" key) default to v1. A non-numeric match
@@ -764,6 +901,7 @@ _manifest_parse() {
     #       "version": "ver"
     #     }
     _MANIFEST_TOOLS=""
+    _SETTINGS=""
     local in_tools=false _tname="" _tsource="" _tpkg="" _tver=""
     while IFS= read -r line; do
         # Detect start/end of "tools" object
@@ -803,6 +941,28 @@ _manifest_parse() {
             fi
         fi
     done < "$mf"
+
+    # Second pass: the optional "settings" block ("key": value lines).
+    # Unknown keys and malformed values are ignored — defaults apply.
+    local in_settings=false _sk="" _sv=""
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*\"settings\"[[:space:]]*:[[:space:]]*\{ ]]; then
+            in_settings=true
+            continue
+        fi
+        if $in_settings && [[ "$line" =~ ^[[:space:]]*\} ]]; then
+            break
+        fi
+        if $in_settings && [[ "$line" =~ \"([a-z_]+)\":[[:space:]]*([^,]+) ]]; then
+            _sk="${BASH_REMATCH[1]}"
+            _sv="${BASH_REMATCH[2]}"
+            _sv="${_sv##[[:space:]]}"
+            _sv="${_sv%%[[:space:]]}"
+            if _settings_default "$_sk" >/dev/null 2>&1; then
+                _SETTINGS+="${_sk}|${_sv}"$'\n'
+            fi
+        fi
+    done < "$mf"
 }
 
 # _manifest_flush — write config vars and _MANIFEST_TOOLS back to .gotools.json.
@@ -820,6 +980,27 @@ _manifest_flush() {
     if [[ -z "$prefix" ]]; then
         prefix="$dir"
     fi
+
+    # Build settings JSON block. Every key is emitted — including keys the
+    # manifest never carried — so the committed file always shows the full
+    # knob surface with its effective values (visibility by default).
+    local settings_json="" skey sval
+    local settings_sorted
+    settings_sorted=$(printf '%s\n' "$_SETTINGS" | LC_ALL=C sort -t'|' -k1,1)
+    local seen=""
+    local first_setting=true
+    while IFS='|' read -r skey sval; do
+        [[ -z "$skey" ]] && continue
+        seen="${seen} ${skey}"
+        if $first_setting; then first_setting=false; else settings_json+=","$'\n'; fi
+        settings_json+="    \"${skey}\": ${sval}"
+    done <<< "$settings_sorted"
+    for skey in jobs lock_stale_timeout lock_timeout no_lock offline operation_timeout trace verbose; do
+        if [[ " $seen " != *" $skey "* ]]; then
+            if $first_setting; then first_setting=false; else settings_json+=","$'\n'; fi
+            settings_json+="    \"${skey}\": $(_settings_default "$skey")"
+        fi
+    done
 
     # Build tools JSON block
     local tools_json=""
@@ -854,6 +1035,9 @@ _manifest_flush() {
   "dir": "${dir}",
   "go_version": "${go_ver}",
   "module_prefix": "${prefix}",
+  "settings": {
+${settings_json}
+  },
   "tools": {
 ${tools_json}
   }
@@ -931,6 +1115,14 @@ _manifest_config_get() {
         GOTOOLS_DIR)          awk -F'"' '/"dir":/       {print $4; exit}' "$mf" ;;
         GOTOOLS_GO_VERSION)   awk -F'"' '/"go_version":/{print $4; exit}' "$mf" ;;
         GOTOOLS_MODULE_PREFIX) awk -F'"' '/"module_prefix":/{print $4; exit}' "$mf" ;;
+        GOTOOLS_OFFLINE)           _settings_get offline || _settings_default offline ;;
+        GOTOOLS_JOBS)              _settings_get jobs || _settings_default jobs ;;
+        GOTOOLS_OPERATION_TIMEOUT) _settings_get operation_timeout || _settings_default operation_timeout ;;
+        GOTOOLS_LOCK_TIMEOUT)      _settings_get lock_timeout || _settings_default lock_timeout ;;
+        GOTOOLS_LOCK_STALE_TIMEOUT) _settings_get lock_stale_timeout || _settings_default lock_stale_timeout ;;
+        GOTOOLS_NO_LOCK)           _settings_get no_lock || _settings_default no_lock ;;
+        GOTOOLS_TRACE)             _settings_get trace || _settings_default trace ;;
+        GOTOOLS_VERBOSE)           _settings_get verbose || _settings_default verbose ;;
         *) echo "❌ Unknown config key: $key" >&2; return 1 ;;
     esac
 }
@@ -938,14 +1130,57 @@ _manifest_config_get() {
 # _manifest_config_set — update a config field in the manifest file.
 _manifest_config_set() {
     local key="$1" value="$2"
+    local setting_key="" normalized=""
     case "$key" in
         GOTOOLS_STRATEGY)     GOTOOLS_STRATEGY="$value"     ;;
         GOTOOLS_DIR)          GOTOOLS_DIR="$value"          ;;
         GOTOOLS_GO_VERSION)   GOTOOLS_GO_VERSION="$value"    ;;
         GOTOOLS_MODULE_PREFIX) GOTOOLS_MODULE_PREFIX="$value" ;;
+        GOTOOLS_OFFLINE)           setting_key="offline" ;;
+        GOTOOLS_JOBS)              setting_key="jobs" ;;
+        GOTOOLS_OPERATION_TIMEOUT) setting_key="operation_timeout" ;;
+        GOTOOLS_LOCK_TIMEOUT)      setting_key="lock_timeout" ;;
+        GOTOOLS_LOCK_STALE_TIMEOUT) setting_key="lock_stale_timeout" ;;
+        GOTOOLS_NO_LOCK)           setting_key="no_lock" ;;
+        GOTOOLS_TRACE)             setting_key="trace" ;;
+        GOTOOLS_VERBOSE)           setting_key="verbose" ;;
         *) echo "❌ Unknown config key: $key" >&2; return 1 ;;
     esac
+    if [[ -n "$setting_key" ]]; then
+        normalized=$(_settings_normalize "$setting_key" "$value")
+        _settings_set "$setting_key" "$normalized"
+        case "$setting_key" in
+            offline) _OFFLINE=$normalized ;;
+            trace)   _TRACE=$normalized ;;
+            verbose) _VERBOSE=$normalized ;;
+            jobs)    _JOBS=$normalized ;;
+            operation_timeout) _OPERATION_TIMEOUT=$normalized ;;
+            lock_timeout) _LOCK_TIMEOUT=$normalized ;;
+            lock_stale_timeout) _LOCK_STALE_TIMEOUT=$normalized ;;
+            no_lock) _NO_LOCK=$normalized ;;
+        esac
+    fi
     _manifest_flush
+}
+
+# _settings_set <key> <value> — update a settings entry in memory
+# (does NOT flush).
+_settings_set() {
+    local want="$1" value="$2"
+    local new_settings="" found=false _k _v
+    while IFS='|' read -r _k _v; do
+        [[ -z "$_k" ]] && continue
+        if [[ "$_k" == "$want" ]]; then
+            new_settings+="${_k}|${value}"$'\n'
+            found=true
+        else
+            new_settings+="${_k}|${_v}"$'\n'
+        fi
+    done <<< "$_SETTINGS"
+    if ! $found; then
+        new_settings+="${want}|${value}"$'\n'
+    fi
+    _SETTINGS="$new_settings"
 }
 
 # _resolve_installed_version — after go get -tool, read back the version from the
@@ -1563,8 +1798,12 @@ _cmd_help() {
             echo "  One arg:    Show the value of <key>"
             echo "  Two args:   Set <key>=<value>"
             echo ""
-            echo "  Valid keys: GOTOOLS_STRATEGY, GOTOOLS_DIR,"
-            echo "              GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX"
+            echo "  Layout keys: GOTOOLS_STRATEGY, GOTOOLS_DIR,"
+            echo "               GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX"
+            echo "  Settings:    GOTOOLS_OFFLINE, GOTOOLS_JOBS, GOTOOLS_OPERATION_TIMEOUT,"
+            echo "               GOTOOLS_LOCK_TIMEOUT, GOTOOLS_LOCK_STALE_TIMEOUT,"
+            echo "               GOTOOLS_NO_LOCK, GOTOOLS_TRACE, GOTOOLS_VERBOSE"
+            echo "  Both 'config KEY VALUE' and 'config KEY=VALUE' forms work."
             ;;
         purge)
             echo "Usage: gotools.sh purge [--restore] [--dry-run]"
@@ -1942,13 +2181,22 @@ cmd_config() {
         return 0
     fi
 
+    # Accept both `config KEY VALUE` and `config KEY=VALUE`.
+    if [[ $# -eq 1 && "$1" == *=* ]]; then
+        set -- "${1%%=*}" "${1#*=}"
+    fi
+
     local key="$1"
 
     # Validate key name.
     case "$key" in
         GOTOOLS_STRATEGY|GOTOOLS_DIR|GOTOOLS_GO_VERSION|GOTOOLS_MODULE_PREFIX) ;;
+        GOTOOLS_OFFLINE|GOTOOLS_JOBS|GOTOOLS_OPERATION_TIMEOUT|GOTOOLS_LOCK_TIMEOUT) ;;
+        GOTOOLS_LOCK_STALE_TIMEOUT|GOTOOLS_NO_LOCK|GOTOOLS_TRACE|GOTOOLS_VERBOSE) ;;
         *) echo "❌ Unknown config key: $key" >&2
-           echo "   Valid keys: GOTOOLS_STRATEGY, GOTOOLS_DIR, GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX" >&2
+           echo "   Valid keys: GOTOOLS_STRATEGY, GOTOOLS_DIR, GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX," >&2
+           echo "               GOTOOLS_OFFLINE, GOTOOLS_JOBS, GOTOOLS_OPERATION_TIMEOUT, GOTOOLS_LOCK_TIMEOUT," >&2
+           echo "               GOTOOLS_LOCK_STALE_TIMEOUT, GOTOOLS_NO_LOCK, GOTOOLS_TRACE, GOTOOLS_VERBOSE" >&2
            return $E_USAGE ;;
     esac
 
@@ -1977,6 +2225,22 @@ cmd_config() {
             *) echo "❌ Invalid strategy: $value (must be unified, split, or module)" >&2; return $E_USAGE ;;
         esac
     fi
+
+    # Validate values for the runtime settings.
+    case "$key" in
+        GOTOOLS_OFFLINE|GOTOOLS_NO_LOCK|GOTOOLS_VERBOSE)
+            case "$value" in true|false|0|1) ;; *) echo "❌ Invalid value: $value (must be true or false)" >&2; return $E_USAGE ;; esac
+            ;;
+        GOTOOLS_TRACE)
+            case "$value" in true|false|0|1|stdout) ;; *) echo "❌ Invalid value: $value (must be true, false, or stdout)" >&2; return $E_USAGE ;; esac
+            ;;
+        GOTOOLS_JOBS|GOTOOLS_OPERATION_TIMEOUT|GOTOOLS_LOCK_TIMEOUT|GOTOOLS_LOCK_STALE_TIMEOUT)
+            if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+                echo "❌ Invalid value: $value (must be a positive number)" >&2
+                return $E_USAGE
+            fi
+            ;;
+    esac
 
     if [[ ! -f "$MANIFEST_FILE" ]]; then
         # Create a new manifest with this one key set.
@@ -2807,7 +3071,7 @@ cmd_install() {
             fi
             _get_out=$(cd "$GOTOOLS_DIR" && _go_timeout get -tool "$pkg" 2>&1) || _get_rc=$?
             if [[ $_get_rc -eq 124 ]]; then
-                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                echo "❌ Operation timed out after ${_OPERATION_TIMEOUT:-120}s installing $name." >&2
                 exit $E_NETWORK
             fi
             if [[ $_get_rc -ne 0 ]]; then
@@ -2833,7 +3097,7 @@ MODEOF
                 if $_created_mod; then
                     rm -f "$GOTOOLS_DIR/$modfile" "$GOTOOLS_DIR/${modfile%.mod}.sum"
                 fi
-                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                echo "❌ Operation timed out after ${_OPERATION_TIMEOUT:-120}s installing $name." >&2
                 exit $E_NETWORK
             fi
             if [[ $_get_rc -ne 0 ]]; then
@@ -2855,7 +3119,7 @@ MODEOF
                 if $_created_mod; then
                     rm -rf "${GOTOOLS_DIR:?}/$name"
                 fi
-                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                echo "❌ Operation timed out after ${_OPERATION_TIMEOUT:-120}s installing $name." >&2
                 exit $E_NETWORK
             fi
             if [[ $_get_rc -ne 0 ]]; then
@@ -3537,8 +3801,10 @@ cmd_sync() {
     _DRY_RUN=false
     _parse_offline "$@"
     # Parallelism is opt-in: sync stays serial unless --jobs N (or
-    # GOTOOLS_JOBS) explicitly requests more than one concurrent install.
-    local jobs="${GOTOOLS_JOBS:-1}"
+    # GOTOOLS_JOBS / the manifest "jobs" setting) requests more than one
+    # concurrent install. Precedence: --jobs flag > GOTOOLS_JOBS env >
+    # manifest "jobs" setting > default 1.
+    local jobs=""
     local jobs_explicit=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -3548,12 +3814,16 @@ cmd_sync() {
         esac
         shift
     done
+
+    load_config
+
+    if ! $jobs_explicit; then
+        jobs="${_JOBS:-1}"
+    fi
     if ! [[ "$jobs" =~ ^[0-9]+$ ]]; then
         echo "❌ Invalid --jobs value: must be a positive number" >&2
         exit $E_USAGE
     fi
-
-    load_config
     local target_v
     target_v=$(resolve_go_version)
 

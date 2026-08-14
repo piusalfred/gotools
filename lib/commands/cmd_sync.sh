@@ -124,8 +124,10 @@ cmd_sync() {
     _DRY_RUN=false
     _parse_offline "$@"
     # Parallelism is opt-in: sync stays serial unless --jobs N (or
-    # GOTOOLS_JOBS) explicitly requests more than one concurrent install.
-    local jobs="${GOTOOLS_JOBS:-1}"
+    # GOTOOLS_JOBS / the manifest "jobs" setting) requests more than one
+    # concurrent install. Precedence: --jobs flag > GOTOOLS_JOBS env >
+    # manifest "jobs" setting > default 1.
+    local jobs=""
     local jobs_explicit=false
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -135,12 +137,16 @@ cmd_sync() {
         esac
         shift
     done
+
+    load_config
+
+    if ! $jobs_explicit; then
+        jobs="${_JOBS:-1}"
+    fi
     if ! [[ "$jobs" =~ ^[0-9]+$ ]]; then
         echo "❌ Invalid --jobs value: must be a positive number" >&2
         exit $E_USAGE
     fi
-
-    load_config
     local target_v
     target_v=$(resolve_go_version)
 
