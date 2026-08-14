@@ -279,10 +279,16 @@ Fixes must be systematic, not speculative. Follow these steps in order:
 
 1. Bump `VERSION` in `lib/config.sh` (`make set-version VER=x.y.z`) when
    merging to `main` — the CI Version Guard workflow enforces the bump on
-   PRs targeting `main`, and the local pre-commit version-check hook mirrors
-   that rule. PRs targeting `dev` do NOT bump.
+   PRs targeting `main` AND on direct pushes to `main`, and the local
+   pre-commit version-check hook mirrors that rule. PRs targeting `dev`
+   do NOT bump.
 2. Push to `main`
-3. GitHub Actions release workflow cross-compiles binaries (linux/amd64, linux/arm64, darwin/amd64, darwin/arm64) and creates a GitHub release with SHA256 checksums
+3. The release workflow only fires after the Test workflow passes on that
+   main push (`workflow_run` gated on conclusion + push event) and re-verifies
+   the version bump and the bundle sync itself — a release is never cut from
+   an untested or un-bumped commit. It cross-compiles binaries (linux/amd64,
+   linux/arm64, darwin/amd64, darwin/arm64) and creates a GitHub release with
+   SHA256 checksums.
 
 The release manifest `checksums-sha256.txt` must include `gotools.sh` itself
 (the workflow appends its hash) — `self-update` refuses to install a script

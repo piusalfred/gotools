@@ -494,6 +494,12 @@ _manifest_flush() {
 
     # Build tools JSON block
     local tools_json=""
+    # Deterministic order in the committed manifest: source, then package,
+    # then version, then name (final tiebreak for aliases) — so diffs are
+    # easy to read when tools are added or removed.
+    local tools_sorted
+    tools_sorted=$(printf '%s\n' "$_MANIFEST_TOOLS" | LC_ALL=C sort -t'|' -k2,2 -k3,3 -k4,4 -k1,1)
+
     local first=true
     local _n _s _p _v
     while IFS='|' read -r _n _s _p _v; do
@@ -504,7 +510,7 @@ _manifest_flush() {
         tools_json+="      \"package\": \"${_p}\","$'\n'
         tools_json+="      \"version\": \"${_v}\""$'\n'
         tools_json+="    }"
-    done <<< "$_MANIFEST_TOOLS"
+    done <<< "$tools_sorted"
 
     # Atomic write: build in a temp file, then rename over the target.
     # A crash mid-write leaves the previous manifest intact; the stray
@@ -2391,6 +2397,7 @@ cmd_self_update() {
             echo "❌ Error: go install failed." >&2
             return $E_GENERIC
         }
+        echo "  🔐 Integrity verified by the Go module checksum database."
         echo "✨ Successfully updated to $latest_tag!"
         return 0
     fi
@@ -2443,7 +2450,10 @@ cmd_self_update() {
 _sync_fingerprint() {
     local go_ver="$1"
     local fp
-    fp=$(printf '%s' "$_MANIFEST_TOOLS" | _sha256 /dev/stdin)
+    # Sort the tool list before hashing: the in-memory order depends on how
+    # the manifest was built (parsed vs appended), but the fingerprint must
+    # not. Same ordering as _manifest_flush.
+    fp=$(printf '%s' "$_MANIFEST_TOOLS" | LC_ALL=C sort -t'|' -k2,2 -k3,3 -k4,4 -k1,1 | _sha256 /dev/stdin)
     fp="${fp}|${GOTOOLS_STRATEGY}|${go_ver}|$(resolve_module_prefix)"
     printf '%s' "$fp"
 }

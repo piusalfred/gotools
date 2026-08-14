@@ -10,7 +10,10 @@
 _sync_fingerprint() {
     local go_ver="$1"
     local fp
-    fp=$(printf '%s' "$_MANIFEST_TOOLS" | _sha256 /dev/stdin)
+    # Sort the tool list before hashing: the in-memory order depends on how
+    # the manifest was built (parsed vs appended), but the fingerprint must
+    # not. Same ordering as _manifest_flush.
+    fp=$(printf '%s' "$_MANIFEST_TOOLS" | LC_ALL=C sort -t'|' -k2,2 -k3,3 -k4,4 -k1,1 | _sha256 /dev/stdin)
     fp="${fp}|${GOTOOLS_STRATEGY}|${go_ver}|$(resolve_module_prefix)"
     printf '%s' "$fp"
 }

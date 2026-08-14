@@ -113,6 +113,12 @@ _manifest_flush() {
 
     # Build tools JSON block
     local tools_json=""
+    # Deterministic order in the committed manifest: source, then package,
+    # then version, then name (final tiebreak for aliases) — so diffs are
+    # easy to read when tools are added or removed.
+    local tools_sorted
+    tools_sorted=$(printf '%s\n' "$_MANIFEST_TOOLS" | LC_ALL=C sort -t'|' -k2,2 -k3,3 -k4,4 -k1,1)
+
     local first=true
     local _n _s _p _v
     while IFS='|' read -r _n _s _p _v; do
@@ -123,7 +129,7 @@ _manifest_flush() {
         tools_json+="      \"package\": \"${_p}\","$'\n'
         tools_json+="      \"version\": \"${_v}\""$'\n'
         tools_json+="    }"
-    done <<< "$_MANIFEST_TOOLS"
+    done <<< "$tools_sorted"
 
     # Atomic write: build in a temp file, then rename over the target.
     # A crash mid-write leaves the previous manifest intact; the stray

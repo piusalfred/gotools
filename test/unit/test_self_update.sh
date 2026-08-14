@@ -195,4 +195,23 @@ assert_eq "missing hash tools exits 1" "1" "$rc"
 out=$(run_out "$S" self-update)
 assert_contains "missing hash tools message" "Neither sha256sum nor shasum" "$out"
 
+# 6. Go wrapper path ($0 without .sh): updates via go install and reports
+#    that integrity is covered by the Go module checksum database.
+cat > "$STUB_BIN/go" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "install" ]]; then exit 0; fi
+exit 1
+EOF
+chmod +x "$STUB_BIN/go"
+S="$TMPDIR/wrapper"
+mkdir -p "$S"
+cp "$GOTOOLS_SH" "$S/gotools"
+out=""
+rc=0
+out=$(cd "$S" && env -u GOTOOLS_STRATEGY -u GOTOOLS_DIR -u GOTOOLS_GO_VERSION \
+    -u GOTOOLS_MODULE_PREFIX CTRL="$CTRL" PATH="$STUB_BIN:/usr/bin:/bin" \
+    "$BASH" "$S/gotools" self-update 2>&1) || rc=$?
+assert_eq "wrapper self-update exits 0" "0" "$rc"
+assert_contains "wrapper update reports integrity" "🔐 Integrity verified by the Go module checksum database." "$out"
+
 finish
