@@ -2,10 +2,35 @@
 # License: MIT
 
 
+# _go_version_raw — print the bare go version string (e.g. "1.24.3"), empty
+# if go is missing or `go env GOVERSION` fails. Non-fatal, never exits.
+_go_version_raw() {
+    command -v go >/dev/null 2>&1 || return 1
+    go env GOVERSION 2>/dev/null | sed 's/^go//'
+}
+
+# _version_meets_min <actual> <required> — compare X.Y versions numerically.
+#   rc 0: actual >= required
+#   rc 1: actual < required
+#   rc 2: undetectable (actual empty / no X.Y pair in either version)
+# Pure: no output, no exit. Extracts the first [0-9]+\.[0-9]+ pair so inputs
+# like "1.24.3", "go1.24", or "devel go1.26-abc123" all work.
+_version_meets_min() {
+    local actual="$1" required="$2"
+    local amaj amin rmaj rmin
+    [[ "$actual" =~ ([0-9]+)\.([0-9]+) ]] || return 2
+    amaj="${BASH_REMATCH[1]}"
+    amin="${BASH_REMATCH[2]}"
+    [[ "$required" =~ ([0-9]+)\.([0-9]+) ]] || return 2
+    rmaj="${BASH_REMATCH[1]}"
+    rmin="${BASH_REMATCH[2]}"
+    if (( amaj > rmaj )); then return 0; fi
+    if (( amaj < rmaj )); then return 1; fi
+    if (( amin >= rmin )); then return 0; fi
+    return 1
+}
+
 # _require_go — verify Go is installed and >= 1.24 (minimum for tool directives).
-
-
-
 _require_go() {
     if ! command -v go &>/dev/null; then
         echo "❌ Go is not installed. Please install Go 1.24 or higher." >&2
@@ -13,15 +38,12 @@ _require_go() {
         exit $E_ENVIRONMENT
     fi
     local go_ver
-    go_ver=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
+    go_ver=$(_go_version_raw) || true
     if [[ -z "$go_ver" ]]; then
         echo "❌ Could not determine Go version." >&2
         exit $E_ENVIRONMENT
     fi
-    local major minor
-    major=$(echo "$go_ver" | cut -d. -f1)
-    minor=$(echo "$go_ver" | cut -d. -f2)
-    if [[ "$major" -lt 1 ]] || { [[ "$major" -eq 1 ]] && [[ "${minor:-0}" -lt 24 ]]; }; then
+    if ! _version_meets_min "$go_ver" "$MIN_GO_VERSION"; then
         echo "❌ Go $go_ver is too old. Go 1.24 or higher is required." >&2
         exit $E_ENVIRONMENT
     fi
@@ -140,6 +162,30 @@ _parse_offline() {
     if [[ "${GOTOOLS_OFFLINE:-0}" == "1" ]]; then
         _OFFLINE=true
     fi
+}
+
+# _parse_output_format [args...] — scan args for output-format flags and set
+# _OUTPUT_FORMAT. --format=json | --json → json; --format=text | --text →
+# text. Any other --format=<x> → usage error. Always returns 0 otherwise
+# (set -e safe). Resets to "text" first so repeated in-process calls never
+# leak a previous call's format. Callers re-scan the args to reject any
+# leftover positional junk.
+_parse_output_format() {
+    _OUTPUT_FORMAT="text"
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json)        _OUTPUT_FORMAT="json" ;;
+            --text)        _OUTPUT_FORMAT="text" ;;
+            --format=json) _OUTPUT_FORMAT="json" ;;
+            --format=text) _OUTPUT_FORMAT="text" ;;
+            --format=*)
+                echo "❌ Unknown output format: ${arg#--format=}" >&2
+                echo "   Supported formats: json, text" >&2
+                exit $E_USAGE
+                ;;
+        esac
+    done
 }
 
 # _parallel_for <max-jobs> <fn> [args...]

@@ -92,20 +92,28 @@ _cmd_help() {
             echo "    gotools.sh exec golangci-lint run ./..."
             ;;
         list)
-            echo "Usage: gotools.sh list [--json]"
+            echo "Usage: gotools.sh list [--format=json|text]"
             echo ""
             echo "  List all managed tools with their versions and strategy info."
             echo ""
             echo "  Options:"
-            echo "    --json   Output as JSON array for scripting/CI"
+            echo "    --format=json   Output a JSON object with metadata and a"
+            echo "                    \"tools\" array (stable for scripting/CI)"
+            echo "    --format=text   Human-readable table (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
             ;;
         info)
-            echo "Usage: gotools.sh info <tool-name> [--json]"
+            echo "Usage: gotools.sh info <tool-name> [--format=json|text]"
             echo ""
             echo "  Show detailed information about a specific tool."
             echo ""
             echo "  Options:"
-            echo "    --json   Output as JSON object for scripting/CI"
+            echo "    --format=json   Output a JSON object including a \"runnable\""
+            echo "                    flag (stable for scripting/CI)"
+            echo "    --format=text   Human-readable block (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
             ;;
         upgrade)
             echo "Usage: gotools.sh upgrade <name|all> [--dry-run]"
@@ -164,10 +172,36 @@ _cmd_help() {
             echo "  Verify all managed tools are installed and runnable."
             echo "  Runs each tool with --help or --version and reports pass/fail."
             ;;
+        doctor)
+            echo "Usage: gotools.sh doctor [--format=json|text] [--offline]"
+            echo ""
+            echo "  Diagnose your environment: Go installation, module proxy,"
+            echo "  .gotools.json configuration, managed tools, lock file, module"
+            echo "  integrity, and disk usage."
+            echo ""
+            echo "  Read-only: never modifies tools, the manifest, or the lock."
+            echo "  Always exits 0 (diagnostics are not failures) — invalid flags"
+            echo "  still exit 2. For CI, gate on 'doctor --format=json' and the"
+            echo "  \"healthy\"/\"issues\" fields."
+            echo ""
+            echo "  Options:"
+            echo "    --format=json   Output check results as JSON"
+            echo "    --format=text   Human-readable report (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
+            echo "    --offline       Skip the proxy reachability check; probes fail"
+            echo "                    fast instead of touching the network"
+            ;;
         version)
-            echo "Usage: gotools.sh version"
+            echo "Usage: gotools.sh version [--format=json|text]"
             echo ""
             echo "  Print the gotools.sh version."
+            echo ""
+            echo "  Options:"
+            echo "    --format=json   Output a JSON object (stable for scripting/CI)"
+            echo "    --format=text   Plain \"gotools.sh <version>\" line (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
             ;;
         self-update)
             echo "Usage: gotools.sh self-update"
@@ -194,38 +228,41 @@ Usage: $(basename "$0") <command> [arguments]
        <go install command> | $(basename "$0")     (pipe mode)
 
 Commands:
-  init [flags]            Bootstrap the project and adopt tools
-                            already declared in the root go.mod.
-                            --strategy=unified|split|module  (default: $DEFAULT_STRATEGY)
-                            --dir=<tools-dir>                     (default: $DEFAULT_DIR)
-                            --go=<version|inherit>                (default: $DEFAULT_GO_VERSION)
-                            --prefix=<module-prefix|auto>         (default: auto from root go.mod)
-                            --no-migrate  --dry-run
-  install [name] <pkg>    Install a new tool.
-                            If only <pkg> is given, name is inferred from its basename.
-  sync [--dry-run]        Sync tool state to match $MANIFEST_FILE.
-  exec <name> [args]      Run a managed tool.
-  list [--json]           List tools, versions, and strategies.
-  upgrade <name|all> [--dry-run]  Upgrade tools to @latest.
-  remove <name...> [--dry-run]    Remove specific tools.
-  migrate <strategy> [--dry-run]  Migrate to a different strategy.
-  config [key [value]]    View or edit $MANIFEST_FILE configuration.
-                            No args: show all config.
-                            One arg: show value of <key>.
-                            Two args: set <key>=<value>.
-  purge [--restore] [--dry-run]  Remove all tools and the $MANIFEST_FILE file;
-                            --restore puts the tools back into your go.mod.
-  info <name> [--json]    Show detailed information about a specific tool.
-  check                   Verify all managed tools are runnable.
-  version                 Show script version.
-  self-update             Update gotools.sh to the latest version.
-  uninstall               Remove this script from your system.
-  test <seconds>          Sleep for <seconds> (useful for testing Ctrl-C / signal handling).
+  init [flags]                      Bootstrap the project and adopt tools
+                                    already declared in the root go.mod.
+                                      --strategy=unified|split|module  (default: $DEFAULT_STRATEGY)
+                                      --dir=<tools-dir>                (default: $DEFAULT_DIR)
+                                      --go=<version|inherit>           (default: $DEFAULT_GO_VERSION)
+                                      --prefix=<module-prefix|auto>    (default: auto from root go.mod)
+                                      --no-migrate --dry-run
+  install [name] <pkg>              Install a new tool.
+                                    If only <pkg> is given, name is inferred from its basename.
+  sync [--dry-run]                  Sync tool state to match $MANIFEST_FILE.
+  exec <name> [args]                Run a managed tool.
+  list [--format=json|text]         List tools, versions, and strategies.
+  upgrade <name|all> [--dry-run]    Upgrade tools to @latest.
+  remove <name...> [--dry-run]      Remove specific tools.
+  migrate <strategy> [--dry-run]    Migrate to a different strategy.
+  config [key [value]]              View or edit $MANIFEST_FILE configuration.
+                                      No args: show all config.
+                                      One arg: show value of <key>.
+                                      Two args: set <key>=<value>.
+  purge [--restore] [--dry-run]     Remove all tools and the $MANIFEST_FILE file;
+                                    --restore puts the tools back into your go.mod.
+  info <name> [--format=json|text]  Show detailed information about a specific tool.
+  check                             Verify all managed tools are runnable.
+  doctor [--format=json|text] [--offline]
+                                    Diagnose your environment (Go, proxy, config,
+                                    tools, lock, integrity, disk).
+  version [--format=json|text]      Show script version.
+  self-update                       Update gotools.sh to the latest version.
+  uninstall                         Remove this script from your system.
+  test <seconds>                    Sleep for <seconds> (for testing signal handling).
 
 Strategies:
-  unified     One shared tools/go.mod with all tool directives.
-  split       Flat files: tools/<name>.mod and tools/<name>.sum per tool.
-  module      Dedicated subdirectories: tools/<name>/go.mod per tool.
+  unified    One shared tools/go.mod with all tool directives.
+  split      Flat files: tools/<name>.mod and tools/<name>.sum per tool.
+  module     Dedicated subdirectories: tools/<name>/go.mod per tool.
 
 Examples:
   gotools.sh init --strategy=module --dir=tools
@@ -241,15 +278,15 @@ Examples:
   gotools.sh purge
   gotools.sh uninstall
 
-Exit codes (stable — CI pipelines can key off these):
-  $E_GENERIC  Generic failure (catch-all)
-  $E_USAGE  Usage error — bad flags, wrong args, invalid input
-  $E_NETWORK  Network error — proxy unreachable, DNS failure, timeout
-  $E_LOCK  Lock contention — another gotools process is running
-  $E_TOOL_NOT_FOUND  Tool not installed — run 'gotools.sh sync' and retry
-  $E_OFFLINE  Offline violation — network needed but --offline was set
-  $E_POLICY  Policy violation — tool banned, version not pinned
-  $E_ENVIRONMENT  Environment error — Go missing/too old, bad manifest
+Exit Codes:
+  \$E_GENERIC             Generic failure (catch-all)
+  \$E_USAGE               Usage error — bad flags, wrong args, invalid input
+  \$E_NETWORK             Network error — proxy unreachable, DNS failure, timeout
+  \$E_LOCK                Lock contention — another gotools process is running
+  \$E_TOOL_NOT_FOUND      Tool not installed — run 'gotools.sh sync' and retry
+  \$E_OFFLINE             Offline violation — network needed but --offline was set
+  \$E_POLICY              Policy violation — tool banned, version not pinned
+  \$E_ENVIRONMENT         Environment error — Go missing/too old, bad manifest
 EOF
     exit $E_USAGE
 }

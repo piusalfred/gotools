@@ -83,8 +83,9 @@ if ! (return 0 2>/dev/null); then
         config)                   cmd_config "$@" ;;
         purge)                    cmd_purge "$@" ;;
         check)                    cmd_check ;;
+        doctor)                   cmd_doctor "$@" ;;
         completion)               cmd_completion "$@" ;;
-        version)                  cmd_version ;;
+        version)                  cmd_version "$@" ;;
         self-update|self-upgrade) cmd_self_update ;;
         uninstall)                cmd_uninstall ;;
         test)                     cmd_test "$@" ;;

@@ -164,6 +164,65 @@ pkg_for_tool() {
     return 1
 }
 
+# tool_runnable <tool-name>
+#   Probes whether `go tool <binary>` can run the tool under the current
+#   strategy, mirroring the invocation forms cmd_exec uses. Prints a one-line
+#   reason to stdout when NOT runnable. rc 0 runnable, 1 not runnable.
+#
+#   "Not runnable" means a GO-level failure: go missing, modfile missing, or
+#   stderr matching a go error (^go( tool)?:, "no such tool", "is not a
+#   tool", "no go.mod file found"). A tool that starts and then exits
+#   non-zero on empty stdin (its own usage error, e.g. staticcheck) IS
+#   runnable — the go toolchain found and launched it.
+#
+#   Read-only: stdin is /dev/null, GOTOOLCHAIN=local always (no toolchain
+#   auto-download), plus GOPROXY=off in offline mode so a not-yet-downloaded
+#   tool fails fast instead of touching the network.
+tool_runnable() {
+    local tool_name="$1"
+    command -v go >/dev/null 2>&1 || { echo "go not installed"; return 1; }
+    local modfile binary out rc=0
+    case "$GOTOOLS_STRATEGY" in
+        unified)
+            modfile="$GOTOOLS_DIR/go.mod"
+            [[ -f "$modfile" ]] || { echo "missing $modfile"; return 1; }
+            binary=$(resolve_binary_name "$tool_name" "$modfile")
+            # GOTOOLCHAIN=local: never auto-download a toolchain during
+            # diagnostics. GOPROXY=off in offline mode: fail fast instead of
+            # touching the network. Exported inside the subshell — bash 3.2
+            # cannot apply array-expanded "VAR=val" words before a function
+            # call ("command not found").
+            out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; cd "$GOTOOLS_DIR" && _go tool "$binary" </dev/null) 2>&1 ) || rc=$?
+            ;;
+        split)
+            modfile="$GOTOOLS_DIR/${tool_name}.mod"
+            [[ -f "$modfile" ]] || { echo "missing $modfile"; return 1; }
+            binary=$(resolve_binary_name "$tool_name" "$modfile")
+            out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; _go tool -modfile="$modfile" "$binary" </dev/null) 2>&1 ) || rc=$?
+            ;;
+        module)
+            modfile="$GOTOOLS_DIR/$tool_name/go.mod"
+            [[ -f "$modfile" ]] || { echo "missing $modfile"; return 1; }
+            binary=$(resolve_binary_name "$tool_name" "$modfile")
+            out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; cd "$GOTOOLS_DIR/$tool_name" && _go tool "$binary" </dev/null) 2>&1 ) || rc=$?
+            ;;
+        *)
+            echo "unknown strategy: $GOTOOLS_STRATEGY"
+            return 1
+            ;;
+    esac
+    [[ $rc -eq 0 ]] && return 0
+    # Non-zero: only a go-level failure makes it NOT runnable. The verbosity
+    # echo ("↳ go ...") goes to stderr first; it never matches this pattern.
+    local reason
+    reason=$(grep -E '^go( tool)?:|no such tool|is not a tool|no go\.mod file found' <<< "$out" | head -n1 || true)
+    if [[ -n "$reason" ]]; then
+        echo "$reason"
+        return 1
+    fi
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # extract_tools_with_versions
 #   Outputs lines of: name pkg@version

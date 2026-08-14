@@ -74,10 +74,12 @@ assert_file_absent "purge removes manifest" "$TMPDIR/.gotools.json"
 
 category "function availability after source"
 for fn in infer_binary_name_from_pkg extract_tools_from_mod extract_version_for_pkg \
-          extract_go_version_from_mod detect_strategy resolve_go_version \
-          resolve_module_prefix tool_module_path relative_path \
+          extract_module_for_pkg extract_go_version_from_mod detect_strategy resolve_go_version \
+          resolve_module_prefix tool_module_path tool_runnable relative_path \
           _manifest_parse _manifest_flush _manifest_tool_set _manifest_tool_remove \
           _manifest_tool_entry _manifest_tools_list _manifest_config_get _manifest_config_set \
+          _manifest_read_version _manifest_validate \
+          _version_meets_min _go_version_raw _parse_output_format \
           cmd_init cmd_install cmd_sync cmd_exec cmd_list cmd_info cmd_upgrade \
           cmd_remove cmd_migrate cmd_config cmd_purge cmd_version; do
     if type "$fn" >/dev/null 2>&1; then

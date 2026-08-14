@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-VERSION="v0.6.2"
+VERSION="v0.6.4"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -23,6 +23,8 @@ readonly E_NETWORK=3
 readonly E_LOCK=4
 readonly E_TOOL_NOT_FOUND=5
 readonly E_OFFLINE=6
+# Reserved for the documented public contract.
+# shellcheck disable=SC2034
 readonly E_POLICY=7
 readonly E_ENVIRONMENT=8
 
@@ -31,6 +33,10 @@ DEFAULT_STRATEGY="split"
 DEFAULT_DIR="tools"
 DEFAULT_GO_VERSION="inherit"
 DEFAULT_MODULE_PREFIX=""
+
+# Minimum Go version for tool directives. Shared by _require_go and the
+# doctor command's Go check — change in one place.
+MIN_GO_VERSION="1.24"
 
 # In-memory tool store. Each line is: name|source|package|version
 # Populated by _manifest_parse() and mutated by _manifest_tool_set/remove.
@@ -56,6 +62,11 @@ _VERBOSE="${GOTOOLS_VERBOSE:-0}"
 # "level" field: "info" (exit 0), "error" (tool ran but failed),
 # or "fatal" (gotools itself errored before executing the tool).
 _TRACE="${GOTOOLS_TRACE:-0}"
+
+# Output format — set by _parse_output_format(). "text" unless a --format/
+# --json/--text flag selects json. The helper resets it before scanning so
+# repeated in-process calls (unit tests source the bundle) never leak state.
+_OUTPUT_FORMAT="text"
 
 # _PROJECT_ROOT — set by _find_project_root(). The directory containing
 # .gotools.json, found by walking up from $PWD (like git finds .git).
@@ -139,10 +150,35 @@ reload_config() {
     load_config
 }
 
+# _go_version_raw — print the bare go version string (e.g. "1.24.3"), empty
+# if go is missing or `go env GOVERSION` fails. Non-fatal, never exits.
+_go_version_raw() {
+    command -v go >/dev/null 2>&1 || return 1
+    go env GOVERSION 2>/dev/null | sed 's/^go//'
+}
+
+# _version_meets_min <actual> <required> — compare X.Y versions numerically.
+#   rc 0: actual >= required
+#   rc 1: actual < required
+#   rc 2: undetectable (actual empty / no X.Y pair in either version)
+# Pure: no output, no exit. Extracts the first [0-9]+\.[0-9]+ pair so inputs
+# like "1.24.3", "go1.24", or "devel go1.26-abc123" all work.
+_version_meets_min() {
+    local actual="$1" required="$2"
+    local amaj amin rmaj rmin
+    [[ "$actual" =~ ([0-9]+)\.([0-9]+) ]] || return 2
+    amaj="${BASH_REMATCH[1]}"
+    amin="${BASH_REMATCH[2]}"
+    [[ "$required" =~ ([0-9]+)\.([0-9]+) ]] || return 2
+    rmaj="${BASH_REMATCH[1]}"
+    rmin="${BASH_REMATCH[2]}"
+    if (( amaj > rmaj )); then return 0; fi
+    if (( amaj < rmaj )); then return 1; fi
+    if (( amin >= rmin )); then return 0; fi
+    return 1
+}
+
 # _require_go — verify Go is installed and >= 1.24 (minimum for tool directives).
-
-
-
 _require_go() {
     if ! command -v go &>/dev/null; then
         echo "❌ Go is not installed. Please install Go 1.24 or higher." >&2
@@ -150,15 +186,12 @@ _require_go() {
         exit $E_ENVIRONMENT
     fi
     local go_ver
-    go_ver=$(go env GOVERSION 2>/dev/null | sed 's/^go//')
+    go_ver=$(_go_version_raw) || true
     if [[ -z "$go_ver" ]]; then
         echo "❌ Could not determine Go version." >&2
         exit $E_ENVIRONMENT
     fi
-    local major minor
-    major=$(echo "$go_ver" | cut -d. -f1)
-    minor=$(echo "$go_ver" | cut -d. -f2)
-    if [[ "$major" -lt 1 ]] || { [[ "$major" -eq 1 ]] && [[ "${minor:-0}" -lt 24 ]]; }; then
+    if ! _version_meets_min "$go_ver" "$MIN_GO_VERSION"; then
         echo "❌ Go $go_ver is too old. Go 1.24 or higher is required." >&2
         exit $E_ENVIRONMENT
     fi
@@ -277,6 +310,30 @@ _parse_offline() {
     if [[ "${GOTOOLS_OFFLINE:-0}" == "1" ]]; then
         _OFFLINE=true
     fi
+}
+
+# _parse_output_format [args...] — scan args for output-format flags and set
+# _OUTPUT_FORMAT. --format=json | --json → json; --format=text | --text →
+# text. Any other --format=<x> → usage error. Always returns 0 otherwise
+# (set -e safe). Resets to "text" first so repeated in-process calls never
+# leak a previous call's format. Callers re-scan the args to reject any
+# leftover positional junk.
+_parse_output_format() {
+    _OUTPUT_FORMAT="text"
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json)        _OUTPUT_FORMAT="json" ;;
+            --text)        _OUTPUT_FORMAT="text" ;;
+            --format=json) _OUTPUT_FORMAT="json" ;;
+            --format=text) _OUTPUT_FORMAT="text" ;;
+            --format=*)
+                echo "❌ Unknown output format: ${arg#--format=}" >&2
+                echo "   Supported formats: json, text" >&2
+                exit $E_USAGE
+                ;;
+        esac
+    done
 }
 
 # _parallel_for <max-jobs> <fn> [args...]
@@ -487,19 +544,54 @@ _trace_fatal() {
 # changes (new optional key, new strategy value) do not require a bump.
 readonly _MANIFEST_SCHEMA_VERSION=1
 
+# _manifest_read_version [file] — echo the integer schema version (default 1).
+# Shape-aware: the top-level version is unquoted JSON ("version": 1,) and
+# lands in $3 as ": 1,"; a quoted value (e.g. a tool entry's "version":
+# "v0.8.0") lands in $4. Pre-version manifests and non-numeric matches
+# (the "version" key of a tool entry) default to v1.
+_manifest_read_version() {
+    local mf="${1:-$MANIFEST_FILE}"
+    local version
+    version=$(awk -F'"' '/"version":/ { if (NF >= 4) print $4; else print $3; exit }' "$mf")
+    version="${version#: }"
+    version="${version%,}"
+    [[ "$version" =~ ^[0-9]+$ ]] || version=1
+    echo "$version"
+}
+
+# _manifest_validate [file] — non-fatal structural validation for read-only
+# diagnostics (the doctor command). rc 0 valid; 1 missing file; 2 written by
+# a newer gotools (prints the same 3-line message _manifest_check_version
+# prints, but returns instead of exiting); 3 unparseable (no top-level
+# "strategy" key, or the last non-blank line is not "}" — truncated JSON).
+_manifest_validate() {
+    local mf="${1:-$MANIFEST_FILE}"
+    [[ -f "$mf" ]] || return 1
+    local version
+    version=$(_manifest_read_version "$mf")
+    if [[ "$version" -gt "$_MANIFEST_SCHEMA_VERSION" ]]; then
+        echo "❌ This project's $MANIFEST_FILE requires schema version ${version}." >&2
+        echo "   Your gotools (${VERSION}) only understands version ${_MANIFEST_SCHEMA_VERSION}." >&2
+        echo "   Upgrade: https://github.com/$REPO/releases" >&2
+        return 2
+    fi
+    local strategy last
+    strategy=$(awk -F'"' '/"strategy":/ {print $4; exit}' "$mf")
+    last=$(awk 'NF { line=$0 } END { print line }' "$mf")
+    if [[ -z "$strategy" || "$last" != "}" ]]; then
+        echo "❌ $MANIFEST_FILE is not parseable: truncated or malformed JSON." >&2
+        return 3
+    fi
+    return 0
+}
+
 # _manifest_check_version — refuse manifests written by a NEWER gotools so
 # old versions fail loudly instead of silently misparsing. Pre-version
 # manifests (no top-level "version" key) default to v1. A non-numeric match
 # means the "version" key belongs to a tool entry, not the top level.
 _manifest_check_version() {
     local version
-    # Shape-aware: the top-level version is unquoted JSON ("version": 1,)
-    # and lands in $3 as ": 1,"; a quoted value (e.g. a tool entry's
-    # "version": "v0.8.0") lands in $4.
-    version=$(awk -F'"' '/"version":/ { if (NF >= 4) print $4; else print $3; exit }' "$MANIFEST_FILE")
-    version="${version#: }"
-    version="${version%,}"
-    [[ "$version" =~ ^[0-9]+$ ]] || version=1
+    version=$(_manifest_read_version "$MANIFEST_FILE")
     if [[ "$version" -gt "$_MANIFEST_SCHEMA_VERSION" ]]; then
         echo "❌ This project's $MANIFEST_FILE requires schema version ${version}." >&2
         echo "   Your gotools (${VERSION}) only understands version ${_MANIFEST_SCHEMA_VERSION}." >&2
@@ -788,6 +880,37 @@ extract_version_for_pkg() {
     done
 }
 
+# extract_module_for_pkg <modfile> <pkg>
+#   Prints the module root (require path) that provides <pkg>, by walking
+#   progressively shorter path prefixes over the require block(s) — the same
+#   algorithm as extract_version_for_pkg, but returning the module path.
+#   E.g. honnef.co/go/tools/cmd/staticcheck → honnef.co/go/tools.
+extract_module_for_pkg() {
+    local modfile="$1" pkg="$2"
+    local candidate="$pkg"
+    while [[ -n "$candidate" ]]; do
+        local mod
+        mod=$(awk -v p="$candidate" '
+            /^require[[:space:]]+\(/ { in_req=1; next }
+            in_req && /^\)/ { in_req=0; next }
+            in_req {
+                gsub(/^[[:space:]]+/, "")
+                if ($1 == p) { print $1 }
+                next
+            }
+            $1 == "require" && $2 == p { print $2 }
+        ' "$modfile")
+        if [[ -n "$mod" ]]; then
+            echo "$mod"
+            return
+        fi
+        # Strip the last path component and try again.
+        local parent="${candidate%/*}"
+        [[ "$parent" == "$candidate" ]] && break
+        candidate="$parent"
+    done
+}
+
 # extract_pkg_from_mod <modfile>
 #   Returns the FIRST tool package from a go.mod (convenience for single-tool mods).
 extract_pkg_from_mod() {
@@ -1027,6 +1150,65 @@ pkg_for_tool() {
     return 1
 }
 
+# tool_runnable <tool-name>
+#   Probes whether `go tool <binary>` can run the tool under the current
+#   strategy, mirroring the invocation forms cmd_exec uses. Prints a one-line
+#   reason to stdout when NOT runnable. rc 0 runnable, 1 not runnable.
+#
+#   "Not runnable" means a GO-level failure: go missing, modfile missing, or
+#   stderr matching a go error (^go( tool)?:, "no such tool", "is not a
+#   tool", "no go.mod file found"). A tool that starts and then exits
+#   non-zero on empty stdin (its own usage error, e.g. staticcheck) IS
+#   runnable — the go toolchain found and launched it.
+#
+#   Read-only: stdin is /dev/null, GOTOOLCHAIN=local always (no toolchain
+#   auto-download), plus GOPROXY=off in offline mode so a not-yet-downloaded
+#   tool fails fast instead of touching the network.
+tool_runnable() {
+    local tool_name="$1"
+    command -v go >/dev/null 2>&1 || { echo "go not installed"; return 1; }
+    local modfile binary out rc=0
+    case "$GOTOOLS_STRATEGY" in
+        unified)
+            modfile="$GOTOOLS_DIR/go.mod"
+            [[ -f "$modfile" ]] || { echo "missing $modfile"; return 1; }
+            binary=$(resolve_binary_name "$tool_name" "$modfile")
+            # GOTOOLCHAIN=local: never auto-download a toolchain during
+            # diagnostics. GOPROXY=off in offline mode: fail fast instead of
+            # touching the network. Exported inside the subshell — bash 3.2
+            # cannot apply array-expanded "VAR=val" words before a function
+            # call ("command not found").
+            out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; cd "$GOTOOLS_DIR" && _go tool "$binary" </dev/null) 2>&1 ) || rc=$?
+            ;;
+        split)
+            modfile="$GOTOOLS_DIR/${tool_name}.mod"
+            [[ -f "$modfile" ]] || { echo "missing $modfile"; return 1; }
+            binary=$(resolve_binary_name "$tool_name" "$modfile")
+            out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; _go tool -modfile="$modfile" "$binary" </dev/null) 2>&1 ) || rc=$?
+            ;;
+        module)
+            modfile="$GOTOOLS_DIR/$tool_name/go.mod"
+            [[ -f "$modfile" ]] || { echo "missing $modfile"; return 1; }
+            binary=$(resolve_binary_name "$tool_name" "$modfile")
+            out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; cd "$GOTOOLS_DIR/$tool_name" && _go tool "$binary" </dev/null) 2>&1 ) || rc=$?
+            ;;
+        *)
+            echo "unknown strategy: $GOTOOLS_STRATEGY"
+            return 1
+            ;;
+    esac
+    [[ $rc -eq 0 ]] && return 0
+    # Non-zero: only a go-level failure makes it NOT runnable. The verbosity
+    # echo ("↳ go ...") goes to stderr first; it never matches this pattern.
+    local reason
+    reason=$(grep -E '^go( tool)?:|no such tool|is not a tool|no go\.mod file found' <<< "$out" | head -n1 || true)
+    if [[ -n "$reason" ]]; then
+        echo "$reason"
+        return 1
+    fi
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # extract_tools_with_versions
 #   Outputs lines of: name pkg@version
@@ -1181,20 +1363,28 @@ _cmd_help() {
             echo "    gotools.sh exec golangci-lint run ./..."
             ;;
         list)
-            echo "Usage: gotools.sh list [--json]"
+            echo "Usage: gotools.sh list [--format=json|text]"
             echo ""
             echo "  List all managed tools with their versions and strategy info."
             echo ""
             echo "  Options:"
-            echo "    --json   Output as JSON array for scripting/CI"
+            echo "    --format=json   Output a JSON object with metadata and a"
+            echo "                    \"tools\" array (stable for scripting/CI)"
+            echo "    --format=text   Human-readable table (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
             ;;
         info)
-            echo "Usage: gotools.sh info <tool-name> [--json]"
+            echo "Usage: gotools.sh info <tool-name> [--format=json|text]"
             echo ""
             echo "  Show detailed information about a specific tool."
             echo ""
             echo "  Options:"
-            echo "    --json   Output as JSON object for scripting/CI"
+            echo "    --format=json   Output a JSON object including a \"runnable\""
+            echo "                    flag (stable for scripting/CI)"
+            echo "    --format=text   Human-readable block (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
             ;;
         upgrade)
             echo "Usage: gotools.sh upgrade <name|all> [--dry-run]"
@@ -1253,10 +1443,36 @@ _cmd_help() {
             echo "  Verify all managed tools are installed and runnable."
             echo "  Runs each tool with --help or --version and reports pass/fail."
             ;;
+        doctor)
+            echo "Usage: gotools.sh doctor [--format=json|text] [--offline]"
+            echo ""
+            echo "  Diagnose your environment: Go installation, module proxy,"
+            echo "  .gotools.json configuration, managed tools, lock file, module"
+            echo "  integrity, and disk usage."
+            echo ""
+            echo "  Read-only: never modifies tools, the manifest, or the lock."
+            echo "  Always exits 0 (diagnostics are not failures) — invalid flags"
+            echo "  still exit 2. For CI, gate on 'doctor --format=json' and the"
+            echo "  \"healthy\"/\"issues\" fields."
+            echo ""
+            echo "  Options:"
+            echo "    --format=json   Output check results as JSON"
+            echo "    --format=text   Human-readable report (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
+            echo "    --offline       Skip the proxy reachability check; probes fail"
+            echo "                    fast instead of touching the network"
+            ;;
         version)
-            echo "Usage: gotools.sh version"
+            echo "Usage: gotools.sh version [--format=json|text]"
             echo ""
             echo "  Print the gotools.sh version."
+            echo ""
+            echo "  Options:"
+            echo "    --format=json   Output a JSON object (stable for scripting/CI)"
+            echo "    --format=text   Plain \"gotools.sh <version>\" line (the default)"
+            echo "    --json          Alias for --format=json"
+            echo "    --text          Alias for --format=text"
             ;;
         self-update)
             echo "Usage: gotools.sh self-update"
@@ -1283,38 +1499,41 @@ Usage: $(basename "$0") <command> [arguments]
        <go install command> | $(basename "$0")     (pipe mode)
 
 Commands:
-  init [flags]            Bootstrap the project and adopt tools
-                            already declared in the root go.mod.
-                            --strategy=unified|split|module  (default: $DEFAULT_STRATEGY)
-                            --dir=<tools-dir>                     (default: $DEFAULT_DIR)
-                            --go=<version|inherit>                (default: $DEFAULT_GO_VERSION)
-                            --prefix=<module-prefix|auto>         (default: auto from root go.mod)
-                            --no-migrate  --dry-run
-  install [name] <pkg>    Install a new tool.
-                            If only <pkg> is given, name is inferred from its basename.
-  sync [--dry-run]        Sync tool state to match $MANIFEST_FILE.
-  exec <name> [args]      Run a managed tool.
-  list [--json]           List tools, versions, and strategies.
-  upgrade <name|all> [--dry-run]  Upgrade tools to @latest.
-  remove <name...> [--dry-run]    Remove specific tools.
-  migrate <strategy> [--dry-run]  Migrate to a different strategy.
-  config [key [value]]    View or edit $MANIFEST_FILE configuration.
-                            No args: show all config.
-                            One arg: show value of <key>.
-                            Two args: set <key>=<value>.
-  purge [--restore] [--dry-run]  Remove all tools and the $MANIFEST_FILE file;
-                            --restore puts the tools back into your go.mod.
-  info <name> [--json]    Show detailed information about a specific tool.
-  check                   Verify all managed tools are runnable.
-  version                 Show script version.
-  self-update             Update gotools.sh to the latest version.
-  uninstall               Remove this script from your system.
-  test <seconds>          Sleep for <seconds> (useful for testing Ctrl-C / signal handling).
+  init [flags]                      Bootstrap the project and adopt tools
+                                    already declared in the root go.mod.
+                                      --strategy=unified|split|module  (default: $DEFAULT_STRATEGY)
+                                      --dir=<tools-dir>                (default: $DEFAULT_DIR)
+                                      --go=<version|inherit>           (default: $DEFAULT_GO_VERSION)
+                                      --prefix=<module-prefix|auto>    (default: auto from root go.mod)
+                                      --no-migrate --dry-run
+  install [name] <pkg>              Install a new tool.
+                                    If only <pkg> is given, name is inferred from its basename.
+  sync [--dry-run]                  Sync tool state to match $MANIFEST_FILE.
+  exec <name> [args]                Run a managed tool.
+  list [--format=json|text]         List tools, versions, and strategies.
+  upgrade <name|all> [--dry-run]    Upgrade tools to @latest.
+  remove <name...> [--dry-run]      Remove specific tools.
+  migrate <strategy> [--dry-run]    Migrate to a different strategy.
+  config [key [value]]              View or edit $MANIFEST_FILE configuration.
+                                      No args: show all config.
+                                      One arg: show value of <key>.
+                                      Two args: set <key>=<value>.
+  purge [--restore] [--dry-run]     Remove all tools and the $MANIFEST_FILE file;
+                                    --restore puts the tools back into your go.mod.
+  info <name> [--format=json|text]  Show detailed information about a specific tool.
+  check                             Verify all managed tools are runnable.
+  doctor [--format=json|text] [--offline]
+                                    Diagnose your environment (Go, proxy, config,
+                                    tools, lock, integrity, disk).
+  version [--format=json|text]      Show script version.
+  self-update                       Update gotools.sh to the latest version.
+  uninstall                         Remove this script from your system.
+  test <seconds>                    Sleep for <seconds> (for testing signal handling).
 
 Strategies:
-  unified     One shared tools/go.mod with all tool directives.
-  split       Flat files: tools/<name>.mod and tools/<name>.sum per tool.
-  module      Dedicated subdirectories: tools/<name>/go.mod per tool.
+  unified    One shared tools/go.mod with all tool directives.
+  split      Flat files: tools/<name>.mod and tools/<name>.sum per tool.
+  module     Dedicated subdirectories: tools/<name>/go.mod per tool.
 
 Examples:
   gotools.sh init --strategy=module --dir=tools
@@ -1330,15 +1549,15 @@ Examples:
   gotools.sh purge
   gotools.sh uninstall
 
-Exit codes (stable — CI pipelines can key off these):
-  $E_GENERIC  Generic failure (catch-all)
-  $E_USAGE  Usage error — bad flags, wrong args, invalid input
-  $E_NETWORK  Network error — proxy unreachable, DNS failure, timeout
-  $E_LOCK  Lock contention — another gotools process is running
-  $E_TOOL_NOT_FOUND  Tool not installed — run 'gotools.sh sync' and retry
-  $E_OFFLINE  Offline violation — network needed but --offline was set
-  $E_POLICY  Policy violation — tool banned, version not pinned
-  $E_ENVIRONMENT  Environment error — Go missing/too old, bad manifest
+Exit Codes:
+  \$E_GENERIC             Generic failure (catch-all)
+  \$E_USAGE               Usage error — bad flags, wrong args, invalid input
+  \$E_NETWORK             Network error — proxy unreachable, DNS failure, timeout
+  \$E_LOCK                Lock contention — another gotools process is running
+  \$E_TOOL_NOT_FOUND      Tool not installed — run 'gotools.sh sync' and retry
+  \$E_OFFLINE             Offline violation — network needed but --offline was set
+  \$E_POLICY              Policy violation — tool banned, version not pinned
+  \$E_ENVIRONMENT         Environment error — Go missing/too old, bad manifest
 EOF
     exit $E_USAGE
 }
@@ -1390,7 +1609,7 @@ _gotools_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help" -- "$cur"))
+        COMPREPLY=($(compgen -W "init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help" -- "$cur"))
         return
     fi
 
@@ -1418,8 +1637,11 @@ _gotools_completion() {
         sync|upgrade|remove|migrate|purge)
             COMPREPLY=($(compgen -W "--dry-run" -- "$cur"))
             ;;
-        list|info)
-            COMPREPLY=($(compgen -W "--json" -- "$cur"))
+        list|info|version)
+            COMPREPLY=($(compgen -W "--format= --json --text" -- "$cur"))
+            ;;
+        doctor)
+            COMPREPLY=($(compgen -W "--format= --json --text --offline" -- "$cur"))
             ;;
     esac
 }
@@ -1432,7 +1654,7 @@ _generate_zsh_completion() {
 #compdef gotools.sh gotools
 _gotools() {
     local -a commands
-    commands=(init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help)
+    commands=(init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help)
     _describe 'command' commands
 }
 _gotools
@@ -1441,9 +1663,9 @@ COMPLETION
 
 _generate_fish_completion() {
     echo "complete -c gotools.sh -f"
-    echo "complete -c gotools.sh -a 'init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help'"
+    echo "complete -c gotools.sh -a 'init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
     echo "complete -c gotools -f"
-    echo "complete -c gotools -a 'init install sync exec list upgrade update remove migrate config purge info check completion version self-update self-upgrade uninstall help'"
+    echo "complete -c gotools -a 'init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
 }
 
 cmd_completion() {
@@ -1634,6 +1856,449 @@ cmd_config() {
         echo "⚠️  Strategy changed. Run 'gotools.sh sync' to migrate the tools directory."
     fi
 }
+
+# ---------------------------------------------------------------------------
+# doctor — systematic environment diagnostics (issue #28)
+#
+# Seven checks: Go installation, module proxy, configuration, managed tools,
+# lock file, module integrity, and disk usage. Read-only: doctor never
+# acquires the lock (it inspects it), never writes the manifest, the sync
+# fingerprint, or a trace record. Probes set GOTOOLCHAIN=local (no toolchain
+# auto-download) and GOPROXY=off in offline mode (fail fast, no network).
+#
+# Exit code is ALWAYS 0 (pure diagnostics) — invalid flags still exit
+# E_USAGE. CI gates on `doctor --format=json` → healthy/issues.
+# ---------------------------------------------------------------------------
+
+# Result store: pipe-delimited name|status|detail lines, one per check.
+# _doctor_add_result appends; single-result checks go through
+# _doctor_run_check (subshell capture), the multi-result tools check runs in
+# the main shell and appends directly.
+_doctor_add_result() {
+    local name="$1" status="$2" detail="$3"
+    _DOCTOR_RESULTS+="${name}|${status}|${detail}"$'\n'
+}
+
+# _doctor_run_check <name> <check-fn>
+#   Runs check-fn in a subshell: it prints a one-line detail to stdout and
+#   returns 0=pass, 1=warn, 2=fail, anything else=skip. Check fns must be
+#   pure — mutations made inside the subshell are lost. OR-list capture keeps
+#   set -e from killing the script on a failing check. Always returns 0.
+_doctor_run_check() {
+    local name="$1" fn="$2"
+    local detail rc=0
+    detail=$("$fn") || rc=$?
+    local status
+    case "$rc" in
+        0) status="pass" ;;
+        1) status="warn" ;;
+        2) status="fail" ;;
+        *) status="skip" ;;
+    esac
+    detail="${detail%%$'\n'*}"
+    _doctor_add_result "$name" "$status" "$detail"
+}
+
+# ---- check: Go installation ---------------------------------------------
+_doctor_check_go() {
+    local go_path
+    go_path=$(command -v go 2>/dev/null) || { echo "Go not installed. Install Go $MIN_GO_VERSION or higher (https://go.dev/dl/)."; return 2; }
+    local ver
+    ver=$(_go env GOVERSION 2>/dev/null | sed 's/^go//') || true
+    if [[ -z "$ver" ]]; then
+        echo "Could not determine Go version."
+        return 2
+    fi
+    if ! _version_meets_min "$ver" "$MIN_GO_VERSION"; then
+        echo "Go $ver is too old. Go $MIN_GO_VERSION or higher is required."
+        return 2
+    fi
+    echo "Go $ver at $go_path — meets minimum ($MIN_GO_VERSION+)"
+    return 0
+}
+
+# ---- check: module proxy -------------------------------------------------
+_doctor_check_proxy() {
+    command -v go >/dev/null 2>&1 || { echo "go not installed"; return 3; }
+    if $_OFFLINE; then echo "offline mode — reachability not checked"; return 3; fi
+    local goproxy
+    goproxy=$(_go env GOPROXY 2>/dev/null) || { echo "could not read GOPROXY (go env failed)"; return 1; }
+    # First declared tool (string slicing — a pipeline could trip pipefail).
+    local entry="${_MANIFEST_TOOLS%%$'\n'*}" tname="" src="" pkg="" probe=""
+    if [[ -n "$entry" ]]; then
+        IFS='|' read -r tname src pkg _ <<< "$entry"
+        if [[ "$src" == "go" && -n "$pkg" ]]; then
+            # Resolve the module root from the tool's modfile require block
+            # (no network): many tool packages are subpackages of a module
+            # (golang.org/x/tools/cmd/goimports → golang.org/x/tools), and
+            # `go list -m` only accepts module paths. @latest, not @version:
+            # the pinned version may be cache-served, but @latest always
+            # queries the proxy — a real reachability probe.
+            local modfile=""
+            case "$GOTOOLS_STRATEGY" in
+                unified) modfile="$GOTOOLS_DIR/go.mod" ;;
+                split)   modfile="$GOTOOLS_DIR/${tname}.mod" ;;
+                module)  modfile="$GOTOOLS_DIR/${tname}/go.mod" ;;
+            esac
+            if [[ -f "$modfile" ]]; then
+                local module_root
+                module_root=$(extract_module_for_pkg "$modfile" "$pkg" 2>/dev/null) || true
+                [[ -n "$module_root" ]] && probe="${module_root}@latest"
+            fi
+        fi
+    fi
+    if [[ -z "$probe" ]]; then
+        echo "GOPROXY=${goproxy:-<unset — Go default>} (no tool to probe — reachability not checked)"
+        return 0
+    fi
+    # `go list -m` accepts no -timeout flag, so bound the probe with a 5s
+    # watchdog: kill the go process if it outlives the budget.
+    local out_file rc=0
+    out_file=$(mktemp "${TMPDIR:-/tmp}/gotools-doctor-proxy.XXXXXX") || { echo "could not create probe temp file"; return 1; }
+    ( export GOTOOLCHAIN=local; _go list -m "$probe" >"$out_file" 2>&1 ) &
+    local pid=$! waited=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ $waited -ge 10 ]]; then
+            kill "$pid" 2>/dev/null
+            echo "GOPROXY=$goproxy — unreachable (no answer within 5s)"
+            rm -f "$out_file"
+            return 1
+        fi
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    # `wait` inherits the child's exit status — OR-guard it (set -e).
+    wait "$pid" 2>/dev/null || rc=$?
+    local first=""
+    first=$(head -n1 "$out_file" 2>/dev/null || true)
+    rm -f "$out_file"
+    if [[ $rc -ne 0 ]]; then
+        echo "GOPROXY=$goproxy — unreachable: ${first:-unknown error}"
+        return 1
+    fi
+    echo "GOPROXY=$goproxy — reachable"
+    return 0
+}
+
+# ---- check: configuration -------------------------------------------------
+_doctor_check_config() {
+    if [[ $_DOCTOR_BAD_MANIFEST -eq 1 ]]; then
+        echo "${_DOCTOR_MANIFEST_REASON:-$MANIFEST_FILE is invalid}"
+        return 2
+    fi
+    if [[ ! -f "$MANIFEST_FILE" ]]; then
+        echo "no $MANIFEST_FILE — run 'gotools init'"
+        return 2
+    fi
+    echo "$MANIFEST_FILE exists and is valid (schema v$_MANIFEST_SCHEMA_VERSION)"
+    return 0
+}
+
+# ---- check: strategy matches disk -----------------------------------------
+_doctor_check_strategy() {
+    if [[ $_DOCTOR_BAD_MANIFEST -eq 1 || ! -f "$MANIFEST_FILE" ]]; then
+        echo "cannot compare strategy — manifest missing or invalid"
+        return 3
+    fi
+    local detected
+    detected=$(detect_strategy "$GOTOOLS_DIR" 2>/dev/null) || true
+    if [[ ! -d "$GOTOOLS_DIR" || -z "$detected" ]]; then
+        echo "tools not synced — run 'gotools sync'"
+        return 1
+    fi
+    if [[ "$detected" != "$GOTOOLS_STRATEGY" ]]; then
+        echo "Strategy: $GOTOOLS_STRATEGY — disk looks like $detected (run 'gotools sync' to migrate)"
+        return 1
+    fi
+    echo "Strategy: $GOTOOLS_STRATEGY — matches disk"
+    return 0
+}
+
+# ---- check: managed tools --------------------------------------------------
+# Multi-result: runs in the MAIN shell (subshell captures would lose the
+# result-store mutations), so it appends directly via _doctor_add_result.
+_doctor_check_tools() {
+    local _n _s _p _v count=0
+    while IFS='|' read -r _n _s _p _v; do
+        [[ -z "$_n" ]] && continue
+        count=$((count + 1))
+        if [[ "$_s" != "go" ]]; then
+            _doctor_add_result "tools.$_n" "skip" "$_n@$_v — source '$_s' not probed"
+            continue
+        fi
+        local reason rc=0
+        reason=$(tool_runnable "$_n" 2>/dev/null) || rc=$?
+        if [[ $rc -eq 0 ]]; then
+            _doctor_add_result "tools.$_n" "pass" "$_n@$_v — runnable"
+        else
+            _doctor_add_result "tools.$_n" "warn" "$_n@$_v — not runnable: ${reason:-unknown} (run 'gotools sync')"
+        fi
+    done <<< "$_MANIFEST_TOOLS"
+    if [[ $count -eq 0 ]]; then
+        _doctor_add_result "tools" "pass" "no tools declared"
+    fi
+}
+
+# ---- check: lock file ------------------------------------------------------
+# stat flags differ per platform: BSD (macOS) uses -f, GNU (Linux) uses -c.
+_file_mtime() {
+    case "$(uname -s)" in
+        Darwin) stat -f %m "$1" ;;
+        *)      stat -c %Y "$1" ;;
+    esac
+}
+
+_doctor_check_lock() {
+    local lock_dir="$GOTOOLS_DIR/.gotools.lock"
+    [[ -d "$lock_dir" ]] || { echo "no lock detected"; return 0; }
+    local now mtime age
+    now=$(date +%s)
+    mtime=$(_file_mtime "$lock_dir" 2>/dev/null) || true
+    if [[ -z "$mtime" ]]; then
+        echo "unable to read lock age"
+        return 1
+    fi
+    age=$((now - mtime))
+    if [[ $age -gt 300 ]]; then
+        echo "stale lock directory (age ${age}s) — remove $lock_dir if no gotools process is running"
+        return 1
+    fi
+    echo "lock is held or was released recently (age ${age}s) — another gotools process may be running"
+    return 0
+}
+
+# ---- check: module integrity ------------------------------------------------
+_doctor_check_integrity() {
+    command -v go >/dev/null 2>&1 || { echo "go not installed"; return 3; }
+    local out rc=0 count=0
+    case "$GOTOOLS_STRATEGY" in
+        unified)
+            local mf="$GOTOOLS_DIR/go.mod"
+            if [[ ! -f "$mf" ]]; then echo "no $mf — run 'gotools sync'"; return 3; fi
+            if [[ ! -f "$GOTOOLS_DIR/go.sum" ]]; then echo "missing $GOTOOLS_DIR/go.sum — run 'gotools sync'"; return 2; fi
+            out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; cd "$GOTOOLS_DIR" && _go mod verify) 2>&1 ) || rc=$?
+            if [[ $rc -ne 0 ]]; then
+                echo "go mod verify failed for $mf: ${out%%$'\n'*}"
+                return 2
+            fi
+            echo "go mod verify passed for all 1 modules"
+            return 0
+            ;;
+        split)
+            local f name sumf
+            for f in "$GOTOOLS_DIR"/*.mod; do
+                [[ -f "$f" ]] || continue
+                count=$((count + 1))
+                name=$(basename "$f" .mod)
+                sumf="$GOTOOLS_DIR/${name}.sum"
+                if [[ ! -f "$sumf" ]]; then
+                    echo "missing $sumf — run 'gotools sync'"
+                    return 2
+                fi
+                out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; _go mod verify -modfile="$f") 2>&1 ) || rc=$?
+                if [[ $rc -ne 0 ]] && [[ "$out" == *"flag provided but not defined"* ]]; then
+                    # Older go: `go mod verify` may not know -modfile — retry
+                    # through GOFLAGS, which every go command honors.
+                    rc=0
+                    out=$( (export GOTOOLCHAIN=local GOFLAGS="-modfile=$f"; $_OFFLINE && export GOPROXY=off; _go mod verify) 2>&1 ) || rc=$?
+                fi
+                if [[ $rc -ne 0 ]]; then
+                    echo "go mod verify failed for $f: ${out%%$'\n'*}"
+                    return 2
+                fi
+            done
+            if [[ $count -eq 0 ]]; then echo "no tool modfiles in $GOTOOLS_DIR — run 'gotools sync'"; return 3; fi
+            echo "go mod verify passed for all $count modules"
+            return 0
+            ;;
+        module)
+            local d mf2
+            for d in "$GOTOOLS_DIR"/*/; do
+                [[ -d "$d" ]] || continue
+                mf2="$d/go.mod"
+                [[ -f "$mf2" ]] || continue
+                count=$((count + 1))
+                if [[ ! -f "$d/go.sum" ]]; then
+                    echo "missing ${d}go.sum — run 'gotools sync'"
+                    return 2
+                fi
+                out=$( (export GOTOOLCHAIN=local; $_OFFLINE && export GOPROXY=off; cd "$d" && _go mod verify) 2>&1 ) || rc=$?
+                if [[ $rc -ne 0 ]]; then
+                    echo "go mod verify failed for $mf2: ${out%%$'\n'*}"
+                    return 2
+                fi
+            done
+            if [[ $count -eq 0 ]]; then echo "no tool modules in $GOTOOLS_DIR — run 'gotools sync'"; return 3; fi
+            echo "go mod verify passed for all $count modules"
+            return 0
+            ;;
+        *)
+            echo "unknown strategy: $GOTOOLS_STRATEGY"
+            return 3
+            ;;
+    esac
+}
+
+# ---- check: disk usage -------------------------------------------------------
+_doctor_check_disk() {
+    [[ -d "$GOTOOLS_DIR" ]] || { echo "tools directory not found"; return 3; }
+    local size
+    size=$(du -sh "$GOTOOLS_DIR" 2>/dev/null | awk '{print $1}') || { echo "unable to measure disk usage"; return 3; }
+    echo "tools/ uses $size"
+    return 0
+}
+
+# ---- renderers ----------------------------------------------------------------
+_doctor_heading() {
+    case "$1" in
+        go)        echo "Go installation" ;;
+        proxy)     echo "Module proxy" ;;
+        config)    echo "Configuration" ;;
+        tools)     echo "Managed tools" ;;
+        lock)      echo "Lock file" ;;
+        integrity) echo "Module integrity" ;;
+        disk)      echo "Disk usage" ;;
+        *)         echo "$1" ;;
+    esac
+}
+
+_doctor_render_text() {
+    local name status detail grp="" issues=0 tool_count=0
+    while IFS='|' read -r name _ _; do
+        [[ "$name" == tools.* ]] && tool_count=$((tool_count + 1))
+    done <<< "$_DOCTOR_RESULTS"
+    while IFS='|' read -r name status detail; do
+        [[ -n "$name" ]] || continue
+        local g="${name%%.*}" icon=""
+        if [[ "$g" != "$grp" ]]; then
+            if [[ -n "$grp" ]]; then echo ""; fi
+            local heading
+            heading=$(_doctor_heading "$g")
+            if [[ "$g" == "tools" && $tool_count -gt 0 ]]; then
+                echo "  $heading ($tool_count declared)"
+            else
+                echo "  $heading"
+            fi
+            grp="$g"
+        fi
+        case "$status" in
+            pass) icon="✅" ;;
+            warn) icon="⚠️" ;;
+            fail) icon="❌" ;;
+            skip) icon="⏭" ;;
+        esac
+        if [[ -n "$detail" ]]; then
+            echo "  $icon $detail"
+        else
+            echo "  $icon"
+        fi
+        if [[ "$status" == "warn" || "$status" == "fail" ]]; then
+            issues=$((issues + 1))
+        fi
+    done <<< "$_DOCTOR_RESULTS"
+    echo ""
+    echo "──────────────────────────────────────────────────"
+    if [[ $issues -eq 0 ]]; then
+        echo "✅ All checks passed. Your environment is healthy."
+    elif [[ $issues -eq 1 ]]; then
+        echo "⚠️ 1 issue found."
+    else
+        echo "⚠️ $issues issues found."
+    fi
+}
+
+_doctor_render_json() {
+    local name status detail issues=0
+    while IFS='|' read -r name status detail; do
+        [[ -n "$name" ]] || continue
+        if [[ "$status" == "warn" || "$status" == "fail" ]]; then
+            issues=$((issues + 1))
+        fi
+    done <<< "$_DOCTOR_RESULTS"
+    if [[ $issues -eq 0 ]]; then
+        printf '{"schema_version":1,"healthy":true,"issues":0,"checks":['
+    else
+        printf '{"schema_version":1,"healthy":false,"issues":%d,"checks":[' "$issues"
+    fi
+    local sep=""
+    while IFS='|' read -r name status detail; do
+        [[ -n "$name" ]] || continue
+        printf '%s{"name":"%s","status":"%s"' "$sep" "$(_json_escape "$name")" "$status"
+        if [[ -n "$detail" ]]; then
+            printf ',"detail":"%s"' "$(_json_escape "$detail")"
+        fi
+        printf '}'
+        sep=","
+    done <<< "$_DOCTOR_RESULTS"
+    printf ']}\n'
+}
+
+# ---- doctor -----------------------------------------------------------------
+cmd_doctor() {
+    _parse_offline "$@"
+    _parse_output_format "$@"
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --offline|--json|--text|--format=json|--format=text) ;;
+            *)
+                echo "❌ Unknown argument: $arg" >&2
+                echo "   Usage: $(basename "$0") doctor [--format=json|text] [--offline]" >&2
+                exit $E_USAGE
+                ;;
+        esac
+    done
+
+    _DOCTOR_RESULTS=""
+    _DOCTOR_BAD_MANIFEST=0
+    _DOCTOR_MANIFEST_REASON=""
+
+    # load_config EXITS on a manifest written by a newer gotools — pre-validate
+    # and bypass it so doctor can still render a full report.
+    _find_project_root
+    if [[ -f "$MANIFEST_FILE" ]]; then
+        local mrc=0 verr=""
+        verr=$(_manifest_validate "$MANIFEST_FILE" 2>&1 >/dev/null) || mrc=$?
+        if [[ $mrc -ne 0 ]]; then
+            _DOCTOR_BAD_MANIFEST=1
+            _DOCTOR_MANIFEST_REASON="${verr%%$'\n'*}"
+            # Replicate load_config's env > default precedence without parsing
+            # the broken file; mark config loaded so nested calls no-op.
+            GOTOOLS_STRATEGY="${_ORIG_ENV_STRATEGY:-$DEFAULT_STRATEGY}"
+            GOTOOLS_DIR="${_ORIG_ENV_DIR:-$DEFAULT_DIR}"
+            GOTOOLS_GO_VERSION="${_ORIG_ENV_GO_VERSION:-$DEFAULT_GO_VERSION}"
+            GOTOOLS_MODULE_PREFIX=""
+            _CONFIG_LOADED=true
+        else
+            load_config
+        fi
+    else
+        load_config
+    fi
+
+    if [[ "$_OUTPUT_FORMAT" != "json" ]]; then
+        echo "🔍 gotools doctor — checking your environment..."
+        echo ""
+    fi
+
+    _doctor_run_check "go" _doctor_check_go
+    _doctor_run_check "proxy" _doctor_check_proxy
+    _doctor_run_check "config" _doctor_check_config
+    _doctor_run_check "config.strategy" _doctor_check_strategy
+    _doctor_check_tools
+    _doctor_run_check "lock" _doctor_check_lock
+    _doctor_run_check "integrity" _doctor_check_integrity
+    _doctor_run_check "disk" _doctor_check_disk
+
+    if [[ "$_OUTPUT_FORMAT" == "json" ]]; then
+        _doctor_render_json
+    else
+        _doctor_render_text
+    fi
+    # Always exit 0: doctor is pure diagnostics — check results never fail
+    # the shell. Invalid flags exited E_USAGE above. CI gates on
+    # `doctor --format=json` → healthy/issues.
+}
 # ---- exec ----------------------------------------------------------------
 cmd_exec() {
     _require_go
@@ -1693,9 +2358,9 @@ cmd_exec() {
     esac
 }
 
-# _info_json — output a single tool as a JSON object.
-
-
+# _info_json <tool-name> — output a single tool as a JSON object with a
+# runnable flag (probed only when the tool's modfile exists; otherwise false
+# without invoking go).
 
 _info_json() {
     local name="$1"
@@ -1715,22 +2380,43 @@ _info_json() {
         split)   go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${name}.mod" 2>/dev/null || echo "?") ;;
         module)  go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${name}/go.mod" 2>/dev/null || echo "?") ;;
     esac
-    printf '{"name":"%s","source":"%s","strategy":"%s","go":"%s","package":"%s","version":"%s"}\n' \
-        "$name" "$_s" "$GOTOOLS_STRATEGY" "$go_ver" "$_p" "$_v"
+    local runnable=false
+    local modfile=""
+    case "$GOTOOLS_STRATEGY" in
+        unified) modfile="$GOTOOLS_DIR/go.mod" ;;
+        split)   modfile="$GOTOOLS_DIR/${name}.mod" ;;
+        module)  modfile="$GOTOOLS_DIR/${name}/go.mod" ;;
+    esac
+    if [[ -f "$modfile" ]] && tool_runnable "$name" >/dev/null 2>&1; then
+        runnable=true
+    fi
+    printf '{"schema_version":1,"name":"%s","source":"%s","strategy":"%s","go":"%s","package":"%s","version":"%s","runnable":%s}\n' \
+        "$(_json_escape "$name")" "$(_json_escape "$_s")" "$(_json_escape "$GOTOOLS_STRATEGY")" \
+        "$(_json_escape "$go_ver")" "$(_json_escape "$_p")" "$(_json_escape "$_v")" "$runnable"
 }
 
 # ---- info ----------------------------------------------------------------
 cmd_info() {
     load_config
-    if [[ $# -eq 0 ]]; then
-        echo "❌ Usage: $(basename "$0") info <tool-name> [--json]" >&2
+    _parse_output_format "$@"
+    local -a positional
+    positional=()
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json|--text|--format=json|--format=text) ;;
+            *) positional+=("$arg") ;;
+        esac
+    done
+
+    if [[ ${#positional[@]} -eq 0 || ${#positional[@]} -gt 1 ]]; then
+        echo "❌ Usage: $(basename "$0") info <tool-name> [--format=json|text]" >&2
         exit $E_USAGE
     fi
 
-    local tool_name="$1" as_json=false
-    [[ "${2:-}" == "--json" ]] && as_json=true
+    local tool_name="${positional[0]}"
 
-    if $as_json; then
+    if [[ "$_OUTPUT_FORMAT" == "json" ]]; then
         _info_json "$tool_name" || exit $E_TOOL_NOT_FOUND
         return
     fi
@@ -2086,14 +2772,15 @@ MODEOF
     fi
 }
 
-# _list_json — output the tool list as a JSON array.
-
-
+# _list_json — output the tool list as a JSON object: schema_version,
+# strategy/dir/go_version metadata, and a "tools" array of per-tool records.
+# Single compact line; values escaped via _json_escape.
 
 _list_json() {
     load_config
-    local first=true
-    echo "["
+    printf '{"schema_version":1,"strategy":"%s","dir":"%s","go_version":"%s","tools":[' \
+        "$(_json_escape "$GOTOOLS_STRATEGY")" "$(_json_escape "$GOTOOLS_DIR")" "$(_json_escape "$GOTOOLS_GO_VERSION")"
+    local first=true _n _s _p _v
     while IFS='|' read -r _n _s _p _v; do
         [[ -z "$_n" ]] && continue
         local go_ver="?"
@@ -2102,21 +2789,30 @@ _list_json() {
             split)   go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${_n}.mod" 2>/dev/null || echo "?") ;;
             module)  go_ver=$(extract_go_version_from_mod "$GOTOOLS_DIR/${_n}/go.mod" 2>/dev/null || echo "?") ;;
         esac
-        $first && first=false || echo ","
-        printf '  {"name":"%s","source":"%s","strategy":"%s","go":"%s","package":"%s","version":"%s"}' \
-            "$_n" "$_s" "$GOTOOLS_STRATEGY" "$go_ver" "$_p" "$_v"
+        $first && first=false || printf ','
+        printf '{"name":"%s","source":"%s","package":"%s","version":"%s","go":"%s"}' \
+            "$(_json_escape "$_n")" "$(_json_escape "$_s")" "$(_json_escape "$_p")" "$(_json_escape "$_v")" "$(_json_escape "$go_ver")"
     done <<< "$_MANIFEST_TOOLS"
-    echo ""
-    echo "]"
+    printf ']}\n'
 }
 
 # ---- list ----------------------------------------------------------------
 cmd_list() {
     load_config
-    local as_json=false
-    [[ "${1:-}" == "--json" ]] && as_json=true
+    _parse_output_format "$@"
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json|--text|--format=json|--format=text) ;;
+            *)
+                echo "❌ Unknown argument: $arg" >&2
+                echo "   Usage: $(basename "$0") list [--format=json|text]" >&2
+                exit $E_USAGE
+                ;;
+        esac
+    done
 
-    if $as_json; then
+    if [[ "$_OUTPUT_FORMAT" == "json" ]]; then
         _list_json
         return
     fi
@@ -3066,7 +3762,24 @@ cmd_upgrade() {
 
 
 cmd_version() {
-    echo "gotools.sh $VERSION"
+    _parse_output_format "$@"
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            --json|--text|--format=json|--format=text) ;;
+            *)
+                echo "❌ Unknown argument: $arg" >&2
+                echo "   Usage: $(basename "$0") version [--format=json|text]" >&2
+                exit $E_USAGE
+                ;;
+        esac
+    done
+
+    if [[ "$_OUTPUT_FORMAT" == "json" ]]; then
+        printf '{"schema_version":1,"name":"gotools.sh","version":"%s"}\n' "$(_json_escape "$VERSION")"
+    else
+        echo "gotools.sh $VERSION"
+    fi
 }
 
 # _stdin_install — read "go install <tool>" lines from stdin and install each.
@@ -3150,8 +3863,9 @@ if ! (return 0 2>/dev/null); then
         config)                   cmd_config "$@" ;;
         purge)                    cmd_purge "$@" ;;
         check)                    cmd_check ;;
+        doctor)                   cmd_doctor "$@" ;;
         completion)               cmd_completion "$@" ;;
-        version)                  cmd_version ;;
+        version)                  cmd_version "$@" ;;
         self-update|self-upgrade) cmd_self_update ;;
         uninstall)                cmd_uninstall ;;
         test)                     cmd_test "$@" ;;

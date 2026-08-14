@@ -205,6 +205,13 @@ make_go_stub "$STUB_BIN" badpath
 rc=$(run_rc "$TMPDIR" "$GO_BADPATH" -- install 'tool@')
 assert_eq "install with invalid package path exits 2" "2" "$rc"
 
+rc=$(run_rc "$TMPDIR" -- list --format=yaml)
+assert_eq "list --format=yaml exits 2" "2" "$rc"
+rc=$(run_rc "$TMPDIR" -- version --format=yaml)
+assert_eq "version --format=yaml exits 2" "2" "$rc"
+rc=$(run_rc "$TMPDIR" -- version extra)
+assert_eq "version with stray arg exits 2" "2" "$rc"
+
 category "exit code 8 — environment errors"
 # Empty PATH dir: `command -v go` must fail everywhere, including runners
 # that ship a go binary in /usr/bin (e.g. ubuntu images). `_require_go`
@@ -234,6 +241,8 @@ rc=$(run_rc "$TMPDIR" -- info goimports)
 assert_eq "info missing tool (split) exits 5" "5" "$rc"
 rc=$(run_rc "$TMPDIR" -- info goimports --json)
 assert_eq "info --json missing tool exits 5" "5" "$rc"
+rc=$(run_rc "$TMPDIR" -- info goimports --format=json)
+assert_eq "info --format=json missing tool exits 5" "5" "$rc"
 
 write_manifest "$TMPDIR" unified
 rc=$(run_rc "$TMPDIR" "$GO_OK" -- exec goimports)

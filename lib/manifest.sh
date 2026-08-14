@@ -11,19 +11,54 @@
 # changes (new optional key, new strategy value) do not require a bump.
 readonly _MANIFEST_SCHEMA_VERSION=1
 
+# _manifest_read_version [file] — echo the integer schema version (default 1).
+# Shape-aware: the top-level version is unquoted JSON ("version": 1,) and
+# lands in $3 as ": 1,"; a quoted value (e.g. a tool entry's "version":
+# "v0.8.0") lands in $4. Pre-version manifests and non-numeric matches
+# (the "version" key of a tool entry) default to v1.
+_manifest_read_version() {
+    local mf="${1:-$MANIFEST_FILE}"
+    local version
+    version=$(awk -F'"' '/"version":/ { if (NF >= 4) print $4; else print $3; exit }' "$mf")
+    version="${version#: }"
+    version="${version%,}"
+    [[ "$version" =~ ^[0-9]+$ ]] || version=1
+    echo "$version"
+}
+
+# _manifest_validate [file] — non-fatal structural validation for read-only
+# diagnostics (the doctor command). rc 0 valid; 1 missing file; 2 written by
+# a newer gotools (prints the same 3-line message _manifest_check_version
+# prints, but returns instead of exiting); 3 unparseable (no top-level
+# "strategy" key, or the last non-blank line is not "}" — truncated JSON).
+_manifest_validate() {
+    local mf="${1:-$MANIFEST_FILE}"
+    [[ -f "$mf" ]] || return 1
+    local version
+    version=$(_manifest_read_version "$mf")
+    if [[ "$version" -gt "$_MANIFEST_SCHEMA_VERSION" ]]; then
+        echo "❌ This project's $MANIFEST_FILE requires schema version ${version}." >&2
+        echo "   Your gotools (${VERSION}) only understands version ${_MANIFEST_SCHEMA_VERSION}." >&2
+        echo "   Upgrade: https://github.com/$REPO/releases" >&2
+        return 2
+    fi
+    local strategy last
+    strategy=$(awk -F'"' '/"strategy":/ {print $4; exit}' "$mf")
+    last=$(awk 'NF { line=$0 } END { print line }' "$mf")
+    if [[ -z "$strategy" || "$last" != "}" ]]; then
+        echo "❌ $MANIFEST_FILE is not parseable: truncated or malformed JSON." >&2
+        return 3
+    fi
+    return 0
+}
+
 # _manifest_check_version — refuse manifests written by a NEWER gotools so
 # old versions fail loudly instead of silently misparsing. Pre-version
 # manifests (no top-level "version" key) default to v1. A non-numeric match
 # means the "version" key belongs to a tool entry, not the top level.
 _manifest_check_version() {
     local version
-    # Shape-aware: the top-level version is unquoted JSON ("version": 1,)
-    # and lands in $3 as ": 1,"; a quoted value (e.g. a tool entry's
-    # "version": "v0.8.0") lands in $4.
-    version=$(awk -F'"' '/"version":/ { if (NF >= 4) print $4; else print $3; exit }' "$MANIFEST_FILE")
-    version="${version#: }"
-    version="${version%,}"
-    [[ "$version" =~ ^[0-9]+$ ]] || version=1
+    version=$(_manifest_read_version "$MANIFEST_FILE")
     if [[ "$version" -gt "$_MANIFEST_SCHEMA_VERSION" ]]; then
         echo "❌ This project's $MANIFEST_FILE requires schema version ${version}." >&2
         echo "   Your gotools (${VERSION}) only understands version ${_MANIFEST_SCHEMA_VERSION}." >&2

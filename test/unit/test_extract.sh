@@ -196,6 +196,39 @@ assert_eq "in require block" "v0.19.0" "$result"
 result=$(extract_version_for_pkg "$FIXTURE_DIR/require_block.mod" "golang.org/x/mod")
 assert_eq "indirect in require block" "v0.33.0" "$result"
 
+echo ""
+echo "==> extract_module_for_pkg"
+
+category "exact package match"
+result=$(extract_module_for_pkg "$FIXTURE_DIR/single_tool.mod" "mvdan.cc/gofumpt")
+assert_eq "module root for exact match" "mvdan.cc/gofumpt" "$result"
+
+category "subpackage match (strips path components)"
+result=$(extract_module_for_pkg "$FIXTURE_DIR/subpackage_tool.mod" "honnef.co/go/tools/cmd/staticcheck")
+assert_eq "subpackage to module root" "honnef.co/go/tools" "$result"
+
+category "versioned module match"
+result=$(extract_module_for_pkg "$FIXTURE_DIR/versioned_tool.mod" "github.com/securego/gosec/v2/cmd/gosec")
+assert_eq "versioned module root" "github.com/securego/gosec/v2" "$result"
+
+category "package not found"
+result=$(extract_module_for_pkg "$FIXTURE_DIR/single_tool.mod" "example.com/nonexistent")
+assert_eq "nonexistent returns empty" "" "$result"
+
+category "direct dependency in require block"
+result=$(extract_module_for_pkg "$FIXTURE_DIR/direct_indirect.mod" "github.com/golangci/golangci-lint/v2/cmd/golangci-lint")
+assert_eq "direct dep in block" "github.com/golangci/golangci-lint/v2" "$result"
+
+category "require block with inline and multiline"
+result=$(extract_module_for_pkg "$FIXTURE_DIR/require_block.mod" "github.com/google/addlicense")
+assert_eq "inline require" "github.com/google/addlicense" "$result"
+
+result=$(extract_module_for_pkg "$FIXTURE_DIR/require_block.mod" "golang.org/x/sync")
+assert_eq "in require block" "golang.org/x/sync" "$result"
+
+result=$(extract_module_for_pkg "$FIXTURE_DIR/require_block.mod" "golang.org/x/mod")
+assert_eq "indirect in require block" "golang.org/x/mod" "$result"
+
 cleanup() { rm -rf "$FIXTURE_DIR"; }
 trap cleanup EXIT
 
