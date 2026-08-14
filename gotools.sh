@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-VERSION="v0.5.8"
+VERSION="v0.6.0"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -693,6 +693,42 @@ extract_pkg_from_mod() {
     extract_tools_from_mod "$1" | head -n1
 }
 
+# strip_tools_from_mod <modfile>
+#   Prints the file with all `tool` directives removed. Handles both forms:
+#     tool pkg
+#     tool (
+#       pkg1
+#       pkg2
+#     )
+#   Every other line (module, go, require blocks, replace, exclude, comments,
+#   blank lines) is passed through verbatim. The caller owns writing the
+#   output back (atomically — temp file + mv, like _manifest_flush).
+strip_tools_from_mod() {
+    local modfile="$1"
+    awk '
+        /^tool[[:space:]]+\(/ { in_block=1; next }
+        in_block && /^\)/ { in_block=0; next }
+        in_block { next }
+        $1 == "tool" { next }
+        { print }
+    ' "$modfile"
+}
+
+# _gomod_tool_scan <modfile>
+#   Prints one line per tool directive:  name pkg@version
+#   Versions are resolved from the require blocks; a missing pin falls back
+#   to @latest (same policy as extract_tools_with_versions).
+_gomod_tool_scan() {
+    local modfile="$1"
+    while IFS= read -r pkg; do
+        [[ -z "$pkg" ]] && continue
+        local name ver
+        name=$(infer_binary_name_from_pkg "$pkg")
+        ver=$(extract_version_for_pkg "$modfile" "$pkg")
+        echo "$name ${pkg}@${ver:-latest}"
+    done < <(extract_tools_from_mod "$modfile")
+}
+
 # infer_binary_name_from_pkg <package-path>
 #   Converts a Go package path (without @version) into the expected binary name.
 #   Examples:
@@ -965,12 +1001,17 @@ _cmd_help() {
             echo "Usage: gotools.sh init [flags]"
             echo ""
             echo "  Bootstrap the project with a .gotools.json manifest."
+            echo "  If the root go.mod declares tools via 'go get -tool', they are"
+            echo "  adopted automatically (installed into gotools, directives stripped,"
+            echo "  go.mod tidied) — unless --no-migrate is given."
             echo ""
             echo "  Flags:"
             echo "    --strategy=unified|split|module   Isolation strategy (default: split)"
             echo "    --dir=<path>                      Tools directory (default: tools)"
             echo "    --go=<version|inherit>            Go version for tools (default: inherit)"
             echo "    --prefix=<module-path>            Module prefix (default: auto from go.mod)"
+            echo "    --no-migrate                      Leave the root go.mod untouched"
+            echo "    --dry-run                         Print the plan without writing anything"
             echo ""
             echo "  Examples:"
             echo "    gotools.sh init"
@@ -1086,12 +1127,16 @@ _cmd_help() {
             echo "              GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX"
             ;;
         purge)
-            echo "Usage: gotools.sh purge [--dry-run]"
+            echo "Usage: gotools.sh purge [--restore] [--dry-run]"
             echo ""
             echo "  Remove all tools and the .gotools.json manifest."
+            echo "  With --restore, the managed tools are added back to the root"
+            echo "  go.mod at their pinned versions (go get -tool) before the wipe,"
+            echo "  and the init command that recreates this project is printed."
             echo "  Interactive: requires typing YES to confirm."
             echo ""
             echo "  Options:"
+            echo "    --restore   Put the managed tools back into the root go.mod"
             echo "    --dry-run   Show what would be removed without deleting"
             ;;
         check)
@@ -1130,11 +1175,13 @@ Usage: $(basename "$0") <command> [arguments]
        <go install command> | $(basename "$0")     (pipe mode)
 
 Commands:
-  init [flags]            Bootstrap the project.
+  init [flags]            Bootstrap the project and adopt tools
+                            already declared in the root go.mod.
                             --strategy=unified|split|module  (default: $DEFAULT_STRATEGY)
                             --dir=<tools-dir>                     (default: $DEFAULT_DIR)
                             --go=<version|inherit>                (default: $DEFAULT_GO_VERSION)
                             --prefix=<module-prefix|auto>         (default: auto from root go.mod)
+                            --no-migrate  --dry-run
   install [name] <pkg>    Install a new tool.
                             If only <pkg> is given, name is inferred from its basename.
   sync [--dry-run]        Sync tool state to match $MANIFEST_FILE.
@@ -1147,7 +1194,8 @@ Commands:
                             No args: show all config.
                             One arg: show value of <key>.
                             Two args: set <key>=<value>.
-  purge [--dry-run]       Remove all tools and the $MANIFEST_FILE file.
+  purge [--restore] [--dry-run]  Remove all tools and the $MANIFEST_FILE file;
+                            --restore puts the tools back into your go.mod.
   info <name> [--json]    Show detailed information about a specific tool.
   check                   Verify all managed tools are runnable.
   version                 Show script version.
@@ -1407,6 +1455,11 @@ cmd_completion_install() {
 
 
 cmd_config() {
+    # Load the project config first: _manifest_config_set flushes the whole
+    # manifest from in-memory state, so without this a write would reset the
+    # strategy to the default and wipe the entire tools list.
+    load_config
+
     if [[ $# -eq 0 ]]; then
         # Show all config.
         if [[ ! -f "$MANIFEST_FILE" ]]; then
@@ -1640,19 +1693,72 @@ cmd_info() {
     echo "  Modfile:    $rel_mod"
     echo ""
 }
-
 # ---- init ----------------------------------------------------------------
 
+# _gomod_migrate <root-modfile>
+#   Adopt the tools already declared in the project's root go.mod:
+#   scan -> install (additive) -> strip -> tidy. The root go.mod is not
+#   modified until every tool has been installed successfully, so a failed
+#   migration leaves the project exactly as it was and a re-run resumes.
+_gomod_migrate() {
+    local root_mod="$1"
+    local scan
+    scan=$(_gomod_tool_scan "$root_mod")
 
+    if [[ -z "$scan" ]]; then
+        echo "ℹ No tool directives in go.mod — nothing to migrate."
+        return 0
+    fi
+
+    local count
+    count=$(wc -l <<< "$scan" | tr -d ' ')
+    echo "🔍 Found $count tool(s) in go.mod:"
+    while IFS=' ' read -r name pkg_at_version; do
+        echo "     $name  $pkg_at_version"
+    done <<< "$scan"
+
+    # Phase 2 — install (additive; root go.mod untouched until this succeeds)
+    while IFS=' ' read -r name pkg_at_version; do
+        [[ -z "$name" ]] && continue
+        if _manifest_tool_exists "$name"; then
+            echo "  ⏭ $name — already managed, skipping"
+            continue
+        fi
+        if $_DRY_RUN; then
+            echo "  [dry-run] Would install $name ($pkg_at_version)"
+            continue
+        fi
+        cmd_install "$name" "$pkg_at_version"
+    done <<< "$scan"
+
+    # Phases 3–4 — destructive to root go.mod, only after installs succeeded
+    if $_DRY_RUN; then
+        echo "[dry-run] Would strip tool directives from go.mod and run 'go mod tidy'."
+        return 0
+    fi
+
+    echo "✂️  Removing tool directives from go.mod..."
+    local tmp="$root_mod.tmp.$$"
+    strip_tools_from_mod "$root_mod" > "$tmp"
+    mv "$tmp" "$root_mod"
+
+    echo "🧹 Running 'go mod tidy' on the root module..."
+    _go mod tidy
+
+    echo "✅ Migrated $count tool(s) from go.mod into gotools."
+}
 
 cmd_init() {
     local strategy=$DEFAULT_STRATEGY dir=$DEFAULT_DIR go_v=$DEFAULT_GO_VERSION prefix=""
+    local no_migrate=false
     for arg in "$@"; do
         case $arg in
             --strategy=*) strategy="${arg#*=}" ;;
             --dir=*)      dir="${arg#*=}" ;;
             --go=*)       go_v="${arg#*=}" ;;
             --prefix=*)   prefix="${arg#*=}" ;;
+            --no-migrate) no_migrate=true ;;
+            --dry-run)    _DRY_RUN=true ;;
             *)            echo "❓ Unknown flag: $arg"; usage ;;
         esac
     done
@@ -1663,20 +1769,39 @@ cmd_init() {
         *) echo "❌ Invalid strategy: $strategy (must be unified, split, or module)" >&2; exit $E_USAGE ;;
     esac
 
-    # Set config vars in memory, then flush manifest.
+    # Load the existing manifest FIRST so re-running init merges the tool
+    # list instead of wiping it.
+    load_config
+
+    # Set config vars (flags/defaults win), then flush.
     GOTOOLS_STRATEGY="$strategy"
     GOTOOLS_DIR="$dir"
     GOTOOLS_GO_VERSION="$go_v"
     GOTOOLS_MODULE_PREFIX="$prefix"
-    _MANIFEST_TOOLS=""
-    _manifest_flush
+    if $_DRY_RUN; then
+        echo "🔍 [dry-run] Would write $MANIFEST_FILE (strategy=$strategy, dir=$dir)"
+    else
+        _manifest_flush
+        mkdir -p "$dir"
+        echo "✅ Initialized $MANIFEST_FILE (strategy=$strategy, dir=$dir)"
+    fi
 
-    mkdir -p "$dir"
-    echo "✅ Initialized $MANIFEST_FILE (strategy=$strategy, dir=$dir)"
+    # Adopt tools already declared in the root go.mod (unless --no-migrate).
+    if ! $no_migrate; then
+        local root_mod="$_PROJECT_ROOT/go.mod"
+        if [[ -f "$root_mod" ]]; then
+            _gomod_migrate "$root_mod"
+        else
+            echo "ℹ No go.mod in project root — skipping tool migration."
+        fi
+    fi
 
-    # Reload so cmd_sync picks up the new values.
-    load_config
-    cmd_sync
+    # Reconcile; pass --dry-run through so a dry-run init stays read-only.
+    if $_DRY_RUN; then
+        cmd_sync --dry-run
+    else
+        cmd_sync
+    fi
 }
 
 # _install_failed <name> <output> — report a failed `go get -tool` and exit
@@ -2041,18 +2166,83 @@ cmd_migrate() {
 
     echo "✅ Migration from '$current_strategy' to '$target_strategy' complete."
 }
-
 # ---- purge ---------------------------------------------------------------
 
+# _purge_restore_hint — the init command that recreates this project's
+# configuration. The tools themselves come back via the restore; the
+# strategy/dir/go-version/prefix live only in the manifest and would
+# otherwise be lost, so print how to reconstruct them.
+_purge_restore_hint() {
+    local cmd
+    cmd="$(basename "$0") init --strategy=${GOTOOLS_STRATEGY}"
+    [[ "${GOTOOLS_DIR:-}" != "tools" ]] && cmd+=" --dir=${GOTOOLS_DIR}"
+    [[ -n "${GOTOOLS_GO_VERSION:-}" && "$GOTOOLS_GO_VERSION" != "inherit" ]] && cmd+=" --go=${GOTOOLS_GO_VERSION}"
+    [[ -n "${GOTOOLS_MODULE_PREFIX:-}" ]] && cmd+=" --prefix=${GOTOOLS_MODULE_PREFIX}"
+    echo "$cmd"
+}
 
+# _purge_restore_tools — the reverse of init's go.mod adoption: add every
+# managed tool back to the root go.mod at its pinned version via
+# `go get -tool`. Runs BEFORE the wipe so a failure leaves gotools intact.
+_purge_restore_tools() {
+    local root_mod="$_PROJECT_ROOT/go.mod"
+    if [[ ! -f "$root_mod" ]]; then
+        echo "❌ Cannot restore tools: no go.mod in project root." >&2
+        exit $E_ENVIRONMENT
+    fi
+
+    local count=0
+    local _n _s _p _v
+    while IFS='|' read -r _n _s _p _v; do
+        [[ -z "$_n" ]] && continue
+        if [[ "$_s" != "go" ]]; then
+            echo "  ⚠ $_n: source '$_s' — skipping (only go tools can be restored)"
+            continue
+        fi
+        if $_DRY_RUN; then
+            echo "  [dry-run] Would restore $_n (${_p}@${_v}) to go.mod"
+            count=$((count + 1))
+            continue
+        fi
+        echo "  ⬆ $_n (${_p}@${_v}) → go.mod"
+        local _get_out
+        if ! _get_out=$(go get -tool "${_p}@${_v}" 2>&1); then
+            echo "❌ Failed to restore $_n" >&2
+            echo "$_get_out" >&2
+            if echo "$_get_out" | grep -qiE 'dial tcp|i/o timeout|connection timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded'; then
+                exit $E_NETWORK
+            fi
+            exit $E_GENERIC
+        fi
+        count=$((count + 1))
+    done <<< "$_MANIFEST_TOOLS"
+
+    if $_DRY_RUN; then
+        echo "[dry-run] Would restore $count tool(s) to go.mod."
+    elif [[ $count -gt 0 ]]; then
+        echo "✅ Restored $count tool(s) to go.mod."
+    else
+        echo "ℹ No tools to restore."
+    fi
+}
 
 cmd_purge() {
     _DRY_RUN=false
-    for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
+    local restore=false
+    for a in "$@"; do
+        case "$a" in
+            --dry-run) _DRY_RUN=true ;;
+            --restore) restore=true ;;
+        esac
+    done
     load_config
     _acquire_lock
 
     if $_DRY_RUN; then
+        if $restore; then
+            _purge_restore_tools
+            echo "🔍 [dry-run] To come back: $(_purge_restore_hint)"
+        fi
         echo "🔍 [dry-run] Would delete:"
         echo "  - $GOTOOLS_DIR/ (tools directory)"
         echo "  - $MANIFEST_FILE (manifest)"
@@ -2060,6 +2250,9 @@ cmd_purge() {
     fi
 
     echo "⚠️  WARNING: This will delete the tools directory ('$GOTOOLS_DIR') and '$MANIFEST_FILE'."
+    if $restore; then
+        echo "  It will also add the managed tools back to your go.mod."
+    fi
     echo "This action cannot be undone."
     printf "Are you sure you want to proceed? (type YES to confirm): "
     read -r confirmation
@@ -2067,6 +2260,11 @@ cmd_purge() {
     if [[ "$confirmation" != "YES" ]]; then
         echo "❌ Purge cancelled."
         return 0
+    fi
+
+    if $restore; then
+        _purge_restore_tools
+        echo "💡 To come back: $(_purge_restore_hint)"
     fi
 
     rm -rf "${GOTOOLS_DIR:?}" "${MANIFEST_FILE:?}"
@@ -2104,7 +2302,7 @@ cmd_remove() {
                 if [[ -f "$modfile" ]]; then
                     local pkg
                     if pkg=$(pkg_for_tool "$name"); then
-                        (cd "$GOTOOLS_DIR" && go mod edit -drop-tool="$pkg" && go mod tidy)
+                        (cd "$GOTOOLS_DIR" && go mod edit -droptool="$pkg" && go mod tidy)
                         echo "  ✅ Dropped $name from $modfile"
                     else
                         echo "  ⚠️  Tool $name not found in $modfile"

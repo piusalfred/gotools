@@ -31,7 +31,7 @@ cmd_remove() {
                 if [[ -f "$modfile" ]]; then
                     local pkg
                     if pkg=$(pkg_for_tool "$name"); then
-                        (cd "$GOTOOLS_DIR" && go mod edit -drop-tool="$pkg" && go mod tidy)
+                        (cd "$GOTOOLS_DIR" && go mod edit -droptool="$pkg" && go mod tidy)
                         echo "  ✅ Dropped $name from $modfile"
                     else
                         echo "  ⚠️  Tool $name not found in $modfile"

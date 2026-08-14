@@ -13,12 +13,17 @@ _cmd_help() {
             echo "Usage: gotools.sh init [flags]"
             echo ""
             echo "  Bootstrap the project with a .gotools.json manifest."
+            echo "  If the root go.mod declares tools via 'go get -tool', they are"
+            echo "  adopted automatically (installed into gotools, directives stripped,"
+            echo "  go.mod tidied) — unless --no-migrate is given."
             echo ""
             echo "  Flags:"
             echo "    --strategy=unified|split|module   Isolation strategy (default: split)"
             echo "    --dir=<path>                      Tools directory (default: tools)"
             echo "    --go=<version|inherit>            Go version for tools (default: inherit)"
             echo "    --prefix=<module-path>            Module prefix (default: auto from go.mod)"
+            echo "    --no-migrate                      Leave the root go.mod untouched"
+            echo "    --dry-run                         Print the plan without writing anything"
             echo ""
             echo "  Examples:"
             echo "    gotools.sh init"
@@ -134,12 +139,16 @@ _cmd_help() {
             echo "              GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX"
             ;;
         purge)
-            echo "Usage: gotools.sh purge [--dry-run]"
+            echo "Usage: gotools.sh purge [--restore] [--dry-run]"
             echo ""
             echo "  Remove all tools and the .gotools.json manifest."
+            echo "  With --restore, the managed tools are added back to the root"
+            echo "  go.mod at their pinned versions (go get -tool) before the wipe,"
+            echo "  and the init command that recreates this project is printed."
             echo "  Interactive: requires typing YES to confirm."
             echo ""
             echo "  Options:"
+            echo "    --restore   Put the managed tools back into the root go.mod"
             echo "    --dry-run   Show what would be removed without deleting"
             ;;
         check)
@@ -178,11 +187,13 @@ Usage: $(basename "$0") <command> [arguments]
        <go install command> | $(basename "$0")     (pipe mode)
 
 Commands:
-  init [flags]            Bootstrap the project.
+  init [flags]            Bootstrap the project and adopt tools
+                            already declared in the root go.mod.
                             --strategy=unified|split|module  (default: $DEFAULT_STRATEGY)
                             --dir=<tools-dir>                     (default: $DEFAULT_DIR)
                             --go=<version|inherit>                (default: $DEFAULT_GO_VERSION)
                             --prefix=<module-prefix|auto>         (default: auto from root go.mod)
+                            --no-migrate  --dry-run
   install [name] <pkg>    Install a new tool.
                             If only <pkg> is given, name is inferred from its basename.
   sync [--dry-run]        Sync tool state to match $MANIFEST_FILE.
@@ -195,7 +206,8 @@ Commands:
                             No args: show all config.
                             One arg: show value of <key>.
                             Two args: set <key>=<value>.
-  purge [--dry-run]       Remove all tools and the $MANIFEST_FILE file.
+  purge [--restore] [--dry-run]  Remove all tools and the $MANIFEST_FILE file;
+                            --restore puts the tools back into your go.mod.
   info <name> [--json]    Show detailed information about a specific tool.
   check                   Verify all managed tools are runnable.
   version                 Show script version.

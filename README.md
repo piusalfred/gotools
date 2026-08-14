@@ -283,6 +283,38 @@ gotools.sh list
 | `--dir=` | `tools` | Tools directory path. |
 | `--go=` | `inherit` | Go version for tools. |
 | `--prefix=` | *(auto)* | Module path prefix. |
+| `--no-migrate` | *(off)* | Leave the root `go.mod` untouched (skip adoption). |
+| `--dry-run` | *(off)* | Print the adoption plan without writing anything. |
+
+### Adopting an existing project
+
+If your project already manages tools with `go get -tool`, plain `init`
+adopts them automatically: every `tool` directive in the root `go.mod` is
+installed into gotools at its **pinned version**, the directives are then
+stripped, and `go mod tidy` prunes the tool-only dependencies. The root
+`go.mod` is not touched until every tool has been installed successfully —
+a failed migration leaves the project exactly as it was and a re-run resumes
+where it left off.
+
+```text
+$ gotools.sh init
+🔍 Found 2 tool(s) in go.mod:
+     goimports  golang.org/x/tools/cmd/goimports@v0.30.0
+     gci        github.com/daixiang0/gci@v2.11.4
+📦 Installing goimports ...
+✂️  Removing tool directives from go.mod...
+🧹 Running 'go mod tidy' on the root module...
+✅ Migrated 2 tool(s) from go.mod into gotools.
+```
+
+To bootstrap without touching `go.mod`, pass `--no-migrate`. To preview the
+whole plan, pass `--dry-run`.
+
+The reverse direction exists too: `gotools.sh purge --restore` adds every
+managed tool back to the root `go.mod` at its pinned version
+(`go get -tool pkg@version`) and then removes the tools directory and the
+manifest — leaving the project exactly as Go's built-in tool management
+would have it.
 
 ### Examples
 
@@ -699,10 +731,15 @@ gotools.sh remove golangci-lint mockgen
 **Total purge (interactive, requires typing YES):**
 
 Deletes the `tools/` directory and `.gotools.json`
-entirely.
+entirely. With `--restore`, the managed tools are added
+back to your root `go.mod` at their pinned versions first
+(the reverse of `init`'s adoption), and gotools prints the
+exact `init` command that recreates the project's
+configuration:
 
 ```bash
 gotools.sh purge
+gotools.sh purge --restore   # put tools back into go.mod, then wipe
 ```
 
 **Uninstall gotools.sh itself (interactive):**

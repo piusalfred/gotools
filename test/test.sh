@@ -186,6 +186,51 @@ test_migration() {
 }
 
 # ---------------------------------------------------------------------------
+# go.mod adoption (init) + reversal (purge --restore)
+# ---------------------------------------------------------------------------
+test_gomod_adoption() {
+    local tmpdir="$TMP_BASE/adopt"
+    setup_project "$tmpdir"
+    cd "$tmpdir" || return
+
+    suite "go.mod adoption: seed root go.mod with tools"
+    run_cmd "go get -tool goimports" go get -tool "$TOOL_GOIMPORTS_PKG"
+    run_cmd "go get -tool gci" go get -tool "$TOOL_GCI_PKG"
+    grep -q '^tool ' go.mod
+    if [[ $? -eq 0 ]]; then
+        pass "root go.mod contains tool directives"
+    else
+        fail "root go.mod contains tool directives"
+    fi
+
+    suite "go.mod adoption: init adopts + strips"
+    run_cmd "init adopts go.mod tools" "$GOTOOLS" init --strategy=split
+    if grep -q '^tool ' go.mod; then
+        fail_detail "init strips tool directives" "expected: no tool directives" "actual:   $(grep '^tool ' go.mod | head -1)"
+    else
+        pass "init strips tool directives"
+    fi
+    list_has "$TOOL_GOIMPORTS_NAME" yes
+    list_has "$TOOL_GCI_NAME" yes
+    run_cmd "go mod verify" go mod verify
+    exec_test "$TOOL_GOIMPORTS_NAME" --help
+
+    suite "go.mod adoption: purge --restore puts tools back"
+    run_cmd "purge --restore" bash -c "echo YES | \"$GOTOOLS\" purge --restore"
+    if grep -q '^tool ' go.mod; then
+        pass "restore re-adds tool directives to go.mod"
+    else
+        fail "restore re-adds tool directives to go.mod"
+    fi
+    if [[ ! -f .gotools.json && ! -d tools ]]; then
+        pass "purge --restore wipes gotools state"
+    else
+        fail "purge --restore wipes gotools state"
+    fi
+    run_cmd "go mod verify after restore" go mod verify
+}
+
+# ---------------------------------------------------------------------------
 # Smoke tests — remaining commands
 # ---------------------------------------------------------------------------
 test_smoke() {
@@ -304,6 +349,7 @@ test_strategy_lifecycle unified
 test_strategy_lifecycle split
 test_strategy_lifecycle module
 test_migration
+test_gomod_adoption
 test_smoke
 test_robustness
 
