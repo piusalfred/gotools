@@ -29,12 +29,14 @@ cmd_install() {
     load_config
     _acquire_lock
 
-    # Strip --force from args before parsing name/pkg.
+    # Strip --force/--offline from args before parsing name/pkg.
     local force=false filtered=()
     for a in "$@"; do
         if [[ "$a" == "--force" ]]; then force=true
+        elif [[ "$a" == "--offline" ]]; then _OFFLINE=true
         else filtered+=("$a"); fi
     done
+    _parse_offline "$@"
     # ${filtered[@]+...} keeps the expansion legal when filtered is empty
     # under `set -u` on bash < 4.4 (e.g. plain `gotools.sh install`).
     set -- ${filtered[@]+"${filtered[@]}"}
@@ -49,6 +51,12 @@ cmd_install() {
     else
         name="$1"
         pkg="$2"
+    fi
+
+    # Installing a new tool needs the module proxy — refuse in offline mode.
+    if ${_OFFLINE:-false}; then
+        echo "❌ Offline mode: cannot install new tools without network." >&2
+        exit $E_OFFLINE
     fi
 
     local target_v

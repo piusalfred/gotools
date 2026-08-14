@@ -127,6 +127,7 @@ test_strategy_lifecycle() {
     suite "lifecycle: $strategy — sync fast path"
     run_cmd "sync reconciles after upgrade" "$GOTOOLS" sync
     run_cmd "sync hits the fast path" bash -c "\"$GOTOOLS\" sync | grep -q 'Tools up to date.'"
+    run_cmd "sync --offline hits the fast path" bash -c "\"$GOTOOLS\" sync --offline | grep -q 'fingerprint match'"
 
     run_cmd "config read GOTOOLS_STRATEGY" "$GOTOOLS" config GOTOOLS_STRATEGY
     run_cmd "config write GOTOOLS_DIR" "$GOTOOLS" config GOTOOLS_DIR tools

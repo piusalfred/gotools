@@ -44,7 +44,7 @@ resolve_version() {
         return
     fi
 
-    # Normalise: accept both "v0.0.10" and "0.0.10"
+    # Normalise: accept both "v0.0.10" and "0.0.10" as valid input.
     if [[ "$requested" != v* ]]; then
         requested="v${requested}"
     fi

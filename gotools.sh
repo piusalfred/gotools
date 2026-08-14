@@ -41,6 +41,11 @@ _MANIFEST_TOOLS=""
 # print what they would do but make no changes.
 _DRY_RUN=false
 
+# Offline mode — set via the --offline flag or GOTOOLS_OFFLINE=1. When true,
+# commands refuse to do anything that would need the network: sync only takes
+# the fingerprint fast path, install/upgrade refuse outright.
+_OFFLINE=false
+
 # Verbose mode — set via GOTOOLS_VERBOSE=1 env var or --verbose flag.
 # When true, print every go command before executing it.
 _VERBOSE="${GOTOOLS_VERBOSE:-0}"
@@ -260,6 +265,18 @@ relative_path() {
     # Strip trailing slash, default to "." for identical paths.
     rel="${rel%/}"
     echo "${rel:-.}"
+}
+
+# _parse_offline [args...] — set _OFFLINE from a --offline flag in the args
+# or the GOTOOLS_OFFLINE=1 env var. Call at the top of commands that support
+# offline mode. Always returns 0 (the env check must not trip set -e).
+_parse_offline() {
+    for arg in "$@"; do
+        case "$arg" in --offline) _OFFLINE=true ;; esac
+    done
+    if [[ "${GOTOOLS_OFFLINE:-0}" == "1" ]]; then
+        _OFFLINE=true
+    fi
 }
 
 # _sha256 <file> — print the SHA-256 hash of a file.
@@ -1050,7 +1067,8 @@ _cmd_help() {
             echo "    # The 'go install' prefix is optional — bare pkg@version works too"
             echo ""
             echo "  Options:"
-            echo "    --force   Overwrite an existing tool with the same name"
+            echo "    --force    Overwrite an existing tool with the same name"
+            echo "    --offline  Refuse to install (needs the network), exit 6"
             ;;
         sync)
             echo "Usage: gotools.sh sync [--dry-run]"
@@ -1067,6 +1085,8 @@ _cmd_help() {
             echo ""
             echo "  Options:"
             echo "    --dry-run   Show what would be done without making changes"
+            echo "    --offline   Hermetic: fingerprint match only, exit 6 otherwise"
+            echo "                (GOTOOLS_OFFLINE=1 does the same)"
             ;;
         exec)
             echo "Usage: gotools.sh exec <tool-name> [args...]"
@@ -1102,6 +1122,7 @@ _cmd_help() {
             echo ""
             echo "  Options:"
             echo "    --dry-run   Show what would be upgraded without making changes"
+            echo "    --offline   Refuse to upgrade (needs the network), exit 6"
             ;;
         remove)
             echo "Usage: gotools.sh remove <name1> [name2...] [--dry-run]"
@@ -1837,12 +1858,14 @@ cmd_install() {
     load_config
     _acquire_lock
 
-    # Strip --force from args before parsing name/pkg.
+    # Strip --force/--offline from args before parsing name/pkg.
     local force=false filtered=()
     for a in "$@"; do
         if [[ "$a" == "--force" ]]; then force=true
+        elif [[ "$a" == "--offline" ]]; then _OFFLINE=true
         else filtered+=("$a"); fi
     done
+    _parse_offline "$@"
     # ${filtered[@]+...} keeps the expansion legal when filtered is empty
     # under `set -u` on bash < 4.4 (e.g. plain `gotools.sh install`).
     set -- ${filtered[@]+"${filtered[@]}"}
@@ -1857,6 +1880,12 @@ cmd_install() {
     else
         name="$1"
         pkg="$2"
+    fi
+
+    # Installing a new tool needs the module proxy — refuse in offline mode.
+    if ${_OFFLINE:-false}; then
+        echo "❌ Offline mode: cannot install new tools without network." >&2
+        exit $E_OFFLINE
     fi
 
     local target_v
@@ -2482,12 +2511,13 @@ _tool_version_matches() {
     [[ -n "$disk" && "$disk" == "$expected" ]]
 }
 
-# _sync_fast_path <go-version> — skip the full reconciliation when nothing
-# changed. The fingerprint must match AND (defense in depth) every modfile
-# must exist with the manifest version — catches manual edits that bypassed
-# the manifest. Returns 0 and prints "Tools up to date." on a hit.
+# _sync_fast_path <go-version> [message] — skip the full reconciliation when
+# nothing changed. The fingerprint must match AND (defense in depth) every
+# modfile must exist with the manifest version — catches manual edits that
+# bypassed the manifest. Returns 0 and prints the success message on a hit.
 _sync_fast_path() {
     local go_ver="$1"
+    local success_message="${2:-✅ Tools up to date.}"
     local fingerprint_file="$GOTOOLS_DIR/.gotools.fingerprint"
     local current_fp
     current_fp=$(_sync_fingerprint "$go_ver")
@@ -2504,7 +2534,7 @@ _sync_fast_path() {
             _tool_version_matches "$_n" "$_p" "$_v" || { all_ok=false; break; }
         done <<< "$_MANIFEST_TOOLS"
         if $all_ok; then
-            echo "✅ Tools up to date."
+            echo "$success_message"
             return 0
         fi
     fi
@@ -2515,11 +2545,25 @@ cmd_sync() {
     _require_go
     _DRY_RUN=false
     for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
+    _parse_offline "$@"
 
     load_config
     _acquire_lock
     local target_v
     target_v=$(resolve_go_version)
+
+    # Offline mode: hermetic CI runs take ONLY the fingerprint fast path.
+    # Anything that would need the network refuses with exit 6 instead of
+    # making the build depend on proxy conditions. Also covers a strategy
+    # mismatch (migrating needs the network).
+    if ${_OFFLINE:-false}; then
+        if _sync_fast_path "$target_v" "✅ Tools up to date (fingerprint match)."; then
+            return 0
+        fi
+        echo "❌ Offline mode: manifest has changed. Network required." >&2
+        echo "   Run 'gotools sync' locally and commit the updated files." >&2
+        exit $E_OFFLINE
+    fi
 
     local disk_strategy
     disk_strategy=$(detect_strategy "$GOTOOLS_DIR")
@@ -2757,12 +2801,29 @@ cmd_uninstall() {
 cmd_upgrade() {
     _require_go
     _DRY_RUN=false
-    for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
+    # Filter flags out so they never leak into the target list.
+    local filtered=()
+    for a in "$@"; do
+        case "$a" in
+            --dry-run) _DRY_RUN=true ;;
+            --offline) _OFFLINE=true ;;
+            *) filtered+=("$a") ;;
+        esac
+    done
+    _parse_offline "$@"
+    set -- ${filtered[@]+"${filtered[@]}"}
+
     load_config
     _acquire_lock
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") upgrade <name|all> [--dry-run]" >&2
         exit $E_USAGE
+    fi
+
+    # Upgrading resolves @latest from the proxy — refuse in offline mode.
+    if ${_OFFLINE:-false}; then
+        echo "❌ Offline mode: cannot upgrade tools without network." >&2
+        exit $E_OFFLINE
     fi
 
     local targets=()
