@@ -700,6 +700,19 @@ PRs intended for `main` and direct pushes to `main` must bump `VERSION`
 PRs targeting `dev` don't bump. Releases are only cut after the Test workflow
 passed on that main push, so an untested commit can never ship.
 
+### Parallel cold restores
+
+`sync --jobs N` (or `GOTOOLS_JOBS=N`) reinstalls missing or drifted tools
+N at a time — opt-in; the default stays serial (`--jobs 1`). Works with the
+`split` and `module` strategies (independent modfiles); `unified` stays
+serial and warns when `--jobs > 1` is requested explicitly.
+
+```yaml
+# CI runners typically have many cores:
+- name: Sync tools
+  run: gotools sync --jobs $(nproc) --offline
+```
+
 ### Hermetic offline sync
 
 `sync --offline` (or `GOTOOLS_OFFLINE=1`) makes CI deterministic: it takes

@@ -142,6 +142,84 @@ _parse_offline() {
     fi
 }
 
+# _parallel_for <max-jobs> <fn> [args...]
+#   Runs fn concurrently over argument groups delimited by "::", at most
+#   max-jobs at a time, then waits for all. Each invocation's output is
+#   line-prefixed with [<first group arg>] so interleaved output stays
+#   readable. Portable to bash 3.2 (no `wait -n`): the oldest job is reaped
+#   whenever the cap is reached. Returns the first non-zero job status.
+_parallel_for() {
+    local max_jobs="$1" fn="$2"
+    shift 2
+    # Separate declaration/assignment: bash 3.2 cannot initialize two
+    # arrays in a single `local` statement.
+    local -a group pids
+    group=()
+    pids=()
+    local running=0 fail_status=0 label
+    local arg
+    for arg in "$@"; do
+        if [[ "$arg" == "::" ]]; then
+            label="${group[0]}"
+            # The subshell wrapper is required: bash 3.2 returns from a
+            # function immediately after backgrounding a pipeline under
+            # `set -e` (the classic errexit/& bug).
+            (
+                "$fn" "${group[@]}" 2>&1 | while IFS= read -r line; do
+                    echo "[$label] $line"
+                done
+            ) &
+            pids+=($!)
+            running=$((running + 1))
+            group=()
+            # Only reap once we EXCEED the cap: with max_jobs=1 the second
+            # job must launch before the first is waited on, otherwise the
+            # semaphore degenerates into serial execution.
+            if [[ $running -gt $max_jobs ]]; then
+                _parallel_reap
+                # Drop the oldest pid. The explicit branch avoids expanding
+                # an empty array under `set -u` on bash < 4.4.
+                if [[ ${#pids[@]} -gt 1 ]]; then
+                    pids=("${pids[@]:1}")
+                else
+                    pids=()
+                fi
+                running=$((running - 1))
+            fi
+        else
+            group+=("$arg")
+        fi
+    done
+    local pid
+    # Safe expansion: pids may be empty when no job was left running.
+    for pid in ${pids[@]+"${pids[@]}"}; do
+        if wait "$pid"; then
+            fail_status=$fail_status
+        else
+            _parallel_record_failure $?
+        fi
+    done
+    [[ $fail_status -eq 0 ]] || return $fail_status
+}
+
+# _parallel_reap — wait for the oldest running job, recording its status.
+# Uses pids[0] and fail_status from the caller's scope.
+_parallel_reap() {
+    if wait "${pids[0]}"; then
+        return 0
+    fi
+    _parallel_record_failure $?
+    return 0
+}
+
+# _parallel_record_failure <status> — remember the first non-zero job status.
+_parallel_record_failure() {
+    local status="$1"
+    if [[ $status -ne 0 && $fail_status -eq 0 ]]; then
+        fail_status=$status
+    fi
+}
+
 # _sha256 <file> — print the SHA-256 hash of a file.
 # Uses sha256sum (Linux) or shasum -a 256 (macOS); returns 1 if neither exists.
 _sha256() {

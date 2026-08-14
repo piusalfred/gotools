@@ -158,8 +158,13 @@ MODEOF
         exit $E_ENVIRONMENT
     fi
 
-    _manifest_tool_set "$name" "go" "$pkg_base" "${resolved_ver:-latest}"
-    _manifest_flush
+    # _INSTALL_NO_FLUSH=1: internal hook used by parallel sync — the parent
+    # process merges the manifest after all jobs complete, so individual
+    # background jobs must not write it (they would race and drop tools).
+    if [[ "${_INSTALL_NO_FLUSH:-0}" != "1" ]]; then
+        _manifest_tool_set "$name" "go" "$pkg_base" "${resolved_ver:-latest}"
+        _manifest_flush
+    fi
 
     echo "✅ Installed $name"
 

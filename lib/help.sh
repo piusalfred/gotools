@@ -76,6 +76,9 @@ _cmd_help() {
             echo "    --dry-run   Show what would be done without making changes"
             echo "    --offline   Hermetic: fingerprint match only, exit 6 otherwise"
             echo "                (GOTOOLS_OFFLINE=1 does the same)"
+            echo "    --jobs N    Reinstall tools N at a time (default: 1, serial)."
+            echo "                Parallel needs split/module; unified stays serial."
+            echo "                GOTOOLS_JOBS=N does the same."
             ;;
         exec)
             echo "Usage: gotools.sh exec <tool-name> [args...]"

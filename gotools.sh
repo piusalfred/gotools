@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-VERSION="v0.6.0"
+VERSION="v0.6.2"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -276,6 +276,84 @@ _parse_offline() {
     done
     if [[ "${GOTOOLS_OFFLINE:-0}" == "1" ]]; then
         _OFFLINE=true
+    fi
+}
+
+# _parallel_for <max-jobs> <fn> [args...]
+#   Runs fn concurrently over argument groups delimited by "::", at most
+#   max-jobs at a time, then waits for all. Each invocation's output is
+#   line-prefixed with [<first group arg>] so interleaved output stays
+#   readable. Portable to bash 3.2 (no `wait -n`): the oldest job is reaped
+#   whenever the cap is reached. Returns the first non-zero job status.
+_parallel_for() {
+    local max_jobs="$1" fn="$2"
+    shift 2
+    # Separate declaration/assignment: bash 3.2 cannot initialize two
+    # arrays in a single `local` statement.
+    local -a group pids
+    group=()
+    pids=()
+    local running=0 fail_status=0 label
+    local arg
+    for arg in "$@"; do
+        if [[ "$arg" == "::" ]]; then
+            label="${group[0]}"
+            # The subshell wrapper is required: bash 3.2 returns from a
+            # function immediately after backgrounding a pipeline under
+            # `set -e` (the classic errexit/& bug).
+            (
+                "$fn" "${group[@]}" 2>&1 | while IFS= read -r line; do
+                    echo "[$label] $line"
+                done
+            ) &
+            pids+=($!)
+            running=$((running + 1))
+            group=()
+            # Only reap once we EXCEED the cap: with max_jobs=1 the second
+            # job must launch before the first is waited on, otherwise the
+            # semaphore degenerates into serial execution.
+            if [[ $running -gt $max_jobs ]]; then
+                _parallel_reap
+                # Drop the oldest pid. The explicit branch avoids expanding
+                # an empty array under `set -u` on bash < 4.4.
+                if [[ ${#pids[@]} -gt 1 ]]; then
+                    pids=("${pids[@]:1}")
+                else
+                    pids=()
+                fi
+                running=$((running - 1))
+            fi
+        else
+            group+=("$arg")
+        fi
+    done
+    local pid
+    # Safe expansion: pids may be empty when no job was left running.
+    for pid in ${pids[@]+"${pids[@]}"}; do
+        if wait "$pid"; then
+            fail_status=$fail_status
+        else
+            _parallel_record_failure $?
+        fi
+    done
+    [[ $fail_status -eq 0 ]] || return $fail_status
+}
+
+# _parallel_reap — wait for the oldest running job, recording its status.
+# Uses pids[0] and fail_status from the caller's scope.
+_parallel_reap() {
+    if wait "${pids[0]}"; then
+        return 0
+    fi
+    _parallel_record_failure $?
+    return 0
+}
+
+# _parallel_record_failure <status> — remember the first non-zero job status.
+_parallel_record_failure() {
+    local status="$1"
+    if [[ $status -ne 0 && $fail_status -eq 0 ]]; then
+        fail_status=$status
     fi
 }
 
@@ -1087,6 +1165,9 @@ _cmd_help() {
             echo "    --dry-run   Show what would be done without making changes"
             echo "    --offline   Hermetic: fingerprint match only, exit 6 otherwise"
             echo "                (GOTOOLS_OFFLINE=1 does the same)"
+            echo "    --jobs N    Reinstall tools N at a time (default: 1, serial)."
+            echo "                Parallel needs split/module; unified stays serial."
+            echo "                GOTOOLS_JOBS=N does the same."
             ;;
         exec)
             echo "Usage: gotools.sh exec <tool-name> [args...]"
@@ -1987,8 +2068,13 @@ MODEOF
         exit $E_ENVIRONMENT
     fi
 
-    _manifest_tool_set "$name" "go" "$pkg_base" "${resolved_ver:-latest}"
-    _manifest_flush
+    # _INSTALL_NO_FLUSH=1: internal hook used by parallel sync — the parent
+    # process merges the manifest after all jobs complete, so individual
+    # background jobs must not write it (they would race and drop tools).
+    if [[ "${_INSTALL_NO_FLUSH:-0}" != "1" ]]; then
+        _manifest_tool_set "$name" "go" "$pkg_base" "${resolved_ver:-latest}"
+        _manifest_flush
+    fi
 
     echo "✅ Installed $name"
 
@@ -2493,6 +2579,53 @@ _sync_write_fingerprint() {
     printf '%s\n' "$(_sync_fingerprint "$1")" > "$GOTOOLS_DIR/.gotools.fingerprint"
 }
 
+# _sync_install_one <name> <pkg@version> — one backgroundable reinstall unit.
+# _INSTALL_NO_FLUSH=1 makes cmd_install skip the manifest write: parallel
+# jobs each run in their own subshell, so letting them flush would race and
+# drop tools (last writer wins). The parent merges and flushes once.
+_sync_install_one() {
+    local name="$1" pkg_at_version="$2"
+    _INSTALL_NO_FLUSH=1 cmd_install --force "$name" "$pkg_at_version"
+}
+
+# _sync_run_reinstalls_serial <list> — sequential reinstalls (unified
+# strategy and --jobs 1).
+_sync_run_reinstalls_serial() {
+    local _n pkg_at_version
+    while IFS='|' read -r _n pkg_at_version; do
+        [[ -z "$_n" ]] && continue
+        # --force: the tool is already in the manifest — restoring a missing
+        # or drifted modfile must not trip cmd_install's duplicate check.
+        cmd_install --force "$_n" "$pkg_at_version"
+    done <<< "$1"
+}
+
+# _sync_run_reinstalls_parallel <jobs> <list> — concurrent reinstalls for
+# split/module strategies (independent modfiles). After all jobs complete,
+# the parent merges every reinstalled tool into the manifest and flushes
+# once, so concurrent jobs never race on the manifest.
+_sync_run_reinstalls_parallel() {
+    local jobs="$1" list="$2"
+    # Separate declaration/assignment for bash 3.2 compatibility.
+    local -a spec
+    spec=()
+    local _n pkg_at_version
+    while IFS='|' read -r _n pkg_at_version; do
+        [[ -z "$_n" ]] && continue
+        spec+=("$_n" "$pkg_at_version" "::")
+    done <<< "$list"
+    _parallel_for "$jobs" _sync_install_one ${spec[@]+"${spec[@]}"}
+
+    local _name _pkg_ver pkg resolved
+    while IFS='|' read -r _name _pkg_ver; do
+        [[ -z "$_name" ]] && continue
+        pkg="${_pkg_ver%%@*}"
+        resolved=$(_tool_disk_version "$_name" "$pkg")
+        _manifest_tool_set "$_name" "go" "$pkg" "${resolved:-latest}"
+    done <<< "$list"
+    _manifest_flush
+}
+
 # _tool_disk_version <name> <pkg> — the version currently on disk for a tool,
 # per strategy. Callers must ensure the modfile exists first.
 _tool_disk_version() {
@@ -2544,8 +2677,23 @@ _sync_fast_path() {
 cmd_sync() {
     _require_go
     _DRY_RUN=false
-    for a in "$@"; do [[ "$a" == "--dry-run" ]] && _DRY_RUN=true; done
     _parse_offline "$@"
+    # Parallelism is opt-in: sync stays serial unless --jobs N (or
+    # GOTOOLS_JOBS) explicitly requests more than one concurrent install.
+    local jobs="${GOTOOLS_JOBS:-1}"
+    local jobs_explicit=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run) _DRY_RUN=true ;;
+            --jobs=*) jobs="${1#*=}"; jobs_explicit=true ;;
+            --jobs) jobs="${2:-4}"; jobs_explicit=true; shift ;;
+        esac
+        shift
+    done
+    if ! [[ "$jobs" =~ ^[0-9]+$ ]]; then
+        echo "❌ Invalid --jobs value: must be a positive number" >&2
+        exit $E_USAGE
+    fi
 
     load_config
     _acquire_lock
@@ -2693,7 +2841,9 @@ cmd_sync() {
     fi
 
     # ---- Reinstall tools from the manifest that are missing or drifted ----
-    local missing_count=0
+    # First collect the work (one "name|pkg@version" line per reinstall),
+    # then run it serial or parallel depending on strategy and --jobs.
+    local reinstall_list=""
     local _n _s _p _v
     while IFS='|' read -r _n _s _p _v; do
         [[ -z "$_n" ]] && continue
@@ -2714,15 +2864,25 @@ cmd_sync() {
             else
                 echo "  ⚠ $_n: manifest $_v, disk ${disk_ver:-unknown} — reinstalling..."
             fi
-            if ! $_DRY_RUN; then
-                # --force: the tool is already in the manifest — restoring a
-                # missing or drifted modfile must not trip cmd_install's
-                # duplicate check.
-                cmd_install --force "$_n" "${_p}@${_v}"
-            fi
-            missing_count=$((missing_count + 1))
+            reinstall_list+="${_n}|${_p}@${_v}"$'\n'
         fi
     done <<< "$_MANIFEST_TOOLS"
+
+    local missing_count
+    missing_count=$(printf '%s' "$reinstall_list" | grep -c . || true)
+
+    if ! $_DRY_RUN && [[ -n "$reinstall_list" ]]; then
+        if [[ "$GOTOOLS_STRATEGY" == "unified" ]]; then
+            if $jobs_explicit && [[ "$jobs" -gt 1 ]]; then
+                echo "  ⚠ unified strategy: installs are serial (shared go.mod)."
+            fi
+            _sync_run_reinstalls_serial "$reinstall_list"
+        elif [[ "$jobs" -le 1 ]]; then
+            _sync_run_reinstalls_serial "$reinstall_list"
+        else
+            _sync_run_reinstalls_parallel "$jobs" "$reinstall_list"
+        fi
+    fi
 
     if $_DRY_RUN; then
         echo "🔍 [dry-run] Would restore $missing_count tool(s) from manifest."
