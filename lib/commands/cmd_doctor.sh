@@ -96,29 +96,17 @@ _doctor_check_proxy() {
         echo "GOPROXY=${goproxy:-<unset — Go default>} (no tool to probe — reachability not checked)"
         return 0
     fi
-    # `go list -m` accepts no -timeout flag, so bound the probe with a 5s
-    # watchdog: kill the go process if it outlives the budget.
-    local out_file rc=0
-    out_file=$(mktemp "${TMPDIR:-/tmp}/gotools-doctor-proxy.XXXXXX") || { echo "could not create probe temp file"; return 1; }
-    ( export GOTOOLCHAIN=local; _go list -m "$probe" >"$out_file" 2>&1 ) &
-    local pid=$! waited=0
-    while kill -0 "$pid" 2>/dev/null; do
-        if [[ $waited -ge 10 ]]; then
-            kill "$pid" 2>/dev/null
-            echo "GOPROXY=$goproxy — unreachable (no answer within 5s)"
-            rm -f "$out_file"
-            return 1
-        fi
-        sleep 0.5
-        waited=$((waited + 1))
-    done
-    # `wait` inherits the child's exit status — OR-guard it (set -e).
-    wait "$pid" 2>/dev/null || rc=$?
-    local first=""
-    first=$(head -n1 "$out_file" 2>/dev/null || true)
-    rm -f "$out_file"
+    # `go list -m` accepts no -timeout flag, so bound the probe with the
+    # shared watchdog (_run_with_timeout): rc 124 means the proxy never
+    # answered within 5s.
+    local rc=0 out=""
+    out=$( (export GOTOOLCHAIN=local; _run_with_timeout 5 go list -m "$probe") 2>&1 ) || rc=$?
+    if [[ $rc -eq 124 ]]; then
+        echo "GOPROXY=$goproxy — unreachable (no answer within 5s)"
+        return 1
+    fi
     if [[ $rc -ne 0 ]]; then
-        echo "GOPROXY=$goproxy — unreachable: ${first:-unknown error}"
+        echo "GOPROXY=$goproxy — unreachable: ${out%%$'\n'*}"
         return 1
     fi
     echo "GOPROXY=$goproxy — reachable"

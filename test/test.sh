@@ -413,6 +413,84 @@ test_doctor() {
 }
 
 # ---------------------------------------------------------------------------
+# Timeouts + lock reliability — real stalled proxy and real lock recovery
+# ---------------------------------------------------------------------------
+test_timeout_and_lock() {
+    local tmpdir="$TMP_BASE/timeout-lock"
+    setup_project "$tmpdir"
+    cd "$tmpdir" || return
+
+    "$GOTOOLS" init --strategy=split >/dev/null 2>&1
+
+    # --- Real stall: a local proxy that accepts connections and never answers.
+    suite "timeout: stalled proxy bounds install"
+    if command -v python3 >/dev/null 2>&1; then
+        local port=$((23000 + RANDOM % 10000))
+        python3 - "$port" <<'PY' &
+import socket, sys
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(sys.argv[1])))
+s.listen(8)
+conns = []
+while True:
+    # Keep every connection open forever: accept and never respond. (Dropping
+    # the reference would let GC close the socket and the client would see
+    # "connection reset" instead of a stall.)
+    c, _ = s.accept()
+    conns.append(c)
+PY
+        local srv=$!
+        sleep 0.5
+        local rc=0
+        # Isolate the module cache: a warm cache would let go get succeed
+        # without ever contacting the stalled proxy.
+        GOPROXY="http://127.0.0.1:$port" GOSUMDB=off GOTOOLCHAIN=local \
+            GOMODCACHE="$tmpdir/modcache" GOTOOLS_OPERATION_TIMEOUT=3 \
+            "$GOTOOLS" install gofumpt mvdan.cc/gofumpt@v0.8.0 >timeout.out 2>&1 || rc=$?
+        if [[ $rc -eq 3 ]]; then
+            pass "stalled install exits 3 (E_NETWORK)"
+        else
+            fail_detail "stalled install exits 3 (E_NETWORK)" "expected: 3" "actual: $rc"
+        fi
+        if grep -q "timed out" timeout.out; then
+            pass "stalled install prints timeout message"
+        else
+            fail_detail "stalled install prints timeout message" \
+                "expected: 'timed out' in output" "actual: $(head -3 timeout.out)"
+        fi
+        if [[ -f tools/gofumpt.mod ]]; then
+            fail_detail "stalled install cleans up created modfile" \
+                "expected: tools/gofumpt.mod removed" "actual: file exists"
+        else
+            pass "stalled install cleans up created modfile"
+        fi
+        kill $srv 2>/dev/null
+        wait $srv 2>/dev/null || true
+    else
+        echo "    SKIP stalled-proxy test (python3 not available)"
+    fi
+
+    # --- Lock env vars with the real toolchain ---
+    suite "timeout: lock env vars"
+    run_cmd "GOTOOLS_NO_LOCK=1 sync" env GOTOOLS_NO_LOCK=1 "$GOTOOLS" sync
+    mkdir -p tools/.gotools.lock
+    touch -t 202001010000 tools/.gotools.lock
+    local output
+    output=$("$GOTOOLS" sync 2>&1) || true
+    if [[ "$output" == *"Stale lock detected"* ]]; then
+        pass "sync removes a stale legacy lock"
+    else
+        fail_detail "sync removes a stale legacy lock" "expected: 'Stale lock detected' in output" "actual:   $output"
+    fi
+    if [[ ! -d tools/.gotools.lock ]]; then
+        pass "stale lock dir removed after sync"
+    else
+        fail_detail "stale lock dir removed after sync" "expected: lock dir gone" "actual: still present"
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 echo "gotools.sh integration tests"
@@ -433,6 +511,7 @@ test_parallel_sync
 test_smoke
 test_robustness
 test_doctor
+test_timeout_and_lock
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"

@@ -41,7 +41,7 @@ cmd_install() {
     # under `set -u` on bash < 4.4 (e.g. plain `gotools.sh install`).
     set -- ${filtered[@]+"${filtered[@]}"}
 
-    local name="" pkg="" _get_out=""
+    local name="" pkg="" _get_out="" _get_rc=0
     if [[ $# -eq 0 ]]; then
         echo "❌ Usage: $(basename "$0") install [name] <pkg> [--force]" >&2
         exit $E_USAGE
@@ -77,7 +77,12 @@ cmd_install() {
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                 (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$target_v")
             fi
-            if ! _get_out=$(cd "$GOTOOLS_DIR" && go get -tool "$pkg" 2>&1); then
+            _get_out=$(cd "$GOTOOLS_DIR" && _go_timeout get -tool "$pkg" 2>&1) || _get_rc=$?
+            if [[ $_get_rc -eq 124 ]]; then
+                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                exit $E_NETWORK
+            fi
+            if [[ $_get_rc -ne 0 ]]; then
                 _install_failed "$name" "$_get_out"
             fi
             ;;
@@ -95,7 +100,15 @@ module $mod_path
 go $target_v
 MODEOF
             fi
-            if ! _get_out=$(cd "$GOTOOLS_DIR" && go get -tool -modfile="$modfile" "$pkg" 2>&1); then
+            _get_out=$(cd "$GOTOOLS_DIR" && _go_timeout get -tool -modfile="$modfile" "$pkg" 2>&1) || _get_rc=$?
+            if [[ $_get_rc -eq 124 ]]; then
+                if $_created_mod; then
+                    rm -f "$GOTOOLS_DIR/$modfile" "$GOTOOLS_DIR/${modfile%.mod}.sum"
+                fi
+                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                exit $E_NETWORK
+            fi
+            if [[ $_get_rc -ne 0 ]]; then
                 if $_created_mod; then
                     rm -f "$GOTOOLS_DIR/$modfile" "$GOTOOLS_DIR/${modfile%.mod}.sum"
                 fi
@@ -109,7 +122,15 @@ MODEOF
                 _created_mod=true
                 (cd "$GOTOOLS_DIR/$name" && go mod init "$(tool_module_path "$name")" && go mod edit -go="$target_v")
             fi
-            if ! _get_out=$(cd "$GOTOOLS_DIR/$name" && go get -tool "$pkg" 2>&1); then
+            _get_out=$(cd "$GOTOOLS_DIR/$name" && _go_timeout get -tool "$pkg" 2>&1) || _get_rc=$?
+            if [[ $_get_rc -eq 124 ]]; then
+                if $_created_mod; then
+                    rm -rf "${GOTOOLS_DIR:?}/$name"
+                fi
+                echo "❌ Operation timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s installing $name." >&2
+                exit $E_NETWORK
+            fi
+            if [[ $_get_rc -ne 0 ]]; then
                 if $_created_mod; then
                     rm -rf "${GOTOOLS_DIR:?}/$name"
                 fi
@@ -137,21 +158,25 @@ MODEOF
     # binary.  A "go: "-prefixed error means the go tool couldn't find/resolve
     # the binary; any other output (or even a non-zero exit from the tool
     # itself) confirms the binary exists and is executable.
-    local _verify_binary _verify_err
+    local _verify_binary _verify_err _verify_rc=0
     case "$GOTOOLS_STRATEGY" in
         unified)
             _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/go.mod")
-            _verify_err=$(cd "$GOTOOLS_DIR" && go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            _verify_err=$(cd "$GOTOOLS_DIR" && _go_timeout tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || _verify_rc=$?
             ;;
         split)
             _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/$modfile")
-            _verify_err=$(cd "$GOTOOLS_DIR" && go tool -modfile="$modfile" "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            _verify_err=$(cd "$GOTOOLS_DIR" && _go_timeout tool -modfile="$modfile" "$_verify_binary" </dev/null 2>&1 >/dev/null) || _verify_rc=$?
             ;;
         module)
             _verify_binary=$(resolve_binary_name "$name" "$GOTOOLS_DIR/$name/go.mod")
-            _verify_err=$(cd "$GOTOOLS_DIR/$name" && go tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || true
+            _verify_err=$(cd "$GOTOOLS_DIR/$name" && _go_timeout tool "$_verify_binary" </dev/null 2>&1 >/dev/null) || _verify_rc=$?
             ;;
     esac
+    if [[ $_verify_rc -eq 124 ]]; then
+        echo "❌ Operation timed out while verifying $name." >&2
+        exit $E_NETWORK
+    fi
     if echo "$_verify_err" | grep -qiE '^(go: )?(no such tool|unknown command|tool not found)'; then
         echo "❌ Tool installed but not runnable: $name" >&2
         echo "   go tool error: $_verify_err" >&2

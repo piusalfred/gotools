@@ -51,7 +51,7 @@ _gomod_migrate() {
     mv "$tmp" "$root_mod"
 
     echo "🧹 Running 'go mod tidy' on the root module..."
-    _go mod tidy
+    _go_timeout mod tidy || _timeout_fatal $? "go mod tidy"
 
     echo "✅ Migrated $count tool(s) from go.mod into gotools."
 }

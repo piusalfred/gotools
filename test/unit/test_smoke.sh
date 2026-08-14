@@ -81,6 +81,7 @@ for fn in infer_binary_name_from_pkg extract_tools_from_mod extract_version_for_
           _manifest_read_version _manifest_validate \
           _version_meets_min _go_version_raw _parse_output_format \
           _file_mtime _lock_pid_live _lock_detect_stale \
+          _run_with_timeout _go_timeout _timeout_fatal \
           cmd_init cmd_install cmd_sync cmd_exec cmd_list cmd_info cmd_upgrade \
           cmd_remove cmd_migrate cmd_config cmd_purge cmd_version; do
     if type "$fn" >/dev/null 2>&1; then

@@ -239,6 +239,73 @@ _parse_offline() {
     fi
 }
 
+# _run_with_timeout <seconds> <cmd...> — run cmd, killing it if it exceeds
+# <seconds>. Returns the command's exit code, or 124 when the timeout fired.
+# Portable (no GNU timeout(1) dependency): backgrounds the command — stdout
+# and stderr flow through unchanged — polls, and escalates TERM -> KILL.
+# Safe inside command substitutions: killing the command closes the pipe the
+# substitution waits on. `wait` needs an OR-guard under set -e (it inherits
+# the child's exit status).
+_run_with_timeout() {
+    local timeout="$1"
+    shift
+    [[ $# -gt 0 ]] || return 1
+    local rc=0
+    "$@" &
+    local pid=$! waited=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ $waited -ge $((timeout * 2)) ]]; then
+            kill "$pid" 2>/dev/null || true
+            # Grace period: escalate to KILL if TERM didn't land.
+            sleep 0.5
+            kill -0 "$pid" 2>/dev/null && {
+                sleep 0.5
+                kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+            }
+            wait "$pid" 2>/dev/null || rc=$?
+            return 124
+        fi
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    wait "$pid" 2>/dev/null || rc=$?
+    return $rc
+}
+
+# _go_timeout [args...] — run a go command under the operation timeout
+# (GOTOOLS_OPERATION_TIMEOUT seconds, default 120; 0 disables). Uses GNU
+# timeout(1) when present (Linux, BusyBox); otherwise the portable watchdog.
+# Returns go's exit code, or 124 when the timeout fired — the single rc for
+# "timed out" across both mechanisms.
+_go_timeout() {
+    local t="${GOTOOLS_OPERATION_TIMEOUT:-120}"
+    [[ "$t" =~ ^[0-9]+$ ]] || t=120
+    if [[ "$_VERBOSE" == "1" || "$_VERBOSE" == "true" ]]; then
+        echo "  ↳ go $*" >&2
+    fi
+    if [[ "$t" -eq 0 ]]; then
+        go "$@"
+        return $?
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$t" go "$@"
+        return $?
+    fi
+    _run_with_timeout "$t" go "$@"
+}
+
+# _timeout_fatal <rc> <what> — for call sites with no other error handling
+# (set -e covers ordinary failures): on a timeout exit E_NETWORK with a clear
+# message; otherwise re-exit with rc, preserving set -e semantics.
+_timeout_fatal() {
+    local rc="$1" what="$2"
+    if [[ "$rc" -eq 124 ]]; then
+        echo "❌ $what timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s." >&2
+        exit $E_NETWORK
+    fi
+    exit "$rc"
+}
+
 # _parse_output_format [args...] — scan args for output-format flags and set
 # _OUTPUT_FORMAT. --format=json | --json → json; --format=text | --text →
 # text. Any other --format=<x> → usage error. Always returns 0 otherwise
