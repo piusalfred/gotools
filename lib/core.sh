@@ -53,15 +53,82 @@ _require_go() {
 _LOCK_FILE=""
 _LOCK_HELD=false
 
+# _file_mtime <path> — epoch seconds of <path>'s mtime. BSD (macOS) stat
+# uses -f, GNU (Linux) uses -c. Shared by lock staleness and doctor.
+_file_mtime() {
+    case "$(uname -s)" in
+        Darwin) stat -f %m "$1" ;;
+        *)      stat -c %Y "$1" ;;
+    esac
+}
+
+# _lock_pid_live <pid> — liveness probe for lock holders. ps -p reports
+# other users' processes too, where kill -0 would return EPERM and look
+# like a dead pid.
+_lock_pid_live() {
+    ps -p "$1" >/dev/null 2>&1
+}
+
+# _lock_detect_stale <lock_dir> — decide whether an existing lock is stale
+# and remove it. rc 0: stale, removed; rc 1: held (or undecidable).
+#
+# A lock dir carrying a pid file is stale only when that process is dead —
+# a live holder is NEVER stale, no matter how old the lock is. Legacy locks
+# (no pid file: older gotools, manual mkdir) fall back to an age check
+# (GOTOOLS_LOCK_STALE_TIMEOUT seconds, default 300).
+_lock_detect_stale() {
+    local lock_dir="$1"
+    [[ -d "$lock_dir" ]] || return 1
+    local pid=""
+    if [[ -f "$lock_dir/pid" ]]; then
+        pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
+        if [[ "$pid" =~ ^[0-9]+$ ]] && _lock_pid_live "$pid"; then
+            return 1
+        fi
+        echo "  ⚠️  Stale lock detected (process $pid is gone). Removing $lock_dir..." >&2
+        rm -f "$lock_dir/pid"
+        rmdir "$lock_dir" 2>/dev/null || true
+        return 0
+    fi
+    local now mtime age
+    now=$(date +%s)
+    mtime=$(_file_mtime "$lock_dir" 2>/dev/null) || true
+    [[ -z "$mtime" ]] && return 1
+    age=$((now - mtime))
+    local stale_timeout="${GOTOOLS_LOCK_STALE_TIMEOUT:-300}"
+    [[ "$stale_timeout" =~ ^[0-9]+$ ]] || stale_timeout=300
+    if [[ $age -gt "$stale_timeout" ]]; then
+        echo "  ⚠️  Stale lock detected (age ${age}s). Removing $lock_dir..." >&2
+        rmdir "$lock_dir" 2>/dev/null || true
+        return 0
+    fi
+    return 1
+}
+
 # _acquire_lock — try to acquire the gotools lockfile. Reentrant: if this
-# process already holds the lock, returns immediately.
+# process already holds the lock, returns immediately. Stale locks (dead
+# holder, or legacy locks older than the stale timeout) are removed and the
+# acquisition retried; otherwise the wait is bounded by
+# GOTOOLS_LOCK_TIMEOUT (default 10s, 0.5s poll). GOTOOLS_NO_LOCK=1 skips
+# acquisition entirely — only for CI with serial workspace guarantees.
 _acquire_lock() {
     if $_LOCK_HELD; then return; fi
+    if [[ "${GOTOOLS_NO_LOCK:-0}" == "1" ]]; then
+        _LOCK_HELD=true
+        return
+    fi
     local lock_dir="${GOTOOLS_DIR:-tools}"
     mkdir -p "$lock_dir"
     _LOCK_FILE="$lock_dir/.gotools.lock"
-    local timeout=10 waited=0
+    local timeout="${GOTOOLS_LOCK_TIMEOUT:-10}"
+    [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=10
+    local waited=0
     while ! mkdir "$_LOCK_FILE" 2>/dev/null; do
+        # Crashed processes leave their lock behind: detect and remove
+        # stale locks before waiting.
+        if _lock_detect_stale "$_LOCK_FILE"; then
+            continue
+        fi
         if [[ $waited -ge $timeout ]]; then
             echo "❌ Another gotools process is running. Try again later." >&2
             exit $E_LOCK
@@ -70,13 +137,21 @@ _acquire_lock() {
         waited=$((waited + 1))
     done
     _LOCK_HELD=true
+    # Record our PID so other processes can distinguish a held lock from a
+    # stale one — age alone cannot (a live process may legitimately hold
+    # the lock longer than the stale threshold).
+    echo $$ > "$_LOCK_FILE/pid"
     trap '_release_lock' EXIT
 }
 
-# _release_lock — remove the lockfile.
+# _release_lock — remove the pid record and the lock directory. rmdir only
+# removes empty dirs, so the pid file must go first.
 _release_lock() {
     if $_LOCK_HELD; then
-        [[ -n "${_LOCK_FILE:-}" && -d "${_LOCK_FILE:-}" ]] && rmdir "$_LOCK_FILE" 2>/dev/null || true
+        if [[ -n "${_LOCK_FILE:-}" && -d "${_LOCK_FILE:-}" ]]; then
+            rm -f "$_LOCK_FILE/pid"
+            rmdir "$_LOCK_FILE" 2>/dev/null || true
+        fi
         _LOCK_HELD=false
     fi
 }
@@ -162,6 +237,73 @@ _parse_offline() {
     if [[ "${GOTOOLS_OFFLINE:-0}" == "1" ]]; then
         _OFFLINE=true
     fi
+}
+
+# _run_with_timeout <seconds> <cmd...> — run cmd, killing it if it exceeds
+# <seconds>. Returns the command's exit code, or 124 when the timeout fired.
+# Portable (no GNU timeout(1) dependency): backgrounds the command — stdout
+# and stderr flow through unchanged — polls, and escalates TERM -> KILL.
+# Safe inside command substitutions: killing the command closes the pipe the
+# substitution waits on. `wait` needs an OR-guard under set -e (it inherits
+# the child's exit status).
+_run_with_timeout() {
+    local timeout="$1"
+    shift
+    [[ $# -gt 0 ]] || return 1
+    local rc=0
+    "$@" &
+    local pid=$! waited=0
+    while kill -0 "$pid" 2>/dev/null; do
+        if [[ $waited -ge $((timeout * 2)) ]]; then
+            kill "$pid" 2>/dev/null || true
+            # Grace period: escalate to KILL if TERM didn't land.
+            sleep 0.5
+            kill -0 "$pid" 2>/dev/null && {
+                sleep 0.5
+                kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+            }
+            wait "$pid" 2>/dev/null || rc=$?
+            return 124
+        fi
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    wait "$pid" 2>/dev/null || rc=$?
+    return $rc
+}
+
+# _go_timeout [args...] — run a go command under the operation timeout
+# (GOTOOLS_OPERATION_TIMEOUT seconds, default 120; 0 disables). Uses GNU
+# timeout(1) when present (Linux, BusyBox); otherwise the portable watchdog.
+# Returns go's exit code, or 124 when the timeout fired — the single rc for
+# "timed out" across both mechanisms.
+_go_timeout() {
+    local t="${GOTOOLS_OPERATION_TIMEOUT:-120}"
+    [[ "$t" =~ ^[0-9]+$ ]] || t=120
+    if [[ "$_VERBOSE" == "1" || "$_VERBOSE" == "true" ]]; then
+        echo "  ↳ go $*" >&2
+    fi
+    if [[ "$t" -eq 0 ]]; then
+        go "$@"
+        return $?
+    fi
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$t" go "$@"
+        return $?
+    fi
+    _run_with_timeout "$t" go "$@"
+}
+
+# _timeout_fatal <rc> <what> — for call sites with no other error handling
+# (set -e covers ordinary failures): on a timeout exit E_NETWORK with a clear
+# message; otherwise re-exit with rc, preserving set -e semantics.
+_timeout_fatal() {
+    local rc="$1" what="$2"
+    if [[ "$rc" -eq 124 ]]; then
+        echo "❌ $what timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s." >&2
+        exit $E_NETWORK
+    fi
+    exit "$rc"
 }
 
 # _parse_output_format [args...] — scan args for output-format flags and set

@@ -96,29 +96,17 @@ _doctor_check_proxy() {
         echo "GOPROXY=${goproxy:-<unset — Go default>} (no tool to probe — reachability not checked)"
         return 0
     fi
-    # `go list -m` accepts no -timeout flag, so bound the probe with a 5s
-    # watchdog: kill the go process if it outlives the budget.
-    local out_file rc=0
-    out_file=$(mktemp "${TMPDIR:-/tmp}/gotools-doctor-proxy.XXXXXX") || { echo "could not create probe temp file"; return 1; }
-    ( export GOTOOLCHAIN=local; _go list -m "$probe" >"$out_file" 2>&1 ) &
-    local pid=$! waited=0
-    while kill -0 "$pid" 2>/dev/null; do
-        if [[ $waited -ge 10 ]]; then
-            kill "$pid" 2>/dev/null
-            echo "GOPROXY=$goproxy — unreachable (no answer within 5s)"
-            rm -f "$out_file"
-            return 1
-        fi
-        sleep 0.5
-        waited=$((waited + 1))
-    done
-    # `wait` inherits the child's exit status — OR-guard it (set -e).
-    wait "$pid" 2>/dev/null || rc=$?
-    local first=""
-    first=$(head -n1 "$out_file" 2>/dev/null || true)
-    rm -f "$out_file"
+    # `go list -m` accepts no -timeout flag, so bound the probe with the
+    # shared watchdog (_run_with_timeout): rc 124 means the proxy never
+    # answered within 5s.
+    local rc=0 out=""
+    out=$( (export GOTOOLCHAIN=local; _run_with_timeout 5 go list -m "$probe") 2>&1 ) || rc=$?
+    if [[ $rc -eq 124 ]]; then
+        echo "GOPROXY=$goproxy — unreachable (no answer within 5s)"
+        return 1
+    fi
     if [[ $rc -ne 0 ]]; then
-        echo "GOPROXY=$goproxy — unreachable: ${first:-unknown error}"
+        echo "GOPROXY=$goproxy — unreachable: ${out%%$'\n'*}"
         return 1
     fi
     echo "GOPROXY=$goproxy — reachable"
@@ -185,17 +173,19 @@ _doctor_check_tools() {
 }
 
 # ---- check: lock file ------------------------------------------------------
-# stat flags differ per platform: BSD (macOS) uses -f, GNU (Linux) uses -c.
-_file_mtime() {
-    case "$(uname -s)" in
-        Darwin) stat -f %m "$1" ;;
-        *)      stat -c %Y "$1" ;;
-    esac
-}
-
+# Mirrors _lock_detect_stale (core.sh): a lock with a live pid is held, a
+# dead pid or an old legacy lock is stale.
 _doctor_check_lock() {
     local lock_dir="$GOTOOLS_DIR/.gotools.lock"
     [[ -d "$lock_dir" ]] || { echo "no lock detected"; return 0; }
+    local pid=""
+    if [[ -f "$lock_dir/pid" ]]; then
+        pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
+        if [[ "$pid" =~ ^[0-9]+$ ]] && _lock_pid_live "$pid"; then
+            echo "lock held by process $pid — another gotools process is running"
+            return 0
+        fi
+    fi
     local now mtime age
     now=$(date +%s)
     mtime=$(_file_mtime "$lock_dir" 2>/dev/null) || true

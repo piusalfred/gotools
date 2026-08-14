@@ -69,13 +69,13 @@ cmd_upgrade() {
         echo "🚀 Upgrading $t ($pkg) from ${old_ver:-?}..."
         case "$GOTOOLS_STRATEGY" in
             unified)
-                (cd "$GOTOOLS_DIR" && go get -tool "${pkg}@latest")
+                (cd "$GOTOOLS_DIR" && _go_timeout get -tool "${pkg}@latest") || _timeout_fatal $? "Upgrading $t"
                 ;;
             split)
-                (cd "$GOTOOLS_DIR" && go get -tool -modfile="$t.mod" "${pkg}@latest")
+                (cd "$GOTOOLS_DIR" && _go_timeout get -tool -modfile="$t.mod" "${pkg}@latest") || _timeout_fatal $? "Upgrading $t"
                 ;;
             module)
-                (cd "$GOTOOLS_DIR/$t" && go get -tool "${pkg}@latest")
+                (cd "$GOTOOLS_DIR/$t" && _go_timeout get -tool "${pkg}@latest") || _timeout_fatal $? "Upgrading $t"
                 ;;
         esac
 
