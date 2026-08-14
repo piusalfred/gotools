@@ -1009,9 +1009,14 @@ _cmd_help() {
             echo "Usage: gotools.sh sync [--dry-run]"
             echo ""
             echo "  Sync tool state to match .gotools.json. Tidies existing modfiles"
-            echo "  and reinstalls any tools from the manifest that are missing on disk."
+            echo "  and reinstalls any tools from the manifest that are missing on disk"
+            echo "  or whose installed version drifted from the manifest."
             echo ""
             echo "  If the on-disk strategy doesn't match the manifest, auto-migrates."
+            echo ""
+            echo "  Fast path: when nothing changed, a state fingerprint in"
+            echo "  \$GOTOOLS_DIR/.gotools.fingerprint skips the reconciliation"
+            echo "  entirely. Commit that file so fresh clones are fast too."
             echo ""
             echo "  Options:"
             echo "    --dry-run   Show what would be done without making changes"
@@ -2231,10 +2236,72 @@ cmd_self_update() {
     rm -f "$checksum_file"
     echo "✨ Successfully updated to $latest_tag!"
 }
-
 # ---- sync ----------------------------------------------------------------
 
+# _sync_fingerprint <go-version> — a deterministic fingerprint of the state
+# sync reconciles: the full tool list (names, packages, AND versions), the
+# strategy, the resolved Go version, and the module prefix. Any manifest or
+# environment change produces a different fingerprint.
+_sync_fingerprint() {
+    local go_ver="$1"
+    local fp
+    fp=$(printf '%s' "$_MANIFEST_TOOLS" | _sha256 /dev/stdin)
+    fp="${fp}|${GOTOOLS_STRATEGY}|${go_ver}|$(resolve_module_prefix)"
+    printf '%s' "$fp"
+}
 
+# _sync_write_fingerprint <go-version> — record the reconciled state so the
+# next sync can take the fast path. Written only after a successful sync.
+_sync_write_fingerprint() {
+    printf '%s\n' "$(_sync_fingerprint "$1")" > "$GOTOOLS_DIR/.gotools.fingerprint"
+}
+
+# _tool_disk_version <name> <pkg> — the version currently on disk for a tool,
+# per strategy. Callers must ensure the modfile exists first.
+_tool_disk_version() {
+    local name="$1" pkg="$2"
+    case "$GOTOOLS_STRATEGY" in
+        unified) extract_version_for_pkg "$GOTOOLS_DIR/go.mod" "$pkg" ;;
+        split)   extract_version_for_pkg "$GOTOOLS_DIR/${name}.mod" "$pkg" ;;
+        module)  extract_version_for_pkg "$GOTOOLS_DIR/${name}/go.mod" "$pkg" ;;
+    esac
+}
+
+_tool_version_matches() {
+    local name="$1" pkg="$2" expected="$3"
+    local disk
+    disk=$(_tool_disk_version "$name" "$pkg")
+    [[ -n "$disk" && "$disk" == "$expected" ]]
+}
+
+# _sync_fast_path <go-version> — skip the full reconciliation when nothing
+# changed. The fingerprint must match AND (defense in depth) every modfile
+# must exist with the manifest version — catches manual edits that bypassed
+# the manifest. Returns 0 and prints "Tools up to date." on a hit.
+_sync_fast_path() {
+    local go_ver="$1"
+    local fingerprint_file="$GOTOOLS_DIR/.gotools.fingerprint"
+    local current_fp
+    current_fp=$(_sync_fingerprint "$go_ver")
+    if [[ -f "$fingerprint_file" ]] && [[ "$(cat "$fingerprint_file")" == "$current_fp" ]]; then
+        local all_ok=true
+        local _n _s _p _v
+        while IFS='|' read -r _n _s _p _v; do
+            [[ -z "$_n" ]] && continue
+            case "$GOTOOLS_STRATEGY" in
+                unified) [[ -f "$GOTOOLS_DIR/go.mod" ]] || { all_ok=false; break; } ;;
+                split)   [[ -f "$GOTOOLS_DIR/${_n}.mod" ]] || { all_ok=false; break; } ;;
+                module)  [[ -f "$GOTOOLS_DIR/${_n}/go.mod" ]] || { all_ok=false; break; } ;;
+            esac
+            _tool_version_matches "$_n" "$_p" "$_v" || { all_ok=false; break; }
+        done <<< "$_MANIFEST_TOOLS"
+        if $all_ok; then
+            echo "✅ Tools up to date."
+            return 0
+        fi
+    fi
+    return 1
+}
 
 cmd_sync() {
     _require_go
@@ -2258,6 +2325,12 @@ cmd_sync() {
         echo "🔀 Auto-migrating to '$GOTOOLS_STRATEGY'..."
         cmd_migrate "$GOTOOLS_STRATEGY"
         return
+    fi
+
+    # Fast path: when the fingerprint matches and every modfile still carries
+    # the manifest version, there is nothing to reconcile.
+    if ! $_DRY_RUN && _sync_fast_path "$target_v"; then
+        return 0
     fi
 
     if $_DRY_RUN; then
@@ -2367,24 +2440,32 @@ cmd_sync() {
         echo "✅ Added $discovered tool(s) to manifest."
     fi
 
-    # ---- Reinstall tools from manifest that are missing on disk ----
+    # ---- Reinstall tools from the manifest that are missing or drifted ----
     local missing_count=0
     local _n _s _p _v
     while IFS='|' read -r _n _s _p _v; do
         [[ -z "$_n" ]] && continue
-        local on_disk=false
+        local on_disk=false disk_ver=""
         case "$GOTOOLS_STRATEGY" in
             unified) [[ -f "$GOTOOLS_DIR/go.mod" ]] && on_disk=true ;;
             split)   [[ -f "$GOTOOLS_DIR/${_n}.mod" ]] && on_disk=true ;;
             module)  [[ -f "$GOTOOLS_DIR/${_n}/go.mod" ]] && on_disk=true ;;
         esac
-        if ! $on_disk; then
+        if $on_disk; then
+            disk_ver=$(_tool_disk_version "$_n" "$_p")
+        fi
+        if ! $on_disk || [[ "$disk_ver" != "$_v" ]]; then
             if $_DRY_RUN; then
                 echo "  🔍 [dry-run] Would reinstall $_n ($_p@$_v)"
-            else
+            elif ! $on_disk; then
                 echo "  ⬇ $_n ($_p@$_v) — missing, reinstalling..."
+            else
+                echo "  ⚠ $_n: manifest $_v, disk ${disk_ver:-unknown} — reinstalling..."
+            fi
+            if ! $_DRY_RUN; then
                 # --force: the tool is already in the manifest — restoring a
-                # missing modfile must not trip cmd_install's duplicate check.
+                # missing or drifted modfile must not trip cmd_install's
+                # duplicate check.
                 cmd_install --force "$_n" "${_p}@${_v}"
             fi
             missing_count=$((missing_count + 1))
@@ -2393,10 +2474,15 @@ cmd_sync() {
 
     if $_DRY_RUN; then
         echo "🔍 [dry-run] Would restore $missing_count tool(s) from manifest."
-    elif [[ $missing_count -gt 0 ]]; then
-        echo "✅ Sync restored $missing_count tool(s) from manifest."
     else
-        echo "✅ Sync complete."
+        # Record the state we just reconciled so the next sync can skip
+        # straight to the fast path.
+        _sync_write_fingerprint "$target_v"
+        if [[ $missing_count -gt 0 ]]; then
+            echo "✅ Sync restored $missing_count tool(s) from manifest."
+        else
+            echo "✅ Sync complete."
+        fi
     fi
 }
 

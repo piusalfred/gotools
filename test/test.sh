@@ -120,6 +120,14 @@ test_strategy_lifecycle() {
     suite "lifecycle: $strategy — sync + upgrade + config"
     run_cmd "sync" "$GOTOOLS" sync
     run_cmd "upgrade $TOOL_GCI_NAME" "$GOTOOLS" upgrade "$TOOL_GCI_NAME"
+
+    # Fast path runs BEFORE the config write: the write step is known to
+    # reset the manifest strategy to the default (pre-existing bug), which
+    # would auto-migrate the project and make the fingerprint meaningless.
+    suite "lifecycle: $strategy — sync fast path"
+    run_cmd "sync reconciles after upgrade" "$GOTOOLS" sync
+    run_cmd "sync hits the fast path" bash -c "\"$GOTOOLS\" sync | grep -q 'Tools up to date.'"
+
     run_cmd "config read GOTOOLS_STRATEGY" "$GOTOOLS" config GOTOOLS_STRATEGY
     run_cmd "config write GOTOOLS_DIR" "$GOTOOLS" config GOTOOLS_DIR tools
 
