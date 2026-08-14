@@ -189,6 +189,26 @@ test_migration() {
 # ---------------------------------------------------------------------------
 # go.mod adoption (init) + reversal (purge --restore)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Parallel sync — cold restore with --jobs (issue #25)
+# ---------------------------------------------------------------------------
+test_parallel_sync() {
+    local tmpdir="$TMP_BASE/parallel"
+    setup_project "$tmpdir"
+    cd "$tmpdir" || return
+
+    suite "parallel sync: cold restore"
+    run_cmd "init split" "$GOTOOLS" init --strategy=split --no-migrate
+    run_cmd "install gci" "$GOTOOLS" install "$TOOL_GCI_NAME" "$TOOL_GCI_PKG"
+    run_cmd "install staticcheck" "$GOTOOLS" install "$TOOL_STATICCHECK_NAME" "$TOOL_STATICCHECK_PKG"
+    run_cmd "wipe modfiles + fingerprint" bash -c 'rm -f tools/*.mod tools/*.sum tools/.gotools.fingerprint'
+    run_cmd "sync --jobs 2 restores both tools" "$GOTOOLS" sync --jobs 2
+    list_has "$TOOL_GCI_NAME" yes
+    list_has "$TOOL_STATICCHECK_NAME" yes
+    exec_test "$TOOL_GCI_NAME" --help
+    exec_test "$TOOL_STATICCHECK_NAME" --help
+}
+
 test_gomod_adoption() {
     local tmpdir="$TMP_BASE/adopt"
     setup_project "$tmpdir"
@@ -351,6 +371,7 @@ test_strategy_lifecycle split
 test_strategy_lifecycle module
 test_migration
 test_gomod_adoption
+test_parallel_sync
 test_smoke
 test_robustness
 

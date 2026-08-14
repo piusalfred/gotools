@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Pius Alfred
 # License: MIT
 
-VERSION="v0.6.0"
+VERSION="v0.6.2"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
