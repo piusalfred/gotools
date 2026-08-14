@@ -141,7 +141,6 @@ cmd_sync() {
     fi
 
     load_config
-    _acquire_lock
     local target_v
     target_v=$(resolve_go_version)
 
@@ -149,6 +148,9 @@ cmd_sync() {
     # Anything that would need the network refuses with exit 6 instead of
     # making the build depend on proxy conditions. Also covers a strategy
     # mismatch (migrating needs the network).
+    # The lock is NOT acquired here: offline sync can never write (fast
+    # path returns, anything else exits 6), so it never contends with a
+    # writer — skipping the lock lets concurrent CI jobs share a workspace.
     if ${_OFFLINE:-false}; then
         if _sync_fast_path "$target_v" "✅ Tools up to date (fingerprint match)."; then
             return 0
@@ -157,6 +159,8 @@ cmd_sync() {
         echo "   Run 'gotools sync' locally and commit the updated files." >&2
         exit $E_OFFLINE
     fi
+
+    _acquire_lock
 
     local disk_strategy
     disk_strategy=$(detect_strategy "$GOTOOLS_DIR")

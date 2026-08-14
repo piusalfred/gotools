@@ -185,17 +185,19 @@ _doctor_check_tools() {
 }
 
 # ---- check: lock file ------------------------------------------------------
-# stat flags differ per platform: BSD (macOS) uses -f, GNU (Linux) uses -c.
-_file_mtime() {
-    case "$(uname -s)" in
-        Darwin) stat -f %m "$1" ;;
-        *)      stat -c %Y "$1" ;;
-    esac
-}
-
+# Mirrors _lock_detect_stale (core.sh): a lock with a live pid is held, a
+# dead pid or an old legacy lock is stale.
 _doctor_check_lock() {
     local lock_dir="$GOTOOLS_DIR/.gotools.lock"
     [[ -d "$lock_dir" ]] || { echo "no lock detected"; return 0; }
+    local pid=""
+    if [[ -f "$lock_dir/pid" ]]; then
+        pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
+        if [[ "$pid" =~ ^[0-9]+$ ]] && _lock_pid_live "$pid"; then
+            echo "lock held by process $pid — another gotools process is running"
+            return 0
+        fi
+    fi
     local now mtime age
     now=$(date +%s)
     mtime=$(_file_mtime "$lock_dir" 2>/dev/null) || true
