@@ -1,6 +1,6 @@
 module github.com/piusalfred/gotools/tools/gofumpt
 
-go 1.26.1
+go 1.26
 
 tool mvdan.cc/gofumpt
 

@@ -1,6 +1,6 @@
 module github.com/piusalfred/gotools/tools/staticcheck
 
-go 1.26.1
+go 1.26
 
 tool honnef.co/go/tools/cmd/staticcheck
 
