@@ -150,8 +150,12 @@ _cmd_help() {
             echo "  One arg:    Show the value of <key>"
             echo "  Two args:   Set <key>=<value>"
             echo ""
-            echo "  Valid keys: GOTOOLS_STRATEGY, GOTOOLS_DIR,"
-            echo "              GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX"
+            echo "  Layout keys: GOTOOLS_STRATEGY, GOTOOLS_DIR,"
+            echo "               GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX"
+            echo "  Settings:    GOTOOLS_OFFLINE, GOTOOLS_JOBS, GOTOOLS_OPERATION_TIMEOUT,"
+            echo "               GOTOOLS_LOCK_TIMEOUT, GOTOOLS_LOCK_STALE_TIMEOUT,"
+            echo "               GOTOOLS_NO_LOCK, GOTOOLS_TRACE, GOTOOLS_VERBOSE"
+            echo "  Both 'config KEY VALUE' and 'config KEY=VALUE' forms work."
             ;;
         purge)
             echo "Usage: gotools.sh purge [--restore] [--dry-run]"

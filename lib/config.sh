@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Pius Alfred
 # License: MIT
 
-VERSION="v0.6.6"
+VERSION="v0.6.7"
 REPO="piusalfred/gotools"
 API_URL="https://api.github.com/repos/$REPO/releases/latest"
 
@@ -98,6 +98,26 @@ _ORIG_ENV_DIR="${GOTOOLS_DIR:-}"
 _ORIG_ENV_GO_VERSION="${GOTOOLS_GO_VERSION:-}"
 _ORIG_ENV_MODULE_PREFIX="${GOTOOLS_MODULE_PREFIX:-}"
 
+# Runtime settings — startup env > manifest "settings" block > defaults
+# (resolved in load_config). Captured once at startup, like the layout
+# keys, so an explicit GOTOOLS_X=0 in the environment can override a
+# manifest setting that is "true". Flags (e.g. --offline) always win.
+_ORIG_ENV_OFFLINE="${GOTOOLS_OFFLINE:-}"
+_ORIG_ENV_JOBS="${GOTOOLS_JOBS:-}"
+_ORIG_ENV_OPERATION_TIMEOUT="${GOTOOLS_OPERATION_TIMEOUT:-}"
+_ORIG_ENV_LOCK_TIMEOUT="${GOTOOLS_LOCK_TIMEOUT:-}"
+_ORIG_ENV_LOCK_STALE_TIMEOUT="${GOTOOLS_LOCK_STALE_TIMEOUT:-}"
+_ORIG_ENV_NO_LOCK="${GOTOOLS_NO_LOCK:-}"
+_ORIG_ENV_TRACE="${GOTOOLS_TRACE:-}"
+_ORIG_ENV_VERBOSE="${GOTOOLS_VERBOSE:-}"
+
+# Resolved settings globals (set by load_config; consumed by the code).
+_JOBS=1
+_OPERATION_TIMEOUT=120
+_LOCK_TIMEOUT=10
+_LOCK_STALE_TIMEOUT=300
+_NO_LOCK=0
+
 _CONFIG_LOADED=false
 
 # ---------------------------------------------------------------------------
@@ -132,6 +152,20 @@ load_config() {
     # Normalize: treat empty module_prefix as unset so auto-detection kicks in
     # in resolve_module_prefix.
     [[ -n "${GOTOOLS_MODULE_PREFIX:-}" ]] || GOTOOLS_MODULE_PREFIX=""
+
+    # Runtime settings: startup env > manifest "settings" block > defaults.
+    # Flags (e.g. --offline) set _OFFLINE before load_config in some
+    # commands — a flag-set true must never be clobbered back to false.
+    if ! $_OFFLINE; then
+        _OFFLINE=$(_settings_resolve offline) || true
+    fi
+    _VERBOSE=$(_settings_resolve verbose) || true
+    _TRACE=$(_settings_resolve trace) || true
+    _JOBS=$(_settings_resolve jobs) || true
+    _OPERATION_TIMEOUT=$(_settings_resolve operation_timeout) || true
+    _LOCK_TIMEOUT=$(_settings_resolve lock_timeout) || true
+    _LOCK_STALE_TIMEOUT=$(_settings_resolve lock_stale_timeout) || true
+    _NO_LOCK=$(_settings_resolve no_lock) || true
 
     _CONFIG_LOADED=true
 }

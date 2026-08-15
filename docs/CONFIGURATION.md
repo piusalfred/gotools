@@ -38,6 +38,43 @@ Related: [Usage](USAGE.md) · [Strategies](STRATEGIES.md)
 | `module_prefix` | Module path prefix. Auto-resolved from root `go.mod` if empty. |
 | `tools` | Object mapping tool names to their source, package, and version. |
 
+## Runtime settings
+
+The manifest also carries a `settings` block with every runtime knob and
+its default. `init` writes it in full, and any manifest write fills in the
+keys a legacy manifest never had — the committed file always shows the
+whole knob surface:
+
+```json
+{
+  "settings": {
+    "jobs": 1,
+    "lock_stale_timeout": 300,
+    "lock_timeout": 10,
+    "no_lock": false,
+    "offline": false,
+    "operation_timeout": 120,
+    "trace": false,
+    "verbose": false
+  }
+}
+```
+
+Precedence for every setting: **flag > environment variable > manifest
+`settings` > built-in default**. An explicit env var always wins — even
+`GOTOOLS_OFFLINE=0` overrides `"offline": true` in the manifest. Manage
+them with the config command:
+
+```bash
+gotools config GOTOOLS_TRACE=1              # KEY=VALUE form
+gotools config GOTOOLS_OPERATION_TIMEOUT 45 # KEY VALUE form
+gotools config GOTOOLS_TRACE                # read one back
+```
+
+Booleans accept `true`/`false`/`0`/`1` (plus `stdout` for `GOTOOLS_TRACE`);
+numbers must be positive integers. Invalid values are rejected with exit
+code 2.
+
 ## Manifest schema versioning
 
 If a future gotools changes the manifest format, an older gotools refuses to

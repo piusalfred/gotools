@@ -22,13 +22,22 @@ cmd_config() {
         return 0
     fi
 
+    # Accept both `config KEY VALUE` and `config KEY=VALUE`.
+    if [[ $# -eq 1 && "$1" == *=* ]]; then
+        set -- "${1%%=*}" "${1#*=}"
+    fi
+
     local key="$1"
 
     # Validate key name.
     case "$key" in
         GOTOOLS_STRATEGY|GOTOOLS_DIR|GOTOOLS_GO_VERSION|GOTOOLS_MODULE_PREFIX) ;;
+        GOTOOLS_OFFLINE|GOTOOLS_JOBS|GOTOOLS_OPERATION_TIMEOUT|GOTOOLS_LOCK_TIMEOUT) ;;
+        GOTOOLS_LOCK_STALE_TIMEOUT|GOTOOLS_NO_LOCK|GOTOOLS_TRACE|GOTOOLS_VERBOSE) ;;
         *) echo "❌ Unknown config key: $key" >&2
-           echo "   Valid keys: GOTOOLS_STRATEGY, GOTOOLS_DIR, GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX" >&2
+           echo "   Valid keys: GOTOOLS_STRATEGY, GOTOOLS_DIR, GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX," >&2
+           echo "               GOTOOLS_OFFLINE, GOTOOLS_JOBS, GOTOOLS_OPERATION_TIMEOUT, GOTOOLS_LOCK_TIMEOUT," >&2
+           echo "               GOTOOLS_LOCK_STALE_TIMEOUT, GOTOOLS_NO_LOCK, GOTOOLS_TRACE, GOTOOLS_VERBOSE" >&2
            return $E_USAGE ;;
     esac
 
@@ -57,6 +66,22 @@ cmd_config() {
             *) echo "❌ Invalid strategy: $value (must be unified, split, or module)" >&2; return $E_USAGE ;;
         esac
     fi
+
+    # Validate values for the runtime settings.
+    case "$key" in
+        GOTOOLS_OFFLINE|GOTOOLS_NO_LOCK|GOTOOLS_VERBOSE)
+            case "$value" in true|false|0|1) ;; *) echo "❌ Invalid value: $value (must be true or false)" >&2; return $E_USAGE ;; esac
+            ;;
+        GOTOOLS_TRACE)
+            case "$value" in true|false|0|1|stdout) ;; *) echo "❌ Invalid value: $value (must be true, false, or stdout)" >&2; return $E_USAGE ;; esac
+            ;;
+        GOTOOLS_JOBS|GOTOOLS_OPERATION_TIMEOUT|GOTOOLS_LOCK_TIMEOUT|GOTOOLS_LOCK_STALE_TIMEOUT)
+            if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+                echo "❌ Invalid value: $value (must be a positive number)" >&2
+                return $E_USAGE
+            fi
+            ;;
+    esac
 
     if [[ ! -f "$MANIFEST_FILE" ]]; then
         # Create a new manifest with this one key set.

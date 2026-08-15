@@ -79,6 +79,7 @@ for fn in infer_binary_name_from_pkg extract_tools_from_mod extract_version_for_
           _manifest_parse _manifest_flush _manifest_tool_set _manifest_tool_remove \
           _manifest_tool_entry _manifest_tools_list _manifest_config_get _manifest_config_set \
           _manifest_read_version _manifest_validate \
+          _settings_get _settings_set _settings_default _settings_resolve _settings_normalize \
           _version_meets_min _go_version_raw _parse_output_format \
           _file_mtime _lock_pid_live _lock_detect_stale \
           _run_with_timeout _go_timeout _timeout_fatal \

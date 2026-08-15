@@ -151,6 +151,30 @@ $ gotools.sh doctor --format=json | jq '.checks[] | select(.name | startswith("t
 > object with top-level metadata and a `tools` array — update any scripts
 > written against the old shape.
 
+### Tracing (`GOTOOLS_TRACE`)
+
+`gotools.sh exec` can log every tool invocation as a JSON Lines record.
+Opt in per run with the env var, or per project via the manifest
+`"trace": true` setting:
+
+```bash
+GOTOOLS_TRACE=1 gotools exec gofumpt -w .       # stream records to stderr
+GOTOOLS_TRACE=stdout gotools exec gofumpt -w .  # stream records to stdout
+```
+
+Records are streamed live — **stderr by default**, so the tool's own
+stdout stays clean for pipes — and appended to `.gotools_trace.log` in
+the project root as the durable record. Each record carries `ts`, `level`
+(`info`/`error`/`fatal`), `tool`, `binary`, `cmd` (copy-pasteable), `strategy`,
+`stdin`, `exit_code`, `args`, and the resolved `env`:
+
+```bash
+jq 'select(.level != "info")' .gotools_trace.log   # failures only
+tail -f .gotools_trace.log | jq .                  # follow live
+```
+
+Only `exec` is traced; `trace: false` in the manifest keeps it opt-in.
+
 ## Examples
 
 **Bootstrap a project:**

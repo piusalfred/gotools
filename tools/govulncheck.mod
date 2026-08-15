@@ -1,6 +1,6 @@
 module github.com/piusalfred/gotools/tools/govulncheck
 
-go 1.26.1
+go 1.26
 
 tool golang.org/x/vuln/cmd/govulncheck
 

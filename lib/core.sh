@@ -95,7 +95,7 @@ _lock_detect_stale() {
     mtime=$(_file_mtime "$lock_dir" 2>/dev/null) || true
     [[ -z "$mtime" ]] && return 1
     age=$((now - mtime))
-    local stale_timeout="${GOTOOLS_LOCK_STALE_TIMEOUT:-300}"
+    local stale_timeout="${_LOCK_STALE_TIMEOUT:-300}"
     [[ "$stale_timeout" =~ ^[0-9]+$ ]] || stale_timeout=300
     if [[ $age -gt "$stale_timeout" ]]; then
         echo "  ⚠️  Stale lock detected (age ${age}s). Removing $lock_dir..." >&2
@@ -113,14 +113,14 @@ _lock_detect_stale() {
 # acquisition entirely — only for CI with serial workspace guarantees.
 _acquire_lock() {
     if $_LOCK_HELD; then return; fi
-    if [[ "${GOTOOLS_NO_LOCK:-0}" == "1" ]]; then
+    if [[ "${_NO_LOCK:-0}" == "true" || "${_NO_LOCK:-0}" == "1" ]]; then
         _LOCK_HELD=true
         return
     fi
     local lock_dir="${GOTOOLS_DIR:-tools}"
     mkdir -p "$lock_dir"
     _LOCK_FILE="$lock_dir/.gotools.lock"
-    local timeout="${GOTOOLS_LOCK_TIMEOUT:-10}"
+    local timeout="${_LOCK_TIMEOUT:-10}"
     [[ "$timeout" =~ ^[0-9]+$ ]] || timeout=10
     local waited=0
     while ! mkdir "$_LOCK_FILE" 2>/dev/null; do
@@ -278,7 +278,7 @@ _run_with_timeout() {
 # Returns go's exit code, or 124 when the timeout fired — the single rc for
 # "timed out" across both mechanisms.
 _go_timeout() {
-    local t="${GOTOOLS_OPERATION_TIMEOUT:-120}"
+    local t="${_OPERATION_TIMEOUT:-120}"
     [[ "$t" =~ ^[0-9]+$ ]] || t=120
     if [[ "$_VERBOSE" == "1" || "$_VERBOSE" == "true" ]]; then
         echo "  ↳ go $*" >&2
@@ -300,7 +300,7 @@ _go_timeout() {
 _timeout_fatal() {
     local rc="$1" what="$2"
     if [[ "$rc" -eq 124 ]]; then
-        echo "❌ $what timed out after ${GOTOOLS_OPERATION_TIMEOUT:-120}s." >&2
+        echo "❌ $what timed out after ${_OPERATION_TIMEOUT:-120}s." >&2
         exit $E_NETWORK
     fi
     exit "$rc"
@@ -445,7 +445,7 @@ _json_escape() {
 #   {"ts":"<iso8601>","level":"<info|error>","tool":"<name>","binary":"<path>","cmd":"<reconstructed>","strategy":"<s>","stdin":"<pipe|terminal>","exit_code":<int>,"args":["...",...],"env":{...}}
 # _trace_exec BINARY EXIT_CODE TOOL_NAME [ARGS...]
 _trace_exec() {
-    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
+    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" && "$_TRACE" != "stdout" ]]; then
         return
     fi
     local _bin="$1"
@@ -483,7 +483,8 @@ _trace_exec() {
         fi
     done
 
-    printf '{"ts":"%s","level":"%s","tool":"%s","binary":"%s","cmd":"%s","strategy":"%s","stdin":"%s","exit_code":%d,"args":[%s],"env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
+    local _record
+    _record=$(printf '{"ts":"%s","level":"%s","tool":"%s","binary":"%s","cmd":"%s","strategy":"%s","stdin":"%s","exit_code":%d,"args":[%s],"env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
         "$_ts" \
         "$_level" \
         "$(_json_escape "$_tool")" \
@@ -498,15 +499,22 @@ _trace_exec() {
         "$(_json_escape "$(resolve_go_version)")" \
         "$(_json_escape "$(resolve_module_prefix)")" \
         "$(_json_escape "${GOTOOLS_VERBOSE:-0}")" \
-        "$(_json_escape "${GOTOOLS_TRACE:-0}")" \
-        >> "$_PROJECT_ROOT/.gotools_trace.log"
+        "$(_json_escape "${GOTOOLS_TRACE:-0}")")
+    printf '%s\n' "$_record" >> "$_PROJECT_ROOT/.gotools_trace.log"
+    # Live stream: stderr by default, stdout only when explicitly asked.
+    # stderr keeps the tool's own stdout clean for pipes and CI logs.
+    if [[ "$_TRACE" == "stdout" ]]; then
+        printf '%s\n' "$_record"
+    else
+        printf '%s\n' "$_record" >&2
+    fi
 }
 
 # _trace_fatal — emit a "fatal" trace record when gotools itself errors
 # out before a tool is executed (missing go.mod, unknown tool, etc.).
 # _trace_fatal MESSAGE [TOOL_NAME]
 _trace_fatal() {
-    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" ]]; then
+    if [[ "$_TRACE" != "1" && "$_TRACE" != "true" && "$_TRACE" != "stdout" ]]; then
         return
     fi
     local _message="$1"
@@ -514,7 +522,8 @@ _trace_fatal() {
     local _ts _stdin
     _ts=$(date '+%Y-%m-%dT%H:%M:%S')
     _stdin=$([ -t 0 ] && echo "terminal" || echo "pipe")
-    printf '{"ts":"%s","level":"fatal","tool":"%s","error":"%s","strategy":"%s","stdin":"%s","env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
+    local _record
+    _record=$(printf '{"ts":"%s","level":"fatal","tool":"%s","error":"%s","strategy":"%s","stdin":"%s","env":{"GOTOOLS_STRATEGY":"%s","GOTOOLS_DIR":"%s","GOTOOLS_GO_VERSION":"%s","GOTOOLS_MODULE_PREFIX":"%s","GOTOOLS_VERBOSE":"%s","GOTOOLS_TRACE":"%s"}}\n' \
         "$_ts" \
         "$(_json_escape "$_tool")" \
         "$(_json_escape "$_message")" \
@@ -525,6 +534,12 @@ _trace_fatal() {
         "$(_json_escape "$(resolve_go_version)")" \
         "$(_json_escape "$(resolve_module_prefix)")" \
         "$(_json_escape "${GOTOOLS_VERBOSE:-0}")" \
-        "$(_json_escape "${GOTOOLS_TRACE:-0}")" \
-        >> "$_PROJECT_ROOT/.gotools_trace.log"
+        "$(_json_escape "${GOTOOLS_TRACE:-0}")")
+    printf '%s\n' "$_record" >> "$_PROJECT_ROOT/.gotools_trace.log"
+    # Live stream: stderr by default, stdout only when explicitly asked.
+    if [[ "$_TRACE" == "stdout" ]]; then
+        printf '%s\n' "$_record"
+    else
+        printf '%s\n' "$_record" >&2
+    fi
 }
