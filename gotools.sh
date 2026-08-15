@@ -158,6 +158,20 @@ load_config() {
     GOTOOLS_GO_VERSION="${_ORIG_ENV_GO_VERSION:-${GOTOOLS_GO_VERSION:-$DEFAULT_GO_VERSION}}"
     GOTOOLS_MODULE_PREFIX="${_ORIG_ENV_MODULE_PREFIX:-${GOTOOLS_MODULE_PREFIX:-$DEFAULT_MODULE_PREFIX}}"
 
+    # Security: the tools dir feeds rm -rf/mkdir -p/cd in every command. A
+    # hostile or mistaken manifest/env must never redirect those outside the
+    # project, so refuse absolute paths, ".." components, and symlinks here —
+    # before any command can touch the filesystem.
+    if ! _validate_tools_dir "${GOTOOLS_DIR:-}"; then
+        echo "   Fix the 'dir' field in $MANIFEST_FILE or unset GOTOOLS_DIR." >&2
+        exit $E_ENVIRONMENT
+    fi
+    if [[ -L "${GOTOOLS_DIR:-}" ]]; then
+        echo "❌ Tools directory must not be a symlink: $GOTOOLS_DIR" >&2
+        echo "   Remove the symlink and retry." >&2
+        exit $E_ENVIRONMENT
+    fi
+
     # Normalize: treat empty module_prefix as unset so auto-detection kicks in
     # in resolve_module_prefix.
     [[ -n "${GOTOOLS_MODULE_PREFIX:-}" ]] || GOTOOLS_MODULE_PREFIX=""
@@ -231,6 +245,76 @@ _require_go() {
     fi
 }
 
+# _validate_tools_dir <dir> — reject tools-directory values that could escape
+# the project: empty, absolute, or containing a ".." component. The tools dir
+# feeds rm -rf/mkdir -p/cd in every command, so it must always resolve inside
+# the project root. rc 0 = safe; prints a diagnostic and returns 1 otherwise.
+_validate_tools_dir() {
+    local dir="$1" comp
+    if [[ -z "$dir" ]]; then
+        echo "❌ Tools directory must not be empty." >&2
+        return 1
+    fi
+    if [[ "$dir" == /* ]]; then
+        echo "❌ Tools directory must be a relative path inside the project: $dir" >&2
+        return 1
+    fi
+    if [[ "$dir" == "." ]]; then
+        echo "❌ Tools directory must not be the project root itself." >&2
+        return 1
+    fi
+    local IFS='/'
+    local -a comps
+    read -ra comps <<< "$dir"
+    for comp in "${comps[@]}"; do
+        case "$comp" in
+            ""|".") ;;
+            "..") echo "❌ Tools directory must stay inside the project: $dir" >&2; return 1 ;;
+        esac
+    done
+    return 0
+}
+
+# _validate_tool_name <name> — reject tool names that could escape the tools
+# directory or break filesystem/manifest handling: empty, "." / "..", leading
+# "-" (flag confusion), "/" (path traversal), whitespace, or control
+# characters. Names flow from the CLI, piped stdin, and the manifest straight
+# into rm -rf / rm -f / cat > / cd — validate before any filesystem use.
+_validate_tool_name() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        echo "❌ Tool name must not be empty." >&2
+        return 1
+    fi
+    case "$name" in
+        .|..) echo "❌ Invalid tool name: $name" >&2; return 1 ;;
+        -*)   echo "❌ Invalid tool name (must not start with '-'): $name" >&2; return 1 ;;
+    esac
+    if [[ "$name" == */* ]]; then
+        echo "❌ Invalid tool name (must not contain '/'): $name" >&2
+        return 1
+    fi
+    if [[ "$name" =~ [[:space:]] || "$name" =~ [[:cntrl:]] ]]; then
+        echo "❌ Invalid tool name (must not contain whitespace or control characters): $name" >&2
+        return 1
+    fi
+    return 0
+}
+
+# _reject_symlink <path> [context] — refuse to operate through a symlink at
+# <path>. Every -f/-d check and write follows symlinks, so a symlink planted
+# in tools/ (or committed by a hostile repo) would redirect installs, syncs,
+# and tidy rewrites to files OUTSIDE the project. Hard-fail: continuing is
+# never safe.
+_reject_symlink() {
+    local path="$1" ctx="${2:-}"
+    if [[ -L "$path" ]]; then
+        echo "❌ Refusing to follow symlink: $path${ctx:+ ($ctx)}" >&2
+        echo "   Remove the symlink and retry." >&2
+        exit $E_ENVIRONMENT
+    fi
+}
+
 # ---- Lockfile (concurrent operation safety) -------------------------
 _LOCK_FILE=""
 _LOCK_HELD=false
@@ -251,23 +335,44 @@ _lock_pid_live() {
     ps -p "$1" >/dev/null 2>&1
 }
 
+# _lock_pid_is_gotools <pid> — is the process at <pid> plausibly a gotools
+# lock holder? Holders are the script itself (bash/sh) or the Go wrapper
+# (gotools). Guards against pid reuse: an unrelated live process that
+# recycled the recorded pid must not block every command until timeout.
+_lock_pid_is_gotools() {
+    local pid="$1" comm
+    comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d '[:space:]')
+    case "$comm" in
+        bash|sh|zsh|gotools|gotools.sh) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # _lock_detect_stale <lock_dir> — decide whether an existing lock is stale
 # and remove it. rc 0: stale, removed; rc 1: held (or undecidable).
 #
-# A lock dir carrying a pid file is stale only when that process is dead —
-# a live holder is NEVER stale, no matter how old the lock is. Legacy locks
-# (no pid file: older gotools, manual mkdir) fall back to an age check
-# (GOTOOLS_LOCK_STALE_TIMEOUT seconds, default 300).
+# A lock dir carrying a pid file is stale when that process is dead — a
+# live holder is NEVER stale, no matter how old the lock is. As a pid-reuse
+# guard, a live pid whose command is clearly NOT gotools (bash/sh/gotools)
+# is treated as stale too. Legacy locks (no pid file: older gotools, manual
+# mkdir) fall back to an age check (GOTOOLS_LOCK_STALE_TIMEOUT seconds,
+# default 300). A lock path that is a SYMLINK is never a real lock — the
+# link itself is removed (rm -f on the link, never through it).
 _lock_detect_stale() {
     local lock_dir="$1"
     [[ -d "$lock_dir" ]] || return 1
     local pid=""
+    if [[ -L "$lock_dir" ]]; then
+        echo "  ⚠️  Removing symlinked lock entry (not a real lock): $lock_dir" >&2
+        rm -f "$lock_dir"
+        return 0
+    fi
     if [[ -f "$lock_dir/pid" ]]; then
         pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
-        if [[ "$pid" =~ ^[0-9]+$ ]] && _lock_pid_live "$pid"; then
+        if [[ "$pid" =~ ^[0-9]+$ ]] && _lock_pid_live "$pid" && _lock_pid_is_gotools "$pid"; then
             return 1
         fi
-        echo "  ⚠️  Stale lock detected (process $pid is gone). Removing $lock_dir..." >&2
+        echo "  ⚠️  Stale lock detected (process $pid is gone or not gotools). Removing $lock_dir..." >&2
         rm -f "$lock_dir/pid"
         rmdir "$lock_dir" 2>/dev/null || true
         return 0
@@ -327,10 +432,12 @@ _acquire_lock() {
 }
 
 # _release_lock — remove the pid record and the lock directory. rmdir only
-# removes empty dirs, so the pid file must go first.
+# removes empty dirs, so the pid file must go first. Never follow a symlink
+# here: if the lock path was replaced by a link mid-run, rm -f through it
+# would delete a pid file OUTSIDE the lock.
 _release_lock() {
     if $_LOCK_HELD; then
-        if [[ -n "${_LOCK_FILE:-}" && -d "${_LOCK_FILE:-}" ]]; then
+        if [[ -n "${_LOCK_FILE:-}" && -d "${_LOCK_FILE:-}" && ! -L "${_LOCK_FILE:-}" ]]; then
             rm -f "$_LOCK_FILE/pid"
             rmdir "$_LOCK_FILE" 2>/dev/null || true
         fi
@@ -924,6 +1031,14 @@ _manifest_parse() {
         if [[ "$line" =~ ^[[:space:]]*\"([^\"]+)\"[[:space:]]*:[[:space:]]*\{ ]]; then
             _tname="${BASH_REMATCH[1]}"
             _tsource=""; _tpkg=""; _tver=""
+            # Defense in depth: names parsed from the manifest flow into the
+            # same rm/mkdir/cat sinks as CLI names. Skip (with a warning)
+            # anything that could escape the tools directory so a hostile
+            # manifest cannot weaponize install/remove/sync.
+            if ! _validate_tool_name "$_tname" 2>/dev/null; then
+                echo "  ⚠️  Ignoring tool entry with unsafe name: $_tname" >&2
+                _tname=""
+            fi
             continue
         fi
         # Match fields inside a tool entry
@@ -1025,9 +1140,15 @@ _manifest_flush() {
     # Atomic write: build in a temp file, then rename over the target.
     # A crash mid-write leaves the previous manifest intact; the stray
     # temp file is removed by _manifest_flush_cleanup on the next run.
-    # The PID suffix keeps concurrent writes from colliding even if the
-    # lock was bypassed.
-    local tmpfile="${mf}.tmp.$$"
+    # mktemp (not a pid-derived name): a predictable ".tmp.$$" path can be
+    # pre-planted as a symlink, which would redirect the write — and then
+    # the mv — outside the project. mktemp creates the file exclusively
+    # with 0600 perms, so the write target is always ours.
+    local tmpfile
+    tmpfile=$(mktemp "${mf}.tmp.XXXXXX") || {
+        echo "❌ Cannot create temp file for $mf" >&2
+        return 1
+    }
     cat > "$tmpfile" <<MANIFEST_EOF
 {
   "version": 1,
@@ -1544,6 +1665,9 @@ pkg_for_tool() {
 tool_runnable() {
     local tool_name="$1"
     command -v go >/dev/null 2>&1 || { echo "go not installed"; return 1; }
+    # The probe cds into "$GOTOOLS_DIR/$tool_name" for the module strategy —
+    # an unsafe name would escape the project. Report, never follow.
+    _validate_tool_name "$tool_name" 2>/dev/null || { echo "invalid tool name: $tool_name"; return 1; }
     local modfile binary out rc=0
     case "$GOTOOLS_STRATEGY" in
         unified)
@@ -2226,6 +2350,12 @@ cmd_config() {
         esac
     fi
 
+    # Validate the tools directory: absolute paths and ".." escapes would
+    # redirect every rm/mkdir/cd to outside the project.
+    if [[ "$key" == "GOTOOLS_DIR" ]] && ! _validate_tools_dir "$value"; then
+        return $E_USAGE
+    fi
+
     # Validate values for the runtime settings.
     case "$key" in
         GOTOOLS_OFFLINE|GOTOOLS_NO_LOCK|GOTOOLS_VERBOSE)
@@ -2702,6 +2832,12 @@ cmd_exec() {
     local tool_name="${1:?tool name is required}"
     shift
 
+    # The name is path-joined into modfile/dir paths below — reject
+    # anything that could escape the tools directory.
+    if ! _validate_tool_name "$tool_name"; then
+        exit $E_USAGE
+    fi
+
     case "$GOTOOLS_STRATEGY" in
         unified)
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
@@ -2709,6 +2845,7 @@ cmd_exec() {
                 echo "❌ Error: No $GOTOOLS_DIR/go.mod found. Run 'init' first." >&2
                 exit $E_TOOL_NOT_FOUND
             fi
+            _reject_symlink "$GOTOOLS_DIR/go.mod" "exec $tool_name"
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/go.mod")
             local _ec=0
@@ -2724,6 +2861,7 @@ cmd_exec() {
                 echo "❌ Error: Tool '$tool_name' not found ($mod_file missing). Run 'install' first." >&2
                 exit $E_TOOL_NOT_FOUND
             fi
+            _reject_symlink "$mod_file" "exec $tool_name"
             local binary
             binary=$(resolve_binary_name "$tool_name" "$mod_file")
             local _ec=0
@@ -2738,6 +2876,7 @@ cmd_exec() {
                 echo "❌ Error: Tool '$tool_name' not found ($GOTOOLS_DIR/$tool_name missing). Run 'install' first." >&2
                 exit $E_TOOL_NOT_FOUND
             fi
+            _reject_symlink "$GOTOOLS_DIR/$tool_name" "exec $tool_name"
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/$tool_name/go.mod")
             local _ec=0
@@ -2928,7 +3067,11 @@ _gomod_migrate() {
     fi
 
     echo "✂️  Removing tool directives from go.mod..."
-    local tmp="$root_mod.tmp.$$"
+    local tmp
+    tmp=$(mktemp "$root_mod.tmp.XXXXXX") || {
+        echo "❌ Cannot create temp file next to $root_mod" >&2
+        exit $E_ENVIRONMENT
+    }
     strip_tools_from_mod "$root_mod" > "$tmp"
     mv "$tmp" "$root_mod"
 
@@ -2958,6 +3101,12 @@ cmd_init() {
         unified|split|module) ;;
         *) echo "❌ Invalid strategy: $strategy (must be unified, split, or module)" >&2; exit $E_USAGE ;;
     esac
+
+    # Validate the tools directory: it feeds mkdir -p and, via later
+    # commands, rm -rf. It must stay inside the project.
+    if ! _validate_tools_dir "$dir"; then
+        exit $E_USAGE
+    fi
 
     # Load the existing manifest FIRST so re-running init merges the tool
     # list instead of wiping it.
@@ -3045,6 +3194,12 @@ cmd_install() {
         pkg="$2"
     fi
 
+    # The name is path-joined into modfile/dir paths below — reject anything
+    # that could escape the tools directory or confuse flags.
+    if ! _validate_tool_name "$name"; then
+        exit $E_USAGE
+    fi
+
     # Installing a new tool needs the module proxy — refuse in offline mode.
     if ${_OFFLINE:-false}; then
         echo "❌ Offline mode: cannot install new tools without network." >&2
@@ -3066,6 +3221,7 @@ cmd_install() {
     case "$GOTOOLS_STRATEGY" in
         unified)
             mkdir -p "$GOTOOLS_DIR"
+            _reject_symlink "$GOTOOLS_DIR/go.mod" "install $name"
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                 (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$target_v")
             fi
@@ -3082,6 +3238,8 @@ cmd_install() {
         split)
             mkdir -p "$GOTOOLS_DIR"
             local modfile="${name}.mod"
+            _reject_symlink "$GOTOOLS_DIR/$modfile" "install $name"
+            _reject_symlink "$GOTOOLS_DIR/${modfile%.mod}.sum" "install $name"
             if [[ ! -f "$GOTOOLS_DIR/$modfile" ]]; then
                 _created_mod=true
                 local mod_path
@@ -3109,6 +3267,8 @@ MODEOF
             ;;
 
         module)
+            mkdir -p "$GOTOOLS_DIR"
+            _reject_symlink "$GOTOOLS_DIR/$name" "install $name"
             mkdir -p "$GOTOOLS_DIR/$name"
             if [[ ! -f "$GOTOOLS_DIR/$name/go.mod" ]]; then
                 _created_mod=true
@@ -3534,6 +3694,12 @@ cmd_remove() {
     for name in "$@"; do
         [[ "$name" == "--dry-run" ]] && continue
 
+        # The name is path-joined into rm -f / rm -rf below — reject
+        # anything that could escape the tools directory.
+        if ! _validate_tool_name "$name"; then
+            exit $E_USAGE
+        fi
+
         if $_DRY_RUN; then
             echo "  🔍 [dry-run] Would remove $name"
             continue
@@ -3543,6 +3709,7 @@ cmd_remove() {
             unified)
                 local modfile="$GOTOOLS_DIR/go.mod"
                 if [[ -f "$modfile" ]]; then
+                    _reject_symlink "$modfile" "remove $name"
                     local pkg
                     if pkg=$(pkg_for_tool "$name"); then
                         (cd "$GOTOOLS_DIR" && go mod edit -droptool="$pkg" && _go_timeout mod tidy || _timeout_fatal $? "go mod tidy in $GOTOOLS_DIR")
@@ -3555,6 +3722,8 @@ cmd_remove() {
 
             split)
                 if [[ -f "$GOTOOLS_DIR/$name.mod" ]]; then
+                    _reject_symlink "$GOTOOLS_DIR/$name.mod" "remove $name"
+                    _reject_symlink "$GOTOOLS_DIR/$name.sum" "remove $name"
                     rm -f "$GOTOOLS_DIR/$name.mod" "$GOTOOLS_DIR/$name.sum"
                     echo "  ✅ Removed $name.mod / $name.sum"
                 else
@@ -3564,6 +3733,7 @@ cmd_remove() {
 
             module)
                 if [[ -d "$GOTOOLS_DIR/$name" ]]; then
+                    _reject_symlink "$GOTOOLS_DIR/$name" "remove $name"
                     rm -rf "${GOTOOLS_DIR:?}/${name:?}"
                     echo "  ✅ Removed $GOTOOLS_DIR/$name/"
                 else
@@ -3878,6 +4048,7 @@ cmd_sync() {
                 echo "  [dry-run] Would go mod tidy in $GOTOOLS_DIR/"
             else
                 mkdir -p "$GOTOOLS_DIR"
+                _reject_symlink "$GOTOOLS_DIR/go.mod" "sync (unified)"
                 if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                     (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)")
                 fi
@@ -3900,6 +4071,8 @@ cmd_sync() {
                     local base sumfile
                     base=$(basename "$f")
                     sumfile="${f%.mod}.sum"
+                    _reject_symlink "$f" "sync (split: $base)"
+                    _reject_symlink "$sumfile" "sync (split: $base)"
                     echo "  ↻ $base"
                     # Isolate: copy to a temp dir so Go doesn't discover the
                     # parent module (go mod tidy -modfile cannot reconcile two
@@ -3936,6 +4109,8 @@ cmd_sync() {
                     [[ -d "$d" ]] || continue
                     local modfile="$d/go.mod"
                     [[ -f "$modfile" ]] || continue
+                    _reject_symlink "${d%/}" "sync (module)"
+                    _reject_symlink "$modfile" "sync (module)"
                     local name
                     name=$(basename "$d")
                     echo "  ↻ $name"
@@ -4127,7 +4302,12 @@ cmd_upgrade() {
             [[ -n "$name" ]] && targets+=("$name")
         done <<< "$_MANIFEST_TOOLS"
     else
-        targets=("$@")
+        for t in "$@"; do
+            if ! _validate_tool_name "$t"; then
+                exit $E_USAGE
+            fi
+            targets+=("$t")
+        done
     fi
 
     if [[ ${#targets[@]} -eq 0 ]]; then

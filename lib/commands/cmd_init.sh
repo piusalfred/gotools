@@ -46,7 +46,11 @@ _gomod_migrate() {
     fi
 
     echo "✂️  Removing tool directives from go.mod..."
-    local tmp="$root_mod.tmp.$$"
+    local tmp
+    tmp=$(mktemp "$root_mod.tmp.XXXXXX") || {
+        echo "❌ Cannot create temp file next to $root_mod" >&2
+        exit $E_ENVIRONMENT
+    }
     strip_tools_from_mod "$root_mod" > "$tmp"
     mv "$tmp" "$root_mod"
 
@@ -76,6 +80,12 @@ cmd_init() {
         unified|split|module) ;;
         *) echo "❌ Invalid strategy: $strategy (must be unified, split, or module)" >&2; exit $E_USAGE ;;
     esac
+
+    # Validate the tools directory: it feeds mkdir -p and, via later
+    # commands, rm -rf. It must stay inside the project.
+    if ! _validate_tools_dir "$dir"; then
+        exit $E_USAGE
+    fi
 
     # Load the existing manifest FIRST so re-running init merges the tool
     # list instead of wiping it.

@@ -200,6 +200,14 @@ _manifest_parse() {
         if [[ "$line" =~ ^[[:space:]]*\"([^\"]+)\"[[:space:]]*:[[:space:]]*\{ ]]; then
             _tname="${BASH_REMATCH[1]}"
             _tsource=""; _tpkg=""; _tver=""
+            # Defense in depth: names parsed from the manifest flow into the
+            # same rm/mkdir/cat sinks as CLI names. Skip (with a warning)
+            # anything that could escape the tools directory so a hostile
+            # manifest cannot weaponize install/remove/sync.
+            if ! _validate_tool_name "$_tname" 2>/dev/null; then
+                echo "  ⚠️  Ignoring tool entry with unsafe name: $_tname" >&2
+                _tname=""
+            fi
             continue
         fi
         # Match fields inside a tool entry
@@ -301,9 +309,15 @@ _manifest_flush() {
     # Atomic write: build in a temp file, then rename over the target.
     # A crash mid-write leaves the previous manifest intact; the stray
     # temp file is removed by _manifest_flush_cleanup on the next run.
-    # The PID suffix keeps concurrent writes from colliding even if the
-    # lock was bypassed.
-    local tmpfile="${mf}.tmp.$$"
+    # mktemp (not a pid-derived name): a predictable ".tmp.$$" path can be
+    # pre-planted as a symlink, which would redirect the write — and then
+    # the mv — outside the project. mktemp creates the file exclusively
+    # with 0600 perms, so the write target is always ours.
+    local tmpfile
+    tmpfile=$(mktemp "${mf}.tmp.XXXXXX") || {
+        echo "❌ Cannot create temp file for $mf" >&2
+        return 1
+    }
     cat > "$tmpfile" <<MANIFEST_EOF
 {
   "version": 1,

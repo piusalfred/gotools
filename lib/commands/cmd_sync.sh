@@ -201,6 +201,7 @@ cmd_sync() {
                 echo "  [dry-run] Would go mod tidy in $GOTOOLS_DIR/"
             else
                 mkdir -p "$GOTOOLS_DIR"
+                _reject_symlink "$GOTOOLS_DIR/go.mod" "sync (unified)"
                 if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                     (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)")
                 fi
@@ -223,6 +224,8 @@ cmd_sync() {
                     local base sumfile
                     base=$(basename "$f")
                     sumfile="${f%.mod}.sum"
+                    _reject_symlink "$f" "sync (split: $base)"
+                    _reject_symlink "$sumfile" "sync (split: $base)"
                     echo "  ↻ $base"
                     # Isolate: copy to a temp dir so Go doesn't discover the
                     # parent module (go mod tidy -modfile cannot reconcile two
@@ -259,6 +262,8 @@ cmd_sync() {
                     [[ -d "$d" ]] || continue
                     local modfile="$d/go.mod"
                     [[ -f "$modfile" ]] || continue
+                    _reject_symlink "${d%/}" "sync (module)"
+                    _reject_symlink "$modfile" "sync (module)"
                     local name
                     name=$(basename "$d")
                     echo "  ↻ $name"

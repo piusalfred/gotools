@@ -49,6 +49,76 @@ _require_go() {
     fi
 }
 
+# _validate_tools_dir <dir> — reject tools-directory values that could escape
+# the project: empty, absolute, or containing a ".." component. The tools dir
+# feeds rm -rf/mkdir -p/cd in every command, so it must always resolve inside
+# the project root. rc 0 = safe; prints a diagnostic and returns 1 otherwise.
+_validate_tools_dir() {
+    local dir="$1" comp
+    if [[ -z "$dir" ]]; then
+        echo "❌ Tools directory must not be empty." >&2
+        return 1
+    fi
+    if [[ "$dir" == /* ]]; then
+        echo "❌ Tools directory must be a relative path inside the project: $dir" >&2
+        return 1
+    fi
+    if [[ "$dir" == "." ]]; then
+        echo "❌ Tools directory must not be the project root itself." >&2
+        return 1
+    fi
+    local IFS='/'
+    local -a comps
+    read -ra comps <<< "$dir"
+    for comp in "${comps[@]}"; do
+        case "$comp" in
+            ""|".") ;;
+            "..") echo "❌ Tools directory must stay inside the project: $dir" >&2; return 1 ;;
+        esac
+    done
+    return 0
+}
+
+# _validate_tool_name <name> — reject tool names that could escape the tools
+# directory or break filesystem/manifest handling: empty, "." / "..", leading
+# "-" (flag confusion), "/" (path traversal), whitespace, or control
+# characters. Names flow from the CLI, piped stdin, and the manifest straight
+# into rm -rf / rm -f / cat > / cd — validate before any filesystem use.
+_validate_tool_name() {
+    local name="$1"
+    if [[ -z "$name" ]]; then
+        echo "❌ Tool name must not be empty." >&2
+        return 1
+    fi
+    case "$name" in
+        .|..) echo "❌ Invalid tool name: $name" >&2; return 1 ;;
+        -*)   echo "❌ Invalid tool name (must not start with '-'): $name" >&2; return 1 ;;
+    esac
+    if [[ "$name" == */* ]]; then
+        echo "❌ Invalid tool name (must not contain '/'): $name" >&2
+        return 1
+    fi
+    if [[ "$name" =~ [[:space:]] || "$name" =~ [[:cntrl:]] ]]; then
+        echo "❌ Invalid tool name (must not contain whitespace or control characters): $name" >&2
+        return 1
+    fi
+    return 0
+}
+
+# _reject_symlink <path> [context] — refuse to operate through a symlink at
+# <path>. Every -f/-d check and write follows symlinks, so a symlink planted
+# in tools/ (or committed by a hostile repo) would redirect installs, syncs,
+# and tidy rewrites to files OUTSIDE the project. Hard-fail: continuing is
+# never safe.
+_reject_symlink() {
+    local path="$1" ctx="${2:-}"
+    if [[ -L "$path" ]]; then
+        echo "❌ Refusing to follow symlink: $path${ctx:+ ($ctx)}" >&2
+        echo "   Remove the symlink and retry." >&2
+        exit $E_ENVIRONMENT
+    fi
+}
+
 # ---- Lockfile (concurrent operation safety) -------------------------
 _LOCK_FILE=""
 _LOCK_HELD=false
@@ -69,23 +139,44 @@ _lock_pid_live() {
     ps -p "$1" >/dev/null 2>&1
 }
 
+# _lock_pid_is_gotools <pid> — is the process at <pid> plausibly a gotools
+# lock holder? Holders are the script itself (bash/sh) or the Go wrapper
+# (gotools). Guards against pid reuse: an unrelated live process that
+# recycled the recorded pid must not block every command until timeout.
+_lock_pid_is_gotools() {
+    local pid="$1" comm
+    comm=$(ps -p "$pid" -o comm= 2>/dev/null | tr -d '[:space:]')
+    case "$comm" in
+        bash|sh|zsh|gotools|gotools.sh) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # _lock_detect_stale <lock_dir> — decide whether an existing lock is stale
 # and remove it. rc 0: stale, removed; rc 1: held (or undecidable).
 #
-# A lock dir carrying a pid file is stale only when that process is dead —
-# a live holder is NEVER stale, no matter how old the lock is. Legacy locks
-# (no pid file: older gotools, manual mkdir) fall back to an age check
-# (GOTOOLS_LOCK_STALE_TIMEOUT seconds, default 300).
+# A lock dir carrying a pid file is stale when that process is dead — a
+# live holder is NEVER stale, no matter how old the lock is. As a pid-reuse
+# guard, a live pid whose command is clearly NOT gotools (bash/sh/gotools)
+# is treated as stale too. Legacy locks (no pid file: older gotools, manual
+# mkdir) fall back to an age check (GOTOOLS_LOCK_STALE_TIMEOUT seconds,
+# default 300). A lock path that is a SYMLINK is never a real lock — the
+# link itself is removed (rm -f on the link, never through it).
 _lock_detect_stale() {
     local lock_dir="$1"
     [[ -d "$lock_dir" ]] || return 1
     local pid=""
+    if [[ -L "$lock_dir" ]]; then
+        echo "  ⚠️  Removing symlinked lock entry (not a real lock): $lock_dir" >&2
+        rm -f "$lock_dir"
+        return 0
+    fi
     if [[ -f "$lock_dir/pid" ]]; then
         pid=$(cat "$lock_dir/pid" 2>/dev/null || true)
-        if [[ "$pid" =~ ^[0-9]+$ ]] && _lock_pid_live "$pid"; then
+        if [[ "$pid" =~ ^[0-9]+$ ]] && _lock_pid_live "$pid" && _lock_pid_is_gotools "$pid"; then
             return 1
         fi
-        echo "  ⚠️  Stale lock detected (process $pid is gone). Removing $lock_dir..." >&2
+        echo "  ⚠️  Stale lock detected (process $pid is gone or not gotools). Removing $lock_dir..." >&2
         rm -f "$lock_dir/pid"
         rmdir "$lock_dir" 2>/dev/null || true
         return 0
@@ -145,10 +236,12 @@ _acquire_lock() {
 }
 
 # _release_lock — remove the pid record and the lock directory. rmdir only
-# removes empty dirs, so the pid file must go first.
+# removes empty dirs, so the pid file must go first. Never follow a symlink
+# here: if the lock path was replaced by a link mid-run, rm -f through it
+# would delete a pid file OUTSIDE the lock.
 _release_lock() {
     if $_LOCK_HELD; then
-        if [[ -n "${_LOCK_FILE:-}" && -d "${_LOCK_FILE:-}" ]]; then
+        if [[ -n "${_LOCK_FILE:-}" && -d "${_LOCK_FILE:-}" && ! -L "${_LOCK_FILE:-}" ]]; then
             rm -f "$_LOCK_FILE/pid"
             rmdir "$_LOCK_FILE" 2>/dev/null || true
         fi

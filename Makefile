@@ -20,7 +20,13 @@ LICENSE_IGNORE := \
 	-ignore ".gitignore" \
 	-ignore "go.work"    \
 	-ignore ".rumdl.toml" \
-	-ignore ".claude/**"
+	-ignore ".claude/**" \
+	-ignore "gotoolstest/**"
+
+# The tree walkers (gofumpt/gci) must skip gotoolstest/: it carries a large
+# read-only assessment archive (module-cache copies) that makes them fail.
+# find keeps untracked .go files included, unlike a git ls-files list.
+GO_SOURCES := $$(find . -name '*.go' -not -path './gotoolstest/*')
 
 GCI_SECTIONS := \
 	-s standard \
@@ -38,10 +44,10 @@ fmt-license:
 	$(ADDLICENSE) -l $(LICENSE_TYPE) -c "$(LICENSE_OWNER)" $(LICENSE_IGNORE) .
 
 fmt-imports:
-	$(GCI) write $(GCI_SECTIONS) . </dev/null
+	$(GCI) write $(GCI_SECTIONS) $(GO_SOURCES) </dev/null
 
 fmt-go:
-	$(GOFUMPT) -w -extra .
+	$(GOFUMPT) -w -extra $(GO_SOURCES)
 
 fmt-mod:
 	go mod tidy
@@ -132,11 +138,11 @@ lint-license:
 
 lint-imports:
 	@echo "Checking import ordering"
-	$(GCI) diff $(GCI_SECTIONS) . </dev/null
+	$(GCI) diff $(GCI_SECTIONS) $(GO_SOURCES) </dev/null
 
 lint-go-fmt:
 	@echo "Checking Go formatting"
-	@diff=$$($(GOFUMPT) -d -extra .); if [ -n "$$diff" ]; then printf "%s\n" "$$diff"; exit 1; fi
+	@diff=$$($(GOFUMPT) -d -extra $(GO_SOURCES)); if [ -n "$$diff" ]; then printf "%s\n" "$$diff"; exit 1; fi
 
 # ---- CI-equivalent: lint + test (mirrors static-analysis job) ----
 check: lint check-bundle test-unit
