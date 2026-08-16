@@ -3,4 +3,6 @@
 .claude
 ./bin/gotools
 .gotools_trace.log
-gotools
+gotoolsgotoolstest
+.DS_Store
+gotoolstest/

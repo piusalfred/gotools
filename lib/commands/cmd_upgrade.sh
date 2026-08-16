@@ -43,7 +43,12 @@ cmd_upgrade() {
             [[ -n "$name" ]] && targets+=("$name")
         done <<< "$_MANIFEST_TOOLS"
     else
-        targets=("$@")
+        for t in "$@"; do
+            if ! _validate_tool_name "$t"; then
+                exit $E_USAGE
+            fi
+            targets+=("$t")
+        done
     fi
 
     if [[ ${#targets[@]} -eq 0 ]]; then

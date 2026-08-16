@@ -413,6 +413,83 @@ test_doctor() {
 }
 
 # ---------------------------------------------------------------------------
+# Path validation — hostile dirs/names/symlinks must never escape the project
+# ---------------------------------------------------------------------------
+test_path_validation() {
+    suite "security: hostile manifest dir cannot delete outside the project"
+    local d="$TMP_BASE/hostile-dir"
+    local victim="$TMP_BASE/victim-dir"
+    mkdir -p "$d" "$victim"
+    cp "$SCRIPT_DIR/main.go" "$SCRIPT_DIR/go.mod" "$d/"
+    echo "canary" > "$victim/canary.txt"
+    cat > "$d/.gotools.json" <<'JSON'
+{
+  "version": 1,
+  "strategy": "split",
+  "dir": "../victim-dir",
+  "go_version": "inherit",
+  "module_prefix": "example.com/test",
+  "tools": {
+  }
+}
+JSON
+    local rc=0
+    (cd "$d" && "$GOTOOLS" sync >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 8 ]]; then pass "sync refuses hostile dir with exit 8"
+    else fail_detail "sync refuses hostile dir with exit 8" "expected: 8" "actual:   $rc"; fi
+    if [[ -f "$victim/canary.txt" ]]; then pass "victim directory untouched"
+    else fail "victim directory untouched (canary deleted!)"; fi
+
+    suite "security: traversal tool names refused (no outside writes)"
+    local d2="$TMP_BASE/name-traversal"
+    mkdir -p "$d2"
+    cp "$SCRIPT_DIR/main.go" "$SCRIPT_DIR/go.mod" "$d2/"
+    cat > "$d2/.gotools.json" <<'JSON'
+{
+  "version": 1,
+  "strategy": "split",
+  "dir": "tools",
+  "go_version": "inherit",
+  "module_prefix": "example.com/test",
+  "tools": {
+  }
+}
+JSON
+    mkdir -p "$d2/tools"
+    rc=0
+    (cd "$d2" && "$GOTOOLS" remove ../../victim-dir >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 2 ]]; then pass "remove traversal name exits 2"
+    else fail_detail "remove traversal name exits 2" "expected: 2" "actual:   $rc"; fi
+    if [[ -f "$victim/canary.txt" ]]; then pass "victim directory still untouched"
+    else fail "victim directory still untouched (deleted!)"; fi
+
+    suite "security: symlinked tools dir refused"
+    local d3="$TMP_BASE/symlink-dir"
+    local outside="$TMP_BASE/outside-mod"
+    mkdir -p "$d3" "$outside"
+    cp "$SCRIPT_DIR/main.go" "$SCRIPT_DIR/go.mod" "$d3/"
+    echo "outside" > "$outside/go.mod"
+    cat > "$d3/.gotools.json" <<'JSON'
+{
+  "version": 1,
+  "strategy": "split",
+  "dir": "tools",
+  "go_version": "inherit",
+  "module_prefix": "example.com/test",
+  "tools": {
+  }
+}
+JSON
+    ln -s "$outside" "$d3/tools"
+    rc=0
+    (cd "$d3" && "$GOTOOLS" sync >/dev/null 2>&1) || rc=$?
+    if [[ "$rc" -eq 8 ]]; then pass "sync refuses symlinked tools dir with exit 8"
+    else fail_detail "sync refuses symlinked tools dir with exit 8" "expected: 8" "actual:   $rc"; fi
+    if [[ "$(cat "$outside/go.mod")" == "outside" ]]; then pass "outside go.mod untouched"
+    else fail "outside go.mod untouched (rewritten!)"; fi
+}
+
+# ---------------------------------------------------------------------------
 # Timeouts + lock reliability — real stalled proxy and real lock recovery
 # ---------------------------------------------------------------------------
 test_timeout_and_lock() {
@@ -512,6 +589,7 @@ test_smoke
 test_robustness
 test_doctor
 test_timeout_and_lock
+test_path_validation
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"

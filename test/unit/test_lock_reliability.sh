@@ -132,7 +132,10 @@ run_out() {
 }
 
 # A process that stays alive for the duration of the test — the "holder".
-sleep 300 & LIVE_PID=$!
+# Must look like a gotools holder: the pid-reuse guard treats a live pid
+# whose command is NOT bash/sh/gotools as stale, so a bare sleep here
+# would be reclaimed as an unrelated process.
+bash -c 'while sleep 1; do :; done' & LIVE_PID=$!
 trap 'kill $LIVE_PID 2>/dev/null; wait $LIVE_PID 2>/dev/null || true; rm -rf "$TMPDIR"' EXIT
 
 category "lock: live holder is never stale"
@@ -155,7 +158,7 @@ mkdir -p "$S/tools/.gotools.lock"
 wait "$DP" 2>/dev/null || true
 echo "$DP" > "$S/tools/.gotools.lock/pid"
 out=$(run_out "$S" -- sync)
-assert_contains "stale message names the dead process" "Stale lock detected (process $DP is gone)" "$out"
+assert_contains "stale message names the dead process" "Stale lock detected (process $DP is gone or not gotools)" "$out"
 assert_contains "sync proceeds after stale removal" "Tools up to date" "$out"
 # After sync the lock is released again — the pid record must not leak.
 assert_file_absent "lock dir fully released after sync" "$S/tools/.gotools.lock"
@@ -164,6 +167,35 @@ echo "$DP" > "$S/tools/.gotools.lock/pid"
 rc=$(run_rc "$S" -- sync)
 assert_eq "dead-pid lock removed, sync exits 0" "0" "$rc"
 rm -rf "$S/tools/.gotools.lock"
+
+category "lock: unrelated live pid is reclaimed (pid reuse guard)"
+S="$TMPDIR/reuse"
+setup_project "$S"
+mkdir -p "$S/tools/.gotools.lock"
+sleep 300 & REUSE_PID=$!
+echo "$REUSE_PID" > "$S/tools/.gotools.lock/pid"
+# A live process whose command is clearly not gotools (sleep) must not
+# block commands: the recorded pid was recycled by an unrelated process.
+out=$(run_out "$S" -- sync)
+assert_contains "reuse message" "not gotools" "$out"
+assert_contains "sync proceeds after reuse reclaim" "Tools up to date" "$out"
+assert_file_absent "reused lock removed" "$S/tools/.gotools.lock"
+kill $REUSE_PID 2>/dev/null; wait $REUSE_PID 2>/dev/null || true
+
+category "lock: symlinked lock entry removed without following"
+S="$TMPDIR/symlink"
+setup_project "$S"
+VICTIM="$TMPDIR/victim"
+mkdir -p "$VICTIM"
+echo "precious" > "$VICTIM/pid"
+ln -s "$VICTIM" "$S/tools/.gotools.lock"
+out=$(run_out "$S" -- sync)
+assert_contains "symlink lock message" "Removing symlinked lock entry" "$out"
+assert_contains "sync proceeds after symlink removal" "Tools up to date" "$out"
+# The link itself is gone, the victim's contents are untouched.
+assert_file_absent "symlink removed" "$S/tools/.gotools.lock"
+assert_file_exists "victim pid file untouched" "$VICTIM/pid"
+assert_eq "victim pid content intact" "precious" "$(cat "$VICTIM/pid")"
 
 category "lock: legacy lock without pid file — age based"
 S="$TMPDIR/legacy-old"

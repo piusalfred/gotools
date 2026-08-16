@@ -53,6 +53,12 @@ cmd_install() {
         pkg="$2"
     fi
 
+    # The name is path-joined into modfile/dir paths below — reject anything
+    # that could escape the tools directory or confuse flags.
+    if ! _validate_tool_name "$name"; then
+        exit $E_USAGE
+    fi
+
     # Installing a new tool needs the module proxy — refuse in offline mode.
     if ${_OFFLINE:-false}; then
         echo "❌ Offline mode: cannot install new tools without network." >&2
@@ -74,6 +80,7 @@ cmd_install() {
     case "$GOTOOLS_STRATEGY" in
         unified)
             mkdir -p "$GOTOOLS_DIR"
+            _reject_symlink "$GOTOOLS_DIR/go.mod" "install $name"
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
                 (cd "$GOTOOLS_DIR" && go mod init "$(tool_module_path)" && go mod edit -go="$target_v")
             fi
@@ -90,6 +97,8 @@ cmd_install() {
         split)
             mkdir -p "$GOTOOLS_DIR"
             local modfile="${name}.mod"
+            _reject_symlink "$GOTOOLS_DIR/$modfile" "install $name"
+            _reject_symlink "$GOTOOLS_DIR/${modfile%.mod}.sum" "install $name"
             if [[ ! -f "$GOTOOLS_DIR/$modfile" ]]; then
                 _created_mod=true
                 local mod_path
@@ -117,6 +126,8 @@ MODEOF
             ;;
 
         module)
+            mkdir -p "$GOTOOLS_DIR"
+            _reject_symlink "$GOTOOLS_DIR/$name" "install $name"
             mkdir -p "$GOTOOLS_DIR/$name"
             if [[ ! -f "$GOTOOLS_DIR/$name/go.mod" ]]; then
                 _created_mod=true

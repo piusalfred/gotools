@@ -4,6 +4,16 @@
   "dir": "tools",
   "go_version": "inherit",
   "module_prefix": "github.com/piusalfred/gotools",
+  "settings": {
+    "jobs": 1,
+    "lock_stale_timeout": 300,
+    "lock_timeout": 10,
+    "no_lock": false,
+    "offline": false,
+    "operation_timeout": 120,
+    "trace": true,
+    "verbose": true
+  },
   "tools": {
     "gci": {
       "source": "go",

@@ -219,7 +219,7 @@ S="$TMPDIR/drive-lock"
 mkdir -p "$S"
 write_manifest "$S" lock
 mkdir -p "$S/tools/.gotools.lock"
-sleep 300 & LIVE_PID=$!
+bash -c 'while sleep 1; do :; done' & LIVE_PID=$!
 trap 'kill $LIVE_PID 2>/dev/null; wait $LIVE_PID 2>/dev/null || true; rm -rf "$TMPDIR"' EXIT
 echo "$LIVE_PID" > "$S/tools/.gotools.lock/pid"
 rc=$(run_rc "$S" -- sync)
@@ -231,7 +231,7 @@ S="$TMPDIR/drive-no-lock"
 mkdir -p "$S"
 write_manifest "$S" nolock
 mkdir -p "$S/tools/.gotools.lock"
-sleep 300 & LIVE_PID2=$!
+bash -c 'while sleep 1; do :; done' & LIVE_PID2=$!
 echo "$LIVE_PID2" > "$S/tools/.gotools.lock/pid"
 rc=$(run_rc "$S" -- sync)
 assert_eq "manifest no_lock skips a held lock" "0" "$rc"

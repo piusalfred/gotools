@@ -67,6 +67,12 @@ cmd_config() {
         esac
     fi
 
+    # Validate the tools directory: absolute paths and ".." escapes would
+    # redirect every rm/mkdir/cd to outside the project.
+    if [[ "$key" == "GOTOOLS_DIR" ]] && ! _validate_tools_dir "$value"; then
+        return $E_USAGE
+    fi
+
     # Validate values for the runtime settings.
     case "$key" in
         GOTOOLS_OFFLINE|GOTOOLS_NO_LOCK|GOTOOLS_VERBOSE)

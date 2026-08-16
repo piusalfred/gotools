@@ -8,6 +8,12 @@ cmd_exec() {
     local tool_name="${1:?tool name is required}"
     shift
 
+    # The name is path-joined into modfile/dir paths below — reject
+    # anything that could escape the tools directory.
+    if ! _validate_tool_name "$tool_name"; then
+        exit $E_USAGE
+    fi
+
     case "$GOTOOLS_STRATEGY" in
         unified)
             if [[ ! -f "$GOTOOLS_DIR/go.mod" ]]; then
@@ -15,6 +21,7 @@ cmd_exec() {
                 echo "❌ Error: No $GOTOOLS_DIR/go.mod found. Run 'init' first." >&2
                 exit $E_TOOL_NOT_FOUND
             fi
+            _reject_symlink "$GOTOOLS_DIR/go.mod" "exec $tool_name"
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/go.mod")
             local _ec=0
@@ -30,6 +37,7 @@ cmd_exec() {
                 echo "❌ Error: Tool '$tool_name' not found ($mod_file missing). Run 'install' first." >&2
                 exit $E_TOOL_NOT_FOUND
             fi
+            _reject_symlink "$mod_file" "exec $tool_name"
             local binary
             binary=$(resolve_binary_name "$tool_name" "$mod_file")
             local _ec=0
@@ -44,6 +52,7 @@ cmd_exec() {
                 echo "❌ Error: Tool '$tool_name' not found ($GOTOOLS_DIR/$tool_name missing). Run 'install' first." >&2
                 exit $E_TOOL_NOT_FOUND
             fi
+            _reject_symlink "$GOTOOLS_DIR/$tool_name" "exec $tool_name"
             local binary
             binary=$(resolve_binary_name "$tool_name" "$GOTOOLS_DIR/$tool_name/go.mod")
             local _ec=0

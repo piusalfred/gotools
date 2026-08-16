@@ -181,6 +181,9 @@ pkg_for_tool() {
 tool_runnable() {
     local tool_name="$1"
     command -v go >/dev/null 2>&1 || { echo "go not installed"; return 1; }
+    # The probe cds into "$GOTOOLS_DIR/$tool_name" for the module strategy —
+    # an unsafe name would escape the project. Report, never follow.
+    _validate_tool_name "$tool_name" 2>/dev/null || { echo "invalid tool name: $tool_name"; return 1; }
     local modfile binary out rc=0
     case "$GOTOOLS_STRATEGY" in
         unified)

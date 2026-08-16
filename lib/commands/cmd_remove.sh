@@ -20,6 +20,12 @@ cmd_remove() {
     for name in "$@"; do
         [[ "$name" == "--dry-run" ]] && continue
 
+        # The name is path-joined into rm -f / rm -rf below — reject
+        # anything that could escape the tools directory.
+        if ! _validate_tool_name "$name"; then
+            exit $E_USAGE
+        fi
+
         if $_DRY_RUN; then
             echo "  🔍 [dry-run] Would remove $name"
             continue
@@ -29,6 +35,7 @@ cmd_remove() {
             unified)
                 local modfile="$GOTOOLS_DIR/go.mod"
                 if [[ -f "$modfile" ]]; then
+                    _reject_symlink "$modfile" "remove $name"
                     local pkg
                     if pkg=$(pkg_for_tool "$name"); then
                         (cd "$GOTOOLS_DIR" && go mod edit -droptool="$pkg" && _go_timeout mod tidy || _timeout_fatal $? "go mod tidy in $GOTOOLS_DIR")
@@ -41,6 +48,8 @@ cmd_remove() {
 
             split)
                 if [[ -f "$GOTOOLS_DIR/$name.mod" ]]; then
+                    _reject_symlink "$GOTOOLS_DIR/$name.mod" "remove $name"
+                    _reject_symlink "$GOTOOLS_DIR/$name.sum" "remove $name"
                     rm -f "$GOTOOLS_DIR/$name.mod" "$GOTOOLS_DIR/$name.sum"
                     echo "  ✅ Removed $name.mod / $name.sum"
                 else
@@ -50,6 +59,7 @@ cmd_remove() {
 
             module)
                 if [[ -d "$GOTOOLS_DIR/$name" ]]; then
+                    _reject_symlink "$GOTOOLS_DIR/$name" "remove $name"
                     rm -rf "${GOTOOLS_DIR:?}/${name:?}"
                     echo "  ✅ Removed $GOTOOLS_DIR/$name/"
                 else

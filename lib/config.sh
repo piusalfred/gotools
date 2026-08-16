@@ -149,6 +149,20 @@ load_config() {
     GOTOOLS_GO_VERSION="${_ORIG_ENV_GO_VERSION:-${GOTOOLS_GO_VERSION:-$DEFAULT_GO_VERSION}}"
     GOTOOLS_MODULE_PREFIX="${_ORIG_ENV_MODULE_PREFIX:-${GOTOOLS_MODULE_PREFIX:-$DEFAULT_MODULE_PREFIX}}"
 
+    # Security: the tools dir feeds rm -rf/mkdir -p/cd in every command. A
+    # hostile or mistaken manifest/env must never redirect those outside the
+    # project, so refuse absolute paths, ".." components, and symlinks here —
+    # before any command can touch the filesystem.
+    if ! _validate_tools_dir "${GOTOOLS_DIR:-}"; then
+        echo "   Fix the 'dir' field in $MANIFEST_FILE or unset GOTOOLS_DIR." >&2
+        exit $E_ENVIRONMENT
+    fi
+    if [[ -L "${GOTOOLS_DIR:-}" ]]; then
+        echo "❌ Tools directory must not be a symlink: $GOTOOLS_DIR" >&2
+        echo "   Remove the symlink and retry." >&2
+        exit $E_ENVIRONMENT
+    fi
+
     # Normalize: treat empty module_prefix as unset so auto-detection kicks in
     # in resolve_module_prefix.
     [[ -n "${GOTOOLS_MODULE_PREFIX:-}" ]] || GOTOOLS_MODULE_PREFIX=""
