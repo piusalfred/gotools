@@ -52,6 +52,7 @@ cmd_install() {
         name="$1"
         pkg="$2"
     fi
+    local pkg_base="${pkg%%@*}"
 
     # The name is path-joined into modfile/dir paths below — reject anything
     # that could escape the tools directory or confuse flags.
@@ -72,6 +73,51 @@ cmd_install() {
     if _manifest_tool_exists "$name" && ! $force; then
         echo "❌ Tool '$name' already exists in manifest. Use --force to overwrite." >&2
         exit $E_USAGE
+    fi
+
+    # The same package already managed under a DIFFERENT name: the user may
+    # not know the tool is already here. Never refuse — inform, and on a
+    # terminal offer to install another copy, upgrade the existing entry to
+    # the requested version, or rename the existing entry to the new name.
+    if ! $force; then
+        local _managed_as="" _managed_ver=""
+        _managed_as=$(_manifest_tool_find_by_package "$pkg_base") || true
+        if [[ -n "$_managed_as" && "$_managed_as" != "$name" ]]; then
+            _managed_ver=$(_manifest_tool_entry "$_managed_as" | awk -F'|' '{print $3}') || true
+            if [[ ! -t 0 ]]; then
+                # Non-interactive (CI, pipe mode): inform and keep the
+                # default behavior — install under the requested name.
+                echo "ℹ️  $pkg_base is already installed as '$_managed_as' (version=$_managed_ver). Installing another entry under '$name'."
+                echo "   Rename instead:   $(basename "$0") rename $_managed_as $name"
+                echo "   Upgrade instead:  $(basename "$0") install --force $_managed_as $pkg"
+            else
+                echo "ℹ️  $pkg_base is already installed as '$_managed_as' (version=$_managed_ver)."
+                echo "   Do you want to install another version of this tool?"
+                echo "     1) install     install '$name' as another entry"
+                echo "     2) upgrade     update '$_managed_as' to the requested version"
+                echo "     3) rename      rename '$_managed_as' → '$name' (no new install)"
+                echo "     4) skip        do nothing — keep '$_managed_as' as it is"
+                local _answer=""
+                read -r -p "   Choose [1/2/3/4] (default: 1) " _answer || true
+                case "$_answer" in
+                    2)  # upgrade the existing entry to the requested version
+                        name="$_managed_as"
+                        force=true
+                        ;;
+                    3)  # rename the existing entry; nothing to install
+                        _rename_tool "$_managed_as" "$name"
+                        echo "✅ Renamed $_managed_as → $name"
+                        return 0
+                        ;;
+                    4)  # skip: nothing changes
+                        echo "   Skipped — $pkg_base stays managed as '$_managed_as'."
+                        return 0
+                        ;;
+                    *)  # 1 / empty / EOF: install under the requested name
+                        ;;
+                esac
+            fi
+        fi
     fi
 
     echo "📦 Installing $name ($pkg) [strategy=$GOTOOLS_STRATEGY]..."
@@ -156,7 +202,7 @@ MODEOF
     esac
 
     # Resolve the actual installed version and update manifest.
-    local resolved_ver="" pkg_base="${pkg%%@*}"
+    local resolved_ver=""
     case "$GOTOOLS_STRATEGY" in
         unified) resolved_ver=$(_resolve_installed_version "$GOTOOLS_DIR/go.mod" "$pkg_base") ;;
         split)   resolved_ver=$(_resolve_installed_version "$GOTOOLS_DIR/$modfile" "$pkg_base") ;;

@@ -16,7 +16,7 @@ _gotools_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help" -- "$cur"))
+        COMPREPLY=($(compgen -W "init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help" -- "$cur"))
         return
     fi
 
@@ -41,7 +41,7 @@ _gotools_completion() {
         completion)
             COMPREPLY=($(compgen -W "bash zsh fish install" -- "$cur"))
             ;;
-        sync|upgrade|remove|migrate|purge)
+        sync|upgrade|remove|rename|migrate|purge)
             COMPREPLY=($(compgen -W "--dry-run" -- "$cur"))
             ;;
         list|info|version)
@@ -61,7 +61,7 @@ _generate_zsh_completion() {
 #compdef gotools.sh gotools
 _gotools() {
     local -a commands
-    commands=(init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help)
+    commands=(init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help)
     _describe 'command' commands
 }
 _gotools
@@ -70,9 +70,9 @@ COMPLETION
 
 _generate_fish_completion() {
     echo "complete -c gotools.sh -f"
-    echo "complete -c gotools.sh -a 'init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
+    echo "complete -c gotools.sh -a 'init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
     echo "complete -c gotools -f"
-    echo "complete -c gotools -a 'init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
+    echo "complete -c gotools -a 'init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
 }
 
 cmd_completion() {

@@ -41,7 +41,7 @@ safety.
 | Command | Description |
 | :--- | :--- |
 | `init [flags]` | Bootstrap the project. |
-| `install [name] <pkg>` | Install a new tool. |
+| `install [name] <pkg>` | Install a new tool. If the package is already managed under a different name, install informs you and asks (on a terminal) whether to install another entry, upgrade the existing one, rename it, or skip; on non-interactive stdin it informs and installs. Same name + package still refuses without `--force`. |
 | `<stdin> \| gotools.sh` | Pipe `go install <pkg>@<ver>` lines from stdin. |
 | `exec <name> [args]` | Run a managed tool. |
 | `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch; skips work via a state fingerprint when nothing changed. |
@@ -50,6 +50,7 @@ safety.
 | `info <name> [--format=json\|text]` | Show detailed information about a specific tool. |
 | `doctor [--format=json\|text] [--offline]` | Diagnose the environment: Go, proxy, config, tools, lock, integrity, disk. Read-only, always exits 0. |
 | `remove <name...>` | Remove specific tools. |
+| `rename <old-name> <new-name>` | Rename a tool: moves its modfiles (split) or module directory (module) and rewrites the module line. Refuses with the unified strategy (directives carry the names — migrate to split/module first). |
 | `migrate <strategy>` | Migrate to a different strategy. |
 | `config [key [value]]` | View or edit config. |
 | `purge` | Remove all tools and config. |
