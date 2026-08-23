@@ -40,6 +40,14 @@ _cmd_help() {
             echo "  alias is used in gotools.sh (list, info, remove, exec, upgrade)"
             echo "  but the underlying Go binary name stays the same."
             echo ""
+            echo "  If the package is already managed under a different name,"
+            echo "  install asks how to proceed: 1) install another entry under"
+            echo "  the new name, 2) upgrade the existing entry to the requested"
+            echo "  version, 3) rename the existing entry to the new name, or"
+            echo "  4) skip (nothing changes)."
+            echo "  On non-interactive stdin it prints the situation and installs"
+            echo "  under the requested name."
+            echo ""
             echo "  Examples:"
             echo "    gotools.sh install golang.org/x/tools/cmd/goimports@latest"
             echo "    gotools.sh install mylint golang.org/x/tools/cmd/goimports@v0.38.0"
@@ -131,6 +139,24 @@ _cmd_help() {
             echo ""
             echo "  Options:"
             echo "    --dry-run   Show what would be removed without making changes"
+            ;;
+        rename)
+            echo "Usage: gotools.sh rename <old-name> <new-name> [--dry-run]"
+            echo ""
+            echo "  Rename a managed tool: updates the manifest and moves the"
+            echo "  tool's modfiles (split) or its module directory (module)."
+            echo "  The module line inside the moved go.mod is rewritten to the"
+            echo "  new name."
+            echo ""
+            echo "  Not supported with the unified strategy: there the names"
+            echo "  come from the go.mod tool directives, so rename would desync"
+            echo "  list/info/exec. Migrate to split or module first."
+            echo ""
+            echo "  Refuses when <new-name> is already managed or its files"
+            echo "  already exist on disk."
+            echo ""
+            echo "  Options:"
+            echo "    --dry-run   Show what would be renamed without making changes"
             ;;
         migrate)
             echo "Usage: gotools.sh migrate <unified|split|module> [--dry-run]"
@@ -241,11 +267,15 @@ Commands:
                                       --no-migrate --dry-run
   install [name] <pkg>              Install a new tool.
                                     If only <pkg> is given, name is inferred from its basename.
+                                    If the package is already managed under another name,
+                                    asks: install another copy, upgrade, rename, or skip.
   sync [--dry-run]                  Sync tool state to match $MANIFEST_FILE.
   exec <name> [args]                Run a managed tool.
   list [--format=json|text]         List tools, versions, and strategies.
   upgrade <name|all> [--dry-run]    Upgrade tools to @latest.
   remove <name...> [--dry-run]      Remove specific tools.
+  rename <old-name> <new-name>      Rename a tool (manifest + modfiles).
+                                    [--dry-run]
   migrate <strategy> [--dry-run]    Migrate to a different strategy.
   config [key [value]]              View or edit $MANIFEST_FILE configuration.
                                       No args: show all config.

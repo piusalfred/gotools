@@ -78,6 +78,7 @@ if ! (return 0 2>/dev/null); then
         list)                     cmd_list "$@" ;;
         upgrade|update)           cmd_upgrade "$@" ;;
         remove)                   cmd_remove "$@" ;;
+        rename)                   cmd_rename "$@" ;;
         info)                     cmd_info "$@" ;;
         migrate)                  cmd_migrate "$@" ;;
         config)                   cmd_config "$@" ;;

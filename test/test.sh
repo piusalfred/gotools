@@ -490,6 +490,112 @@ JSON
 }
 
 # ---------------------------------------------------------------------------
+# Rename + install duplicity — real go: modfile moves, module-line rewrite,
+# exec under the new name, and the same-package install flow
+# ---------------------------------------------------------------------------
+test_rename() {
+    suite "rename: split layout"
+    local d="$TMP_BASE/rename-split"
+    setup_project "$d"
+    cd "$d" || return
+    "$GOTOOLS" init --strategy=split >/dev/null 2>&1
+    local rc=0
+    "$GOTOOLS" install "$TOOL_GOIMPORTS_PKG" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then fail "rename setup: install goimports"; return; fi
+    rc=0
+    "$GOTOOLS" rename goimports myimports >/dev/null 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then fail "rename goimports → myimports exits 0"; return; fi
+    if [[ -f "tools/myimports.mod" && ! -f "tools/goimports.mod" ]]; then pass "modfile moved (myimports.mod, old gone)"
+    else fail_detail "modfile moved" "expected: tools/myimports.mod present, tools/goimports.mod absent" "actual:   $(ls tools | tr '\n' ' ')"; fi
+    if grep -q 'module .*/tools/myimports' "tools/myimports.mod"; then pass "module line rewritten to the new name"
+    else fail_detail "module line rewritten" "expected: module .../tools/myimports" "actual:   $(head -1 "tools/myimports.mod")"; fi
+    if grep -q '"myimports"' ".gotools.json" && ! grep -q '"goimports"' ".gotools.json"; then pass "manifest renamed"
+    else fail "manifest renamed (myimports present, goimports gone)"; fi
+    exec_test myimports -h
+    rc=0
+    "$GOTOOLS" info goimports >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 5 ]]; then pass "old name gone (info exits 5)"
+    else fail_detail "old name gone (info exits 5)" "expected: 5" "actual:   $rc"; fi
+    fp_before=$(cat "tools/.gotools.fingerprint" 2>/dev/null)
+    if [[ -n "$fp_before" ]]; then pass "rename writes the sync fingerprint"
+    else fail "rename writes the sync fingerprint (missing)"; fi
+    out=$("$GOTOOLS" sync 2>&1) || true
+    if echo "$out" | grep -q "Tools up to date"; then pass "sync after rename takes the fast path"
+    else fail_detail "sync after rename takes the fast path" "expected: Tools up to date" "actual:   $out"; fi
+    if [[ "$fp_before" == "$(cat "tools/.gotools.fingerprint" 2>/dev/null)" ]]; then pass "fast-path sync leaves the fingerprint unchanged"
+    else fail "fast-path sync leaves the fingerprint unchanged (rewritten!)"; fi
+    rc=0
+    "$GOTOOLS" sync --offline >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 0 ]]; then pass "sync --offline fast-paths after rename"
+    else fail_detail "sync --offline fast-paths after rename" "expected: 0" "actual:   $rc"; fi
+    info_has myimports "goimports"
+    # `check` is deliberately NOT asserted here: it fails for goimports
+    # identically before and after the rename (goimports exits 2 on both
+    # --version and --help — pre-existing `check` semantics, not rename).
+
+    suite "rename: module layout"
+    local m="$TMP_BASE/rename-module"
+    setup_project "$m"
+    cd "$m" || return
+    "$GOTOOLS" init --strategy=module >/dev/null 2>&1
+    rc=0
+    "$GOTOOLS" install "$TOOL_GOIMPORTS_PKG" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then fail "rename setup: install goimports (module)"; return; fi
+    rc=0
+    "$GOTOOLS" rename goimports myimports >/dev/null 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then fail "module rename exits 0"; return; fi
+    if [[ -f "tools/myimports/go.mod" && ! -d "tools/goimports" ]]; then pass "module dir moved (myimports/, old gone)"
+    else fail_detail "module dir moved" "expected: tools/myimports/go.mod present, tools/goimports absent" "actual:   $(ls tools | tr '\n' ' ')"; fi
+    if grep -q 'module .*/tools/myimports' "tools/myimports/go.mod"; then pass "module go.mod line rewritten"
+    else fail_detail "module go.mod line rewritten" "expected: module .../tools/myimports" "actual:   $(head -1 "tools/myimports/go.mod")"; fi
+    exec_test myimports -h
+    if [[ -n "$(cat "tools/.gotools.fingerprint" 2>/dev/null)" ]]; then pass "module rename writes the sync fingerprint"
+    else fail "module rename writes the sync fingerprint (missing)"; fi
+
+    suite "rename: unified layout refuses (directives carry the names)"
+    local u="$TMP_BASE/rename-unified"
+    setup_project "$u"
+    cd "$u" || return
+    "$GOTOOLS" init --strategy=unified >/dev/null 2>&1
+    rc=0
+    "$GOTOOLS" install "$TOOL_GOIMPORTS_PKG" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then fail "rename setup: install goimports (unified)"; return; fi
+    before=$(shasum -a 256 "tools/go.mod" | awk '{print $1}')
+    rc=0
+    "$GOTOOLS" rename goimports myimports >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 8 ]]; then pass "unified rename refuses with exit 8"
+    else fail_detail "unified rename refuses with exit 8" "expected: 8" "actual:   $rc"; fi
+    after=$(shasum -a 256 "tools/go.mod" | awk '{print $1}')
+    if [[ "$before" == "$after" ]]; then pass "unified refusal leaves tools/go.mod untouched"
+    else fail "unified refusal leaves tools/go.mod untouched (rewritten!)"; fi
+    list_has goimports yes
+
+    suite "install: same package under a different name"
+    local p="$TMP_BASE/rename-dup"
+    setup_project "$p"
+    cd "$p" || return
+    "$GOTOOLS" init --strategy=split >/dev/null 2>&1
+    rc=0
+    "$GOTOOLS" install "$TOOL_GOIMPORTS_PKG" >/dev/null 2>&1 || rc=$?
+    if [[ $rc -ne 0 ]]; then fail "dup setup: install goimports"; return; fi
+    local out=""
+    rc=0
+    out=$("$GOTOOLS" install myimports2 "$TOOL_GOIMPORTS_PKG" </dev/null 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]]; then pass "same-package install exits 0 (informs, does not refuse)"
+    else fail_detail "same-package install exits 0" "expected: 0" "actual:   $rc ($out)"; fi
+    if echo "$out" | grep -q "already installed as 'goimports'"; then pass "prints the already-installed info"
+    else fail_detail "prints the already-installed info" "expected: mentions 'goimports' and its version" "actual:   $out"; fi
+    if echo "$out" | grep -q "rename goimports myimports2"; then pass "suggests the rename command"
+    else fail_detail "suggests the rename command" "expected: rename goimports myimports2" "actual:   $out"; fi
+    list_has goimports yes
+    list_has myimports2 yes
+    rc=0
+    "$GOTOOLS" install goimports "$TOOL_GOIMPORTS_PKG" </dev/null >/dev/null 2>&1 || rc=$?
+    if [[ $rc -eq 2 ]]; then pass "same name+package still refuses (exit 2)"
+    else fail_detail "same name+package still refuses" "expected: 2" "actual:   $rc"; fi
+}
+
+# ---------------------------------------------------------------------------
 # Timeouts + lock reliability — real stalled proxy and real lock recovery
 # ---------------------------------------------------------------------------
 test_timeout_and_lock() {
@@ -590,6 +696,7 @@ test_robustness
 test_doctor
 test_timeout_and_lock
 test_path_validation
+test_rename
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"

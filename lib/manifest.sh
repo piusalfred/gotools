@@ -397,6 +397,19 @@ _manifest_tool_remove() {
     _MANIFEST_TOOLS="$new_tools"
 }
 
+# _manifest_tool_find_by_package <pkg> — echo the first tool name whose
+# package matches; rc 1 when no tool manages that package.
+_manifest_tool_find_by_package() {
+    local want="$1" _n _s _p _v
+    while IFS='|' read -r _n _s _p _v; do
+        if [[ "$_p" == "$want" ]]; then
+            echo "$_n"
+            return 0
+        fi
+    done <<< "$_MANIFEST_TOOLS"
+    return 1
+}
+
 # _manifest_config_get — extract a single config value from the manifest file.
 _manifest_config_get() {
     local key="$1" mf="${2:-$MANIFEST_FILE}"

@@ -53,7 +53,9 @@ serial and warns when `--jobs > 1` is requested explicitly.
 `sync --offline` (or `GOTOOLS_OFFLINE=1`) makes CI deterministic: it takes
 only the fingerprint fast path and refuses — with exit code 6 — the moment
 anything would need the network. `install` and `upgrade` refuse outright in
-offline mode.
+offline mode. `rename` refreshes the fingerprint itself (it moves the disk
+state to match the manifest), so a rename followed by `sync --offline` still
+fast-paths; other manifest-mutating commands require an online sync first.
 
 ```yaml
 # GitHub Actions — hermetic, deterministic

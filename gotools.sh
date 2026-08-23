@@ -1228,6 +1228,19 @@ _manifest_tool_remove() {
     _MANIFEST_TOOLS="$new_tools"
 }
 
+# _manifest_tool_find_by_package <pkg> — echo the first tool name whose
+# package matches; rc 1 when no tool manages that package.
+_manifest_tool_find_by_package() {
+    local want="$1" _n _s _p _v
+    while IFS='|' read -r _n _s _p _v; do
+        if [[ "$_p" == "$want" ]]; then
+            echo "$_n"
+            return 0
+        fi
+    done <<< "$_MANIFEST_TOOLS"
+    return 1
+}
+
 # _manifest_config_get — extract a single config value from the manifest file.
 _manifest_config_get() {
     local key="$1" mf="${2:-$MANIFEST_FILE}"
@@ -1812,6 +1825,14 @@ _cmd_help() {
             echo "  alias is used in gotools.sh (list, info, remove, exec, upgrade)"
             echo "  but the underlying Go binary name stays the same."
             echo ""
+            echo "  If the package is already managed under a different name,"
+            echo "  install asks how to proceed: 1) install another entry under"
+            echo "  the new name, 2) upgrade the existing entry to the requested"
+            echo "  version, 3) rename the existing entry to the new name, or"
+            echo "  4) skip (nothing changes)."
+            echo "  On non-interactive stdin it prints the situation and installs"
+            echo "  under the requested name."
+            echo ""
             echo "  Examples:"
             echo "    gotools.sh install golang.org/x/tools/cmd/goimports@latest"
             echo "    gotools.sh install mylint golang.org/x/tools/cmd/goimports@v0.38.0"
@@ -1903,6 +1924,24 @@ _cmd_help() {
             echo ""
             echo "  Options:"
             echo "    --dry-run   Show what would be removed without making changes"
+            ;;
+        rename)
+            echo "Usage: gotools.sh rename <old-name> <new-name> [--dry-run]"
+            echo ""
+            echo "  Rename a managed tool: updates the manifest and moves the"
+            echo "  tool's modfiles (split) or its module directory (module)."
+            echo "  The module line inside the moved go.mod is rewritten to the"
+            echo "  new name."
+            echo ""
+            echo "  Not supported with the unified strategy: there the names"
+            echo "  come from the go.mod tool directives, so rename would desync"
+            echo "  list/info/exec. Migrate to split or module first."
+            echo ""
+            echo "  Refuses when <new-name> is already managed or its files"
+            echo "  already exist on disk."
+            echo ""
+            echo "  Options:"
+            echo "    --dry-run   Show what would be renamed without making changes"
             ;;
         migrate)
             echo "Usage: gotools.sh migrate <unified|split|module> [--dry-run]"
@@ -2013,11 +2052,15 @@ Commands:
                                       --no-migrate --dry-run
   install [name] <pkg>              Install a new tool.
                                     If only <pkg> is given, name is inferred from its basename.
+                                    If the package is already managed under another name,
+                                    asks: install another copy, upgrade, rename, or skip.
   sync [--dry-run]                  Sync tool state to match $MANIFEST_FILE.
   exec <name> [args]                Run a managed tool.
   list [--format=json|text]         List tools, versions, and strategies.
   upgrade <name|all> [--dry-run]    Upgrade tools to @latest.
   remove <name...> [--dry-run]      Remove specific tools.
+  rename <old-name> <new-name>      Rename a tool (manifest + modfiles).
+                                    [--dry-run]
   migrate <strategy> [--dry-run]    Migrate to a different strategy.
   config [key [value]]              View or edit $MANIFEST_FILE configuration.
                                       No args: show all config.
@@ -2114,7 +2157,7 @@ _gotools_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [[ $COMP_CWORD -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help" -- "$cur"))
+        COMPREPLY=($(compgen -W "init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help" -- "$cur"))
         return
     fi
 
@@ -2139,7 +2182,7 @@ _gotools_completion() {
         completion)
             COMPREPLY=($(compgen -W "bash zsh fish install" -- "$cur"))
             ;;
-        sync|upgrade|remove|migrate|purge)
+        sync|upgrade|remove|rename|migrate|purge)
             COMPREPLY=($(compgen -W "--dry-run" -- "$cur"))
             ;;
         list|info|version)
@@ -2159,7 +2202,7 @@ _generate_zsh_completion() {
 #compdef gotools.sh gotools
 _gotools() {
     local -a commands
-    commands=(init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help)
+    commands=(init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help)
     _describe 'command' commands
 }
 _gotools
@@ -2168,9 +2211,9 @@ COMPLETION
 
 _generate_fish_completion() {
     echo "complete -c gotools.sh -f"
-    echo "complete -c gotools.sh -a 'init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
+    echo "complete -c gotools.sh -a 'init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
     echo "complete -c gotools -f"
-    echo "complete -c gotools -a 'init install sync exec list upgrade update remove migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
+    echo "complete -c gotools -a 'init install sync exec list upgrade update remove rename migrate config purge info check doctor completion version self-update self-upgrade uninstall help'"
 }
 
 cmd_completion() {
@@ -3193,6 +3236,7 @@ cmd_install() {
         name="$1"
         pkg="$2"
     fi
+    local pkg_base="${pkg%%@*}"
 
     # The name is path-joined into modfile/dir paths below — reject anything
     # that could escape the tools directory or confuse flags.
@@ -3213,6 +3257,51 @@ cmd_install() {
     if _manifest_tool_exists "$name" && ! $force; then
         echo "❌ Tool '$name' already exists in manifest. Use --force to overwrite." >&2
         exit $E_USAGE
+    fi
+
+    # The same package already managed under a DIFFERENT name: the user may
+    # not know the tool is already here. Never refuse — inform, and on a
+    # terminal offer to install another copy, upgrade the existing entry to
+    # the requested version, or rename the existing entry to the new name.
+    if ! $force; then
+        local _managed_as="" _managed_ver=""
+        _managed_as=$(_manifest_tool_find_by_package "$pkg_base") || true
+        if [[ -n "$_managed_as" && "$_managed_as" != "$name" ]]; then
+            _managed_ver=$(_manifest_tool_entry "$_managed_as" | awk -F'|' '{print $3}') || true
+            if [[ ! -t 0 ]]; then
+                # Non-interactive (CI, pipe mode): inform and keep the
+                # default behavior — install under the requested name.
+                echo "ℹ️  $pkg_base is already installed as '$_managed_as' (version=$_managed_ver). Installing another entry under '$name'."
+                echo "   Rename instead:   $(basename "$0") rename $_managed_as $name"
+                echo "   Upgrade instead:  $(basename "$0") install --force $_managed_as $pkg"
+            else
+                echo "ℹ️  $pkg_base is already installed as '$_managed_as' (version=$_managed_ver)."
+                echo "   Do you want to install another version of this tool?"
+                echo "     1) install     install '$name' as another entry"
+                echo "     2) upgrade     update '$_managed_as' to the requested version"
+                echo "     3) rename      rename '$_managed_as' → '$name' (no new install)"
+                echo "     4) skip        do nothing — keep '$_managed_as' as it is"
+                local _answer=""
+                read -r -p "   Choose [1/2/3/4] (default: 1) " _answer || true
+                case "$_answer" in
+                    2)  # upgrade the existing entry to the requested version
+                        name="$_managed_as"
+                        force=true
+                        ;;
+                    3)  # rename the existing entry; nothing to install
+                        _rename_tool "$_managed_as" "$name"
+                        echo "✅ Renamed $_managed_as → $name"
+                        return 0
+                        ;;
+                    4)  # skip: nothing changes
+                        echo "   Skipped — $pkg_base stays managed as '$_managed_as'."
+                        return 0
+                        ;;
+                    *)  # 1 / empty / EOF: install under the requested name
+                        ;;
+                esac
+            fi
+        fi
     fi
 
     echo "📦 Installing $name ($pkg) [strategy=$GOTOOLS_STRATEGY]..."
@@ -3297,7 +3386,7 @@ MODEOF
     esac
 
     # Resolve the actual installed version and update manifest.
-    local resolved_ver="" pkg_base="${pkg%%@*}"
+    local resolved_ver=""
     case "$GOTOOLS_STRATEGY" in
         unified) resolved_ver=$(_resolve_installed_version "$GOTOOLS_DIR/go.mod" "$pkg_base") ;;
         split)   resolved_ver=$(_resolve_installed_version "$GOTOOLS_DIR/$modfile" "$pkg_base") ;;
@@ -3752,6 +3841,158 @@ cmd_remove() {
     done
 
     _manifest_flush
+}
+
+# ---- rename --------------------------------------------------------------
+
+
+
+# _rename_tool <old> <new> — rename a managed tool: manifest entry, modfiles
+# (split), module directory (module), or just the manifest name (unified —
+# tool directives carry no name). The caller must hold the lock, have loaded
+# config, and have verified `go` is available (the module-line rewrite runs
+# `go mod edit`). Exits with the structured codes on failure; on success the
+# manifest is flushed exactly once.
+_rename_tool() {
+    local old="$1" new="$2"
+
+    # Both names are path-joined into modfile/dir paths below — reject
+    # anything that could escape the tools directory.
+    if ! _validate_tool_name "$old" || ! _validate_tool_name "$new"; then
+        exit $E_USAGE
+    fi
+    if [[ "$old" == "$new" ]]; then
+        echo "❌ Rename: the names are identical." >&2
+        exit $E_USAGE
+    fi
+
+    local entry src pkg ver
+    entry=$(_manifest_tool_entry "$old") || {
+        echo "❌ Tool '$old' not found in manifest." >&2
+        exit $E_TOOL_NOT_FOUND
+    }
+    IFS='|' read -r src pkg ver <<< "$entry"
+
+    if _manifest_tool_exists "$new"; then
+        echo "❌ Tool '$new' already exists in manifest. Remove it first." >&2
+        exit $E_USAGE
+    fi
+
+    local disk_moved=false
+    case "$GOTOOLS_STRATEGY" in
+        split)
+            local mod_old="$GOTOOLS_DIR/$old.mod" mod_new="$GOTOOLS_DIR/$new.mod"
+            local sum_old="$GOTOOLS_DIR/$old.sum" sum_new="$GOTOOLS_DIR/$new.sum"
+            _reject_symlink "$mod_old" "rename $old"
+            _reject_symlink "$sum_old" "rename $old"
+            if [[ -e "$mod_new" || -e "$sum_new" ]]; then
+                echo "❌ Refusing: $GOTOOLS_DIR/$new.mod (or .sum) already exists but is not in the manifest." >&2
+                exit $E_ENVIRONMENT
+            fi
+            if [[ ! -f "$mod_old" ]]; then
+                echo "⚠️  $mod_old not found — renaming in the manifest only (sync will recreate it)."
+            else
+                mv "$mod_old" "$mod_new"
+                [[ -f "$sum_old" ]] && mv "$sum_old" "$sum_new"
+                # The module line embeds the tool name — rewrite it. Roll the
+                # move back if go mod edit fails, so a failed rename loses
+                # nothing.
+                if ! _go mod edit -modfile="$mod_new" -module="$(tool_module_path "$new")" >/dev/null; then
+                    mv "$mod_new" "$mod_old"
+                    [[ -f "$sum_new" ]] && mv "$sum_new" "$sum_old"
+                    echo "❌ go mod edit failed while renaming $old → $new." >&2
+                    exit $E_GENERIC
+                fi
+                disk_moved=true
+            fi
+            ;;
+
+        module)
+            local dir_old="$GOTOOLS_DIR/$old" dir_new="$GOTOOLS_DIR/$new"
+            _reject_symlink "$dir_old" "rename $old"
+            if [[ -e "$dir_new" ]]; then
+                echo "❌ Refusing: $dir_new already exists but is not in the manifest." >&2
+                exit $E_ENVIRONMENT
+            fi
+            if [[ ! -f "$dir_old/go.mod" ]]; then
+                echo "⚠️  $dir_old/go.mod not found — renaming in the manifest only (sync will recreate it)."
+            else
+                mv "$dir_old" "$dir_new"
+                if ! _go mod edit -modfile="$dir_new/go.mod" -module="$(tool_module_path "$new")" >/dev/null; then
+                    mv "$dir_new" "$dir_old"
+                    echo "❌ go mod edit failed while renaming $old → $new." >&2
+                    exit $E_GENERIC
+                fi
+                disk_moved=true
+            fi
+            ;;
+
+        unified)
+            # Tool directives carry no name, and unified name handling
+            # RESOLVES names from the directives — a manifest-only rename
+            # would desync list/info/exec (they infer the old name from the
+            # directive). Refuse with the honest migration path instead of
+            # silently breaking the project.
+            echo "❌ Rename is not supported with the unified strategy." >&2
+            echo "   Tool names there come from the go.mod tool directives, not the manifest." >&2
+            echo "   Migrate first:   gotools migrate split    (or module)" >&2
+            echo "   Or reinstall:    gotools remove $old && gotools install $new $pkg@$ver" >&2
+            exit $E_ENVIRONMENT
+            ;;
+
+        *)
+            echo "❌ Unknown strategy: $GOTOOLS_STRATEGY" >&2
+            exit $E_ENVIRONMENT
+            ;;
+    esac
+
+    _manifest_tool_set "$new" "$src" "$pkg" "$ver"
+    _manifest_tool_remove "$old"
+    _manifest_flush
+
+    # Keep the sync fingerprint current: rename has already moved the disk
+    # state to match the manifest, so the next sync — including `sync
+    # --offline` in CI — takes the fast path instead of re-reconciling.
+    # Skipped when the modfile was missing: disk and manifest disagree
+    # there, and a stale fingerprint makes sync reinstall it correctly.
+    if $disk_moved; then
+        _sync_write_fingerprint "$(resolve_go_version)"
+    fi
+}
+
+# ---- rename -------------------------------------------------------------
+cmd_rename() {
+    _require_go
+    load_config
+    _acquire_lock
+
+    _DRY_RUN=false
+    local filtered=()
+    for a in "$@"; do
+        if [[ "$a" == "--dry-run" ]]; then _DRY_RUN=true
+        else filtered+=("$a"); fi
+    done
+    set -- ${filtered[@]+"${filtered[@]}"}
+
+    if [[ $# -ne 2 ]]; then
+        echo "❌ Usage: $(basename "$0") rename <old-name> <new-name> [--dry-run]" >&2
+        exit $E_USAGE
+    fi
+
+    local old="$1" new="$2"
+
+    if ! _validate_tool_name "$old" || ! _validate_tool_name "$new"; then
+        exit $E_USAGE
+    fi
+
+    if $_DRY_RUN; then
+        echo "🔍 [dry-run] Would rename $old → $new"
+        return 0
+    fi
+
+    echo "✏️  Renaming $old → $new..."
+    _rename_tool "$old" "$new"
+    echo "✅ Renamed $old → $new"
 }
 # ---- self-update ---------------------------------------------------------
 
@@ -4474,6 +4715,7 @@ if ! (return 0 2>/dev/null); then
         list)                     cmd_list "$@" ;;
         upgrade|update)           cmd_upgrade "$@" ;;
         remove)                   cmd_remove "$@" ;;
+        rename)                   cmd_rename "$@" ;;
         info)                     cmd_info "$@" ;;
         migrate)                  cmd_migrate "$@" ;;
         config)                   cmd_config "$@" ;;
