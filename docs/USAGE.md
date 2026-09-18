@@ -100,6 +100,31 @@ managed tool back to the root `go.mod` at its pinned version
 manifest — leaving the project exactly as Go's built-in tool management
 would have it.
 
+### exec — the working directory
+
+`gotools.sh exec <tool> <args>` runs the tool in the directory you ran
+gotools in, exactly where `go tool <tool> <args>` would run it. A relative
+path argument, a package pattern such as `./...`, and a config file lookup
+therefore all resolve against your current directory, not against the
+project root, and they behave the same under all three strategies.
+
+That is what makes `exec` usable from a `go:generate` directive, because
+`go generate` runs each directive in its own package's source directory:
+
+```go
+package sub
+
+//go:generate gotools exec mockgen -source=$GOFILE -destination=mocks/$GOFILE
+```
+
+The tool's modfile is found from the project root regardless of where you
+are, so nothing in the directive names the tools directory or the strategy.
+
+The one exception: `go tool -modfile=` refuses to run outside a main
+module, so in a project with no root `go.mod` — gotools managing Go tools
+for a repository that is not itself a Go module — `unified` and `module`
+run the tool from the tools directory instead.
+
 ### doctor — environment diagnostics
 
 `gotools.sh doctor` runs seven read-only checks and prints a report:

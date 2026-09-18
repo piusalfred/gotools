@@ -66,6 +66,21 @@ info_has() {
     fi
 }
 
+# exec_cwd_is — runs `goimports -l .` through gotools from <dir> and compares
+# the listed paths with <expected>. goimports prints paths relative to its own
+# working directory, so its output says which directory the tool ran in.
+exec_cwd_is() {
+    local desc="$1" dir="$2" expected="$3"
+    local output
+    output=$(cd "$dir" && "$GOTOOLS" exec "$TOOL_GOIMPORTS_NAME" -l . 2>/dev/null | sort | tr '\n' ' ')
+    output="${output% }"
+    if [[ "$output" == "$expected" ]]; then
+        pass "$desc"
+    else
+        fail_detail "$desc" "expected: $expected" "actual:   $output"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Tool definitions
 # ---------------------------------------------------------------------------
@@ -151,6 +166,52 @@ test_strategy_lifecycle() {
 
     if [[ ! -f .gotools.json ]]; then pass "purge removes .gotools.json"
     else fail_detail "purge removes .gotools.json" "expected: .gotools.json deleted" "actual:   file still exists"; fi
+}
+
+# ---------------------------------------------------------------------------
+# exec working directory — the tool runs in the directory the user ran
+# gotools in, the way `go tool` does, in every strategy. go:generate depends
+# on it: go runs each directive in its own package's source directory.
+# ---------------------------------------------------------------------------
+test_exec_working_dir() {
+    local strategy
+    for strategy in unified split module; do
+        local tmpdir="$TMP_BASE/exec-cwd-$strategy"
+        setup_project "$tmpdir"
+        cd "$tmpdir" || return
+
+        suite "exec working dir: $strategy"
+        run_cmd "init --strategy=$strategy" "$GOTOOLS" init --strategy="$strategy"
+        run_cmd "install $TOOL_GOIMPORTS_NAME" \
+            "$GOTOOLS" install "$TOOL_GOIMPORTS_NAME" "$TOOL_GOIMPORTS_PKG"
+
+        # One badly formatted file at the project root, one in a package
+        # subdirectory. Both are valid Go, so goimports lists both.
+        mkdir -p sub
+        printf 'package main\n\n\n\nfunc  rootThing()  {}\n' > root_bad.go
+        printf 'package sub\n\n\n\nfunc  subThing()  {}\n' > sub/sub_bad.go
+
+        exec_cwd_is "from the project root, the tool sees the project" \
+            "$tmpdir" "root_bad.go sub/sub_bad.go"
+        exec_cwd_is "from a package dir, the tool sees that package only" \
+            "$tmpdir/sub" "sub_bad.go"
+
+        # The go:generate case end to end: go runs the directive in sub/.
+        cat > sub/gen.go <<GENEOF
+package sub
+
+//go:generate $GOTOOLS exec $TOOL_GOIMPORTS_NAME -l .
+GENEOF
+        local gen_out
+        gen_out=$(cd "$tmpdir" && go generate ./sub/ 2>&1 | sort | tr '\n' ' ')
+        gen_out="${gen_out% }"
+        if [[ "$gen_out" == "sub_bad.go" ]]; then
+            pass "go:generate directive runs in its package directory"
+        else
+            fail_detail "go:generate directive runs in its package directory" \
+                "expected: sub_bad.go" "actual:   $gen_out"
+        fi
+    done
 }
 
 # ---------------------------------------------------------------------------
@@ -697,6 +758,7 @@ test_doctor
 test_timeout_and_lock
 test_path_validation
 test_rename
+test_exec_working_dir
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"

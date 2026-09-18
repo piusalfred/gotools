@@ -275,6 +275,25 @@ _parse_dry_run() {
     _PARSED_ARGS=(${filtered[@]+"${filtered[@]}"})
 }
 
+# _dir_in_module <dir>
+#   Succeeds when <dir> or one of its ancestors holds a go.mod, which is the
+#   condition `go tool -modfile=<file>` requires: outside a main module it
+#   refuses with "cannot find main module, but -modfile was set". cmd_exec
+#   checks this before running a tool in the invocation directory.
+#   Pure-bash walk — no `go env` subprocess on the exec hot path.
+_dir_in_module() {
+    local dir="$1"
+
+    [[ -n "$dir" ]] || return 1
+
+    while [[ "$dir" != "/" && "$dir" != "." && -n "$dir" ]]; do
+        [[ -f "$dir/go.mod" ]] && return 0
+        dir="$(dirname "$dir")"
+    done
+
+    [[ -f "/go.mod" ]]
+}
+
 # relative_path <absolute_or_relative>
 #   Prints the path relative to the current working directory.
 #   Pure-bash implementation — no python3 or GNU realpath required.

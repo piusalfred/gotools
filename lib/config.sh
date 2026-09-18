@@ -64,6 +64,12 @@ _OUTPUT_FORMAT="text"
 # If not found, defaults to $PWD. Commands operate relative to this root.
 _PROJECT_ROOT=""
 
+# _INVOCATION_DIR — the directory gotools was started in, captured here
+# because _find_project_root() cds to the project root. cmd_exec runs the
+# tool in this directory, so `gotools exec <tool>` leaves the working
+# directory where `go tool <tool>` would leave it.
+_INVOCATION_DIR="$PWD"
+
 # _find_project_root — walk up the directory tree looking for .gotools.json.
 # If found, cd to that directory and set _PROJECT_ROOT. Otherwise, stay in $PWD.
 
