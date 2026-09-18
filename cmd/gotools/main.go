@@ -57,6 +57,16 @@ func main() {
 	}
 }
 
+// runner is the bash program that loads the embedded script. It receives the
+// path of the extracted script as $1 and the user's arguments after it. The
+// script is sourced rather than passed to `bash -c` directly because Linux
+// caps a single argv string at MAX_ARG_STRLEN (128 KiB) and gotools.sh is
+// larger than that; passing it inline fails execve with E2BIG
+// ("argument list too long"). Sourcing keeps $0 set to the gotools
+// executable, which the script relies on for self-update, uninstall, and
+// re-invoking itself.
+const runner = `_gotools_script="$1"; shift; . "$_gotools_script"; gotools_main "$@"`
+
 // Run executes the embedded gotools.sh script in a child bash process.
 //
 // Signal handling: the child shares the parent's process group so that
@@ -69,12 +79,19 @@ func Run(ctx context.Context, args []string) error {
 	if err != nil {
 		execPath = "gotools"
 	}
-	script := []string{"-c", gotools.SCRIPT, execPath}
+
+	scriptPath, cleanup, err := extractScript()
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	argv := []string{"-c", runner, execPath, scriptPath}
 	if len(args) > 1 {
-		script = append(script, args[1:]...)
+		argv = append(argv, args[1:]...)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", script...)
+	cmd := exec.CommandContext(ctx, "bash", argv...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Stdin = os.Stdin
@@ -91,4 +108,33 @@ func Run(ctx context.Context, args []string) error {
 	}
 
 	return nil
+}
+
+// extractScript writes the embedded script to a private temporary file and
+// returns its path together with a func that removes it. The file is created
+// with O_EXCL and mode 0600, and bash reads it rather than executing it, so it
+// needs no execute permission.
+func extractScript() (string, func(), error) {
+	file, err := os.CreateTemp("", "gotools-*.sh")
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot create a temporary file for the script (check TMPDIR): %w", err)
+	}
+
+	name := file.Name()
+	cleanup := func() { _ = os.Remove(name) }
+
+	if _, err = file.WriteString(gotools.SCRIPT); err != nil {
+		_ = file.Close()
+		cleanup()
+
+		return "", nil, fmt.Errorf("cannot write the script to %s: %w", name, err)
+	}
+
+	if err = file.Close(); err != nil {
+		cleanup()
+
+		return "", nil, fmt.Errorf("cannot close %s: %w", name, err)
+	}
+
+	return name, cleanup, nil
 }

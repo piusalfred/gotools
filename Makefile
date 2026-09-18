@@ -33,7 +33,7 @@ GCI_SECTIONS := \
 	-s default \
 	-s 'prefix($(MODULE))'
 
-.PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean install help test test-unit test-integration \
+.PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean install help test test-unit test-go test-integration \
         lint lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt \
         version-check get-version set-version govulncheck check bundle check-bundle generate sync-main
 
@@ -67,8 +67,13 @@ install: generate
 
 test: test-unit test-integration
 
-test-unit: build
+test-unit: build test-go
 	bash test/unit/run_all.sh
+
+# Go tests for the wrapper binary (no network).
+test-go:
+	@echo "Running Go tests"
+	go test ./...
 
 test-integration: build
 	cd test && bash test.sh

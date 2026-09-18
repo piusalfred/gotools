@@ -82,6 +82,9 @@ jobs:
             - name: Verify bundled script is in sync
               run: make check-bundle
 
+            - name: Go tests
+              run: go test ./...
+
             - name: Unit tests
               run: bash test/unit/run_all.sh
 

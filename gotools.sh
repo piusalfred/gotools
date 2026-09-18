@@ -4675,12 +4675,12 @@ _stdin_install() {
 }
 
 # ---------------------------------------------------------------------------
-# Main dispatch — only runs when executed as a script, not when sourced.
-# Uses the standard `return 2>/dev/null` trick: return succeeds only inside
-# a sourced script (or function), fails at the top level of an executed script.
-# This correctly handles direct execution, `bash -c` (Go wrapper), and source.
+# gotools_main — argument dispatch. Callers: the execution guard below (direct
+# `./gotools.sh ...` runs) and the Go wrapper, which sources this script and
+# then calls gotools_main itself. Unit tests source the script and never call
+# it, so sourcing alone stays side-effect free.
 # ---------------------------------------------------------------------------
-if ! (return 0 2>/dev/null); then
+gotools_main() {
     if [[ $# -lt 1 ]]; then
         # When stdin is not a terminal AND has data waiting, read
         # "go install <tool>" lines from it.  Otherwise show usage.
@@ -4730,4 +4730,16 @@ if ! (return 0 2>/dev/null); then
         help|--help|-h)           usage ;;
         *)                        echo "❌ Unknown command: $action" >&2; usage ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# Execution guard — dispatch only when this script is executed directly, not
+# when sourced. Uses the standard `return 2>/dev/null` trick: return succeeds
+# inside a sourced script (or function) and fails at the top level of an
+# executed script. The Go wrapper sources the script and calls gotools_main
+# with the user's arguments, because the script is too large to pass to
+# `bash -c` as a single argv string (Linux caps one argument at 128 KiB).
+# ---------------------------------------------------------------------------
+if ! (return 0 2>/dev/null); then
+    gotools_main "$@"
 fi

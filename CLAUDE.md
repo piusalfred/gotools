@@ -43,7 +43,7 @@ tools/               # Managed tools directory (split strategy, committed)
 ### Key Design
 
 - **Bash-first:** The script is self-contained — no `jq`, no `python3`, no GNU-specific tools. JSON parsing uses `awk`. Path normalization is pure Bash.
-- **Go wrapper:** `cmd/gotools/main.go` embeds the script via `//go:embed` and executes it with `bash -c`. This lets users `go install` a single binary.
+- **Go wrapper:** `cmd/gotools/main.go` embeds the script via `//go:embed` and runs it in a child bash process. This lets users `go install` a single binary.
 - **Manifest:** `.gotools.json` stores strategy, directory, Go version, module prefix, and tool list. Parsed with `awk` into shell variables.
 - **Three isolation strategies:**
   - `split` (default): Flat `tools/<name>.mod` + `tools/<name>.sum` per tool

@@ -50,11 +50,20 @@ make clean
 ## Running tests
 
 ```bash
-# Unit tests (fast, no network)
+# Bash unit tests (fast, no network)
 bash test/unit/run_all.sh
+
+# Go tests for the wrapper binary (fast, no network)
+go test ./...
 
 # Integration tests (requires network, real go get -tool)
 cd test && bash test.sh
+
+# Bash unit tests and Go tests
+make test-unit
+
+# Bash unit tests, Go tests, and integration tests
+make test
 ```
 
 ## CI
