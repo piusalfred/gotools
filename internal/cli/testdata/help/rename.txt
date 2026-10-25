@@ -1,0 +1,18 @@
+Usage: gotools rename [options] <old> <new>
+
+  Rename a managed tool: updates the manifest and moves the tool's modfiles
+  (split) or its module directory (module). The module line inside the moved
+  go.mod is rewritten to the new name.
+
+  Not supported with the unified strategy: there the names come from the go.mod
+  tool directives, so rename would desync list/info/exec. Migrate to split or
+  module first.
+
+  Refuses when <new-name> is already managed or its files already exist on disk.
+
+  Examples:
+    gotools rename goimports imports
+    gotools rename goimports imports --dry-run
+
+  Options:
+    --dry-run  Show what would be renamed without making changes

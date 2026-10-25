@@ -4,6 +4,16 @@
   "dir": "tools",
   "go_version": "inherit",
   "module_prefix": "github.com/piusalfred/gotools",
+  "settings": {
+    "jobs": 1,
+    "lock_stale_timeout": 300,
+    "lock_timeout": 10,
+    "no_lock": false,
+    "offline": false,
+    "operation_timeout": 120,
+    "trace": true,
+    "verbose": true
+  },
   "tools": {
     "gci": {
       "source": "go",
@@ -18,17 +28,17 @@
     "govulncheck": {
       "source": "go",
       "package": "golang.org/x/vuln/cmd/govulncheck",
-      "version": "v1.6.0"
+      "version": "v1.9.0"
     },
     "staticcheck": {
       "source": "go",
       "package": "honnef.co/go/tools/cmd/staticcheck",
-      "version": "v0.7.0"
+      "version": "v0.8.2"
     },
     "gofumpt": {
       "source": "go",
       "package": "mvdan.cc/gofumpt",
-      "version": "v0.10.0"
+      "version": "v0.12.0"
     }
   }
 }

@@ -1,0 +1,22 @@
+Usage: gotools sync [options]
+
+  Sync tool state to match .gotools.json. Tidies existing modfiles and
+  reinstalls any tools from the manifest that are missing on disk or whose
+  installed version drifted from the manifest.
+
+  If the on-disk strategy doesn't match the manifest, auto-migrates.
+
+  Fast path: when nothing changed, a state fingerprint in
+  $GOTOOLS_DIR/.gotools.fingerprint skips the reconciliation entirely. Commit
+  that file so fresh clones are fast too.
+
+  Examples:
+    gotools sync
+    gotools sync --dry-run
+    gotools sync --jobs 4
+    gotools sync --offline
+
+  Options:
+    --dry-run     Show what would be done without making changes
+    --offline     Hermetic: fingerprint match only, exit 6 otherwise (GOTOOLS_OFFLINE=1 does the same)
+    --jobs <int>  Reinstall N tools at a time; split and module only (GOTOOLS_JOBS=N does the same) (default: 1)

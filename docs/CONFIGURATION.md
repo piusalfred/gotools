@@ -71,9 +71,13 @@ gotools config GOTOOLS_OPERATION_TIMEOUT 45 # KEY VALUE form
 gotools config GOTOOLS_TRACE                # read one back
 ```
 
-Booleans accept `true`/`false`/`0`/`1` (plus `stdout` for `GOTOOLS_TRACE`);
-numbers must be positive integers. Invalid values are rejected with exit
-code 2.
+Booleans accept `true`/`false`/`0`/`1` (plus `stdout` for `GOTOOLS_TRACE`).
+`GOTOOLS_JOBS` must be at least 1. The timeouts are whole seconds and may be 0:
+`GOTOOLS_OPERATION_TIMEOUT=0` means no limit on network calls, and
+`GOTOOLS_LOCK_TIMEOUT=0` means do not wait for a held lock. Invalid values are
+rejected with exit code 2. `GOTOOLS_LOCK_STALE_TIMEOUT` is accepted for
+compatibility and ignored: the lock is released by the system when its holder
+exits, so there is no stale lock to time out.
 
 ## Manifest schema versioning
 
@@ -89,23 +93,41 @@ read it instead of silently misparsing:
 Manifests without a `version` field (created before schema versioning
 existed) are treated as version 1 — no migration needed.
 
+### What a rewrite keeps
+
+gotools writes the manifest in one fixed layout, so a file it rewrites matches
+what it would have created. Keys it does not know are **not** kept: that is why a
+newer manifest is refused rather than rewritten, since rewriting it would drop
+what the newer version added. The `.gotools.env` file that gotools used before
+v0.5.0 is not read or migrated; run `gotools init` and install the tools again.
+
 Environment variables override the config file. For
-example, `GOTOOLS_DIR=build-tools gotools.sh list`
+example, `GOTOOLS_DIR=build-tools gotools list`
 temporarily uses `build-tools/` as the tools directory.
 
 ## Module Prefix
 
-Every tool managed by `gotools.sh` lives in its own
-`go.mod` file. The `module` directive in that file needs
-a path. By default, the script reads your project's root
-`go.mod` and uses its module path as the prefix, combined
-with the full tools directory path:
+Every tool managed by `gotools` lives in its own `go.mod` file (with the
+`unified` strategy, one shared file). The `module` directive in that file needs a
+path: the **module prefix**, then the tools directory, then the tool's name.
 
-| Root module | Dir | Tool | Module directive |
-| :--- | :--- | :--- | :--- |
-| `github.com/user/repo` | `tools` | `addlicense` | `github.com/user/repo/tools/addlicense` |
-| `github.com/user/repo` | `build/tools` | `mockgen` | `github.com/user/repo/build/tools/mockgen` |
-| *(none)* | `tools` | `addlicense` | `tools/addlicense` |
+The prefix is `module_prefix` in the manifest. When it is empty, gotools fills it
+in the first time it writes the manifest, so the file never keeps an empty one:
+from the root `go.mod`'s module path, or, with no root `go.mod`, from the tools
+directory name. The module path is measured below for the default layout and a
+few others.
+
+| Root module | `module_prefix` | Strategy | Dir | Tool | Module directive |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `github.com/user/repo` | *(empty)* → `github.com/user/repo` | `split`, `module` | `tools` | `addlicense` | `github.com/user/repo/tools/addlicense` |
+| `github.com/user/repo` | *(empty)* → `github.com/user/repo` | `unified` | `tools` | every tool | `github.com/user/repo/tools` |
+| `github.com/user/repo` | *(empty)* → `github.com/user/repo` | `module` | `build/tools` | `mockgen` | `github.com/user/repo/build/tools/mockgen` |
+| `github.com/user/repo` | `github.com/myorg/myrepo` | `split`, `module` | `tools` | `addlicense` | `github.com/myorg/myrepo/tools/addlicense` |
+| *(none)* | *(empty)* → `tools` | `module` | `tools` | `addlicense` | `tools/tools/addlicense` |
+| *(none)* | *(empty)* → `tools` | `unified` | `tools` | every tool | `tools` |
+
+The `split` strategy cannot be used with no root `go.mod` at all; see
+[Strategies](STRATEGIES.md#1-split---strategysplit--default).
 
 This makes tool modules proper sub-modules of your
 project — idiomatic and consistent with how multi-module
@@ -115,12 +137,12 @@ To override auto-detection, set `GOTOOLS_MODULE_PREFIX`
 explicitly:
 
 ```bash
-gotools.sh config GOTOOLS_MODULE_PREFIX \
+gotools config GOTOOLS_MODULE_PREFIX \
   github.com/myorg/myrepo
 ```
 
 Or pass `--prefix=` during init:
 
 ```bash
-gotools.sh init --prefix=github.com/myorg/myrepo
+gotools init --prefix=github.com/myorg/myrepo
 ```

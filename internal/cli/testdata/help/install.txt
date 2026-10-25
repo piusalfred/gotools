@@ -1,0 +1,34 @@
+Usage: gotools install [options] [name] <pkg>
+
+  Install a Go tool via 'go get -tool'. If only a package is given, the tool
+  name is inferred from the package path.
+
+  Tool aliases: you can give the tool a custom name (alias). The alias is used
+  in gotools (list, info, remove, exec, upgrade) but the underlying Go binary
+  name stays the same.
+
+  If the package is already managed under a different name, install asks how to
+  proceed: 1) install another entry under the new name, 2) upgrade the existing
+  entry to the requested version, 3) rename the existing entry to the new name,
+  or 4) skip (nothing changes). On non-interactive stdin it prints the situation
+  and installs under the requested name.
+
+  Pipe mode: feed 'go install' commands via stdin. The 'go install' prefix is
+  optional, so a bare pkg@version works too.
+
+    echo 'go install pkg@latest' | gotools       # pipe
+    gotools <<< 'go install pkg@latest'          # herestring
+    gotools <<EOF                                # heredoc
+    go install pkg1@v1
+    go install pkg2@v2
+    EOF
+    gotools < tools.txt                          # file redirect
+
+  Examples:
+    gotools install golang.org/x/tools/cmd/goimports@latest
+    gotools install mylint golang.org/x/tools/cmd/goimports@v0.38.0
+    gotools exec mylint -w .   # runs the goimports binary
+
+  Options:
+    --force    Overwrite an existing tool with the same name
+    --offline  Refuse to install (needs the network), exit 6

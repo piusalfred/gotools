@@ -1,0 +1,11 @@
+Usage: gotools migrate [options] <unified|split|module>
+
+  Migrate all tools to a different isolation strategy. Preserves exact pinned
+  versions across the migration.
+
+  Examples:
+    gotools migrate unified
+    gotools migrate module --dry-run
+
+  Options:
+    --dry-run  Show what would be migrated without making changes

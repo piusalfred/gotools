@@ -1,0 +1,19 @@
+Usage: gotools config [key [value]]
+
+  View or edit .gotools.json configuration.
+
+  No args: Show the full manifest (cat .gotools.json) One arg: Show the value of
+  <key> Two args: Set <key>=<value>
+
+  Layout keys: GOTOOLS_STRATEGY, GOTOOLS_DIR,
+               GOTOOLS_GO_VERSION, GOTOOLS_MODULE_PREFIX
+  Settings:    GOTOOLS_OFFLINE, GOTOOLS_JOBS, GOTOOLS_OPERATION_TIMEOUT,
+               GOTOOLS_LOCK_TIMEOUT, GOTOOLS_LOCK_STALE_TIMEOUT,
+               GOTOOLS_NO_LOCK, GOTOOLS_TRACE, GOTOOLS_VERBOSE
+  Both 'config KEY VALUE' and 'config KEY=VALUE' forms work.
+
+  Examples:
+    gotools config
+    gotools config GOTOOLS_JOBS
+    gotools config GOTOOLS_JOBS 4
+    gotools config GOTOOLS_STRATEGY=module

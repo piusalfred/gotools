@@ -1,0 +1,8 @@
+Usage: gotools exec <name> [args]
+
+  Run a managed tool with the given arguments. The tool name must match a name
+  in 'gotools list'. If you installed a tool with an alias, use that alias here.
+
+  Examples:
+    gotools exec gofumpt -w -extra .
+    gotools exec golangci-lint run ./...

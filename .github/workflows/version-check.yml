@@ -21,17 +21,17 @@
 name: Version Guard
 on:
     # Only gate PRs intended for main — merging to main is the release step
-    # that requires a VERSION bump in gotools.sh. PRs targeting other
+    # that requires a VERSION bump in version.txt. PRs targeting other
     # branches (e.g. dev) must not run this check.
     pull_request:
         branches: [main]
         types: [opened, synchronize, reopened, ready_for_review]
-        paths: ["gotools.sh"]
+        paths: ["internal/**", "cmd/**", "go.mod", "install.sh", "!**/*_test.go"]
     # Direct pushes to main must bump as well — nothing reaches main with a
     # stale VERSION, no matter how it got there.
     push:
         branches: [main]
-        paths: ["gotools.sh"]
+        paths: ["internal/**", "cmd/**", "go.mod", "install.sh", "!**/*_test.go"]
 
 jobs:
     check-version:

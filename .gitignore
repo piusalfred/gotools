@@ -1,6 +1,14 @@
 .idea
 .rumdl_cache
 .claude
-./bin/gotools
+/bin/
+/gotools
+/dist/
+coverage.out
 .gotools_trace.log
-gotools
+.DS_Store
+gotoolstest/
+.delta
+
+# The project lock: it only holds a pid and changes on every run.
+.gotools.flock

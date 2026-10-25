@@ -1,0 +1,43 @@
+🧰 Go Tool Manager (Version: v9.9.9)
+
+Usage: gotools <command> [options]
+       <go install command> | gotools     (pipe mode)
+
+Commands:
+  init                                     Bootstrap the project and adopt tools already declared in the root go.mod.
+  install [name] <pkg>                     Install a new tool.
+  sync                                     Sync tool state to match .gotools.json.
+  migrate <unified|split|module>           Migrate to a different strategy.
+  version                                  Show the gotools version.
+  info <tool-name>                         Show detailed information about a specific tool.
+  check                                    Verify all managed tools are runnable.
+  config [key [value]]                     View or edit .gotools.json configuration.
+  remove <name...>                         Remove specific tools.
+  rename <old> <new>                       Rename a tool (manifest + modfiles).
+  upgrade <name|all>                       Upgrade tools to @latest.
+  list                                     List tools, versions, and strategies.
+  exec <name> [args]                       Run a managed tool.
+  uninstall                                Remove gotools from your system.
+  purge                                    Remove all tools and the .gotools.json file.
+  doctor                                   Diagnose your environment.
+  self-update                              Update gotools to the latest version.
+  completion <bash|zsh|fish|pwsh|install>  Print or install shell completions.
+
+Strategies:
+  unified  One shared tools/go.mod with all tool directives.
+  split    Flat files: tools/<name>.mod and tools/<name>.sum per tool.
+  module   Dedicated subdirectories: tools/<name>/go.mod per tool.
+
+Examples:
+  gotools init --strategy=module --dir=tools
+
+Exit Codes:
+  0  Success            Everything worked
+  1  Generic failure    Something went wrong (catch-all)
+  2  Usage error        Bad flags, wrong args, invalid input
+  3  Network error      Proxy unreachable, DNS failure, timeout
+  4  Lock contention    Another gotools process holds the lock
+  5  Tool not found     Requested tool isn't installed
+  6  Offline required   Network needed but `--offline` set
+  7  Policy violation   Tool banned, version not pinned, vuln found
+  8  Environment error  Go missing/too old, bad manifest schema

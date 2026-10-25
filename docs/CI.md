@@ -19,13 +19,13 @@ steps:
       go-version-file: go.mod
 
   - name: Sync tools
-    run: gotools.sh sync
+    run: gotools sync
 
   - name: Run linter
-    run: gotools.sh exec golangci-lint run ./...
+    run: gotools exec golangci-lint run ./...
 
   - name: Check license headers
-    run: gotools.sh exec addlicense -check .
+    run: gotools exec addlicense -check .
 ```
 
 ## Version guard
@@ -53,7 +53,17 @@ serial and warns when `--jobs > 1` is requested explicitly.
 `sync --offline` (or `GOTOOLS_OFFLINE=1`) makes CI deterministic: it takes
 only the fingerprint fast path and refuses — with exit code 6 — the moment
 anything would need the network. `install` and `upgrade` refuse outright in
-offline mode.
+offline mode. `rename` refreshes the fingerprint itself (it moves the disk
+state to match the manifest), so a rename followed by `sync --offline` still
+fast-paths; other manifest-mutating commands require an online sync first.
+
+The fingerprint covers the tool list, the strategy, the Go version, the module
+prefix **and the content of every file in the tools directory** (modfiles and
+sums, not dot-files). A hand-edited `tools/*.mod`, a deleted `.sum` or a
+modfile nobody declared therefore sends `sync` past the fast path, and
+`sync --offline` refuses until an online `sync` has reconciled it. Commit the
+sums with the fingerprint, as `go.sum` is committed, or a fresh checkout will
+not match it.
 
 ```yaml
 # GitHub Actions — hermetic, deterministic
@@ -106,7 +116,7 @@ Slow connections or huge cold-cache tidies may need a higher value.
 
 ## Pre-commit Hook
 
-You can use `gotools.sh` with [pre-commit](https://pre-commit.com/)
+You can use `gotools` with [pre-commit](https://pre-commit.com/)
 to enforce checks before every commit:
 
 ```yaml
@@ -123,7 +133,7 @@ repos:
         name: addlicense
         language: system
         entry: >-
-          gotools.sh exec addlicense
+          gotools exec addlicense
           -check -l mit -c "Your Name" .
         pass_filenames: false
         always_run: true

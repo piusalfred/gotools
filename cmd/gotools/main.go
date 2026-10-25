@@ -18,77 +18,65 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// Command gotools manages Go build tools with `tool` directives, keeping
+// their dependencies out of your project's module graph.
 package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/piusalfred/gotools"
+	"github.com/piusalfred/gotools/internal/cli"
+	"github.com/piusalfred/gotools/internal/gocmd"
 )
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	if err := Run(ctx, os.Args); err != nil {
-		if ctx.Err() != nil {
-			code := 128 + int(syscall.SIGINT)
-
-			if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-				code = exitErr.ExitCode()
-			}
-
-			os.Exit(code)
-		}
-
-		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-
-		_, _ = fmt.Fprintf(os.Stderr, "gotools: %v\n", err)
-		os.Exit(1)
+	if exitCode := Run(os.Args...); exitCode != 0 {
+		os.Exit(exitCode)
 	}
 }
 
-// Run executes the embedded gotools.sh script in a child bash process.
-//
-// Signal handling: the child shares the parent's process group so that
-// interactive terminal I/O (e.g. read prompts in purge/uninstall) works
-// correctly. On context cancel the Cancel func sends SIGTERM to the
-// child process, giving it up to WaitDelay (3 s) to clean up before
-// Go escalates to SIGKILL.
-func Run(ctx context.Context, args []string) error {
-	execPath, err := os.Executable()
-	if err != nil {
-		execPath = "gotools"
-	}
-	script := []string{"-c", gotools.SCRIPT, execPath}
-	if len(args) > 1 {
-		script = append(script, args[1:]...)
-	}
+// Run runs gotools with args (args[0] is the program name) and returns the exit
+// code. This is the only place an error becomes output, and main the only place
+// the process exits.
+func Run(args ...string) int {
+	// The context is cancelled by the first SIGINT or SIGTERM, with the signal
+	// as its cause: a tool that is running gets that same signal, and the exit
+	// code says which one ended the run.
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
 
-	cmd := exec.CommandContext(ctx, "bash", script...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
-	cmd.WaitDelay = 3 * time.Second
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return nil
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+
+	defer signal.Stop(signals)
+
+	go func() {
+		select {
+		case sig := <-signals:
+			cancel(gocmd.SignalCause(sig))
+		case <-ctx.Done():
 		}
-		return cmd.Process.Signal(syscall.SIGTERM)
+	}()
+
+	app := &cli.App{Program: filepath.Base(args[0]), Version: gotools.Version()}
+
+	return signalExit(ctx, app.Report(app.Run(ctx, args[1:])))
+}
+
+// signalExit is the exit code of a run that a signal cut short: 128 plus the
+// signal's number, the shell convention (130 for SIGINT, 143 for SIGTERM). A
+// run that succeeded keeps its code even if a signal came after.
+func signalExit(ctx context.Context, code int) int {
+	if sig, ok := gocmd.SignalOf(ctx); ok && code != 0 {
+		if n, ok := sig.(syscall.Signal); ok {
+			return 128 + int(n)
+		}
 	}
 
-	if err = cmd.Run(); err != nil {
-		return fmt.Errorf("execution failed: %w", err)
-	}
-
-	return nil
+	return code
 }

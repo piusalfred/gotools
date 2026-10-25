@@ -1,6 +1,6 @@
 module github.com/piusalfred/gotools/tools/gci
 
-go 1.26
+go 1.27
 
 tool github.com/daixiang0/gci
 
