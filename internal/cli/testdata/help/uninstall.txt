@@ -1,0 +1,10 @@
+Usage: gotools uninstall [options]
+
+  Remove gotools itself from your system.
+
+  Examples:
+    gotools uninstall
+    gotools uninstall --dry-run
+
+  Options:
+    --dry-run  Show what would be removed without deleting

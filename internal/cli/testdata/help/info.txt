@@ -1,0 +1,15 @@
+Usage: gotools info [options] <tool-name>
+
+  Show detailed information about a specific tool.
+
+  With --format=json the output is a JSON object that includes a "runnable" flag
+  (stable for scripting/CI).
+
+  Examples:
+    gotools info goimports
+    gotools info goimports --json
+
+  Options:
+    --format <string>  Output format: json or text (the default)
+    --json             Alias for --format=json
+    --text             Alias for --format=text

@@ -1,0 +1,19 @@
+Usage: gotools self-update [options]
+
+  Aliases: self-upgrade
+
+  Update gotools to the latest release from GitHub. Verifies the release SHA-256
+  checksum before installing. The previous version is kept as a .old backup
+  until the new one passes a 'version' self-check, and restored automatically if
+  it does not.
+
+  When a newer release is found, it asks before installing. Pass --yes to skip
+  the question, as a script must: with no answer on stdin the update is
+  cancelled.
+
+  Examples:
+    gotools self-update
+    gotools self-update --yes
+
+  Options:
+    --yes  Install without asking for confirmation

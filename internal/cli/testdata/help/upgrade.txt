@@ -1,0 +1,14 @@
+Usage: gotools upgrade [options] <name|all>
+
+  Aliases: update
+
+  Upgrade tools to their latest versions.
+
+  Examples:
+    gotools upgrade goimports
+    gotools upgrade all
+    gotools upgrade all --dry-run
+
+  Options:
+    --dry-run  Show what would be upgraded without making changes
+    --offline  Refuse to upgrade (needs the network), exit 6

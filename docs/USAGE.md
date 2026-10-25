@@ -3,7 +3,7 @@
 
 # Usage
 
-Everything you can do with `gotools.sh`, from the command reference to
+Everything you can do with `gotools`, from the command reference to
 examples, diagnostics, shell completions, and exit codes.
 
 Related: [Strategies](STRATEGIES.md) · [Migration](MIGRATION.md) ·
@@ -36,27 +36,51 @@ for physical isolation. For most projects, **`split`**
 (the default) strikes the best balance of simplicity and
 safety.
 
+### Module verification
+
+Module integrity is the Go toolchain's job, and by default it is strong: the
+checksum database catches a tampered first download, and a committed `go.sum`
+catches every later one. gotools never sets `GOSUMDB`, `GOPRIVATE`,
+`GONOSUMDB` or `GOINSECURE` itself.
+
+If your environment weakens those, `install` and `upgrade` now say so:
+
+```text
+⚠️  GOSUMDB=off — downloaded modules are NOT verified against the Go checksum database.
+```
+
+`GOPRIVATE`/`GONOSUMDB` and `GOINSECURE` warn only when they actually cover
+the module being installed, so a corporate `GOPRIVATE` stays quiet for public
+tools. The warnings are advisory — they never change an exit code and never
+block an install. See [SECURITY.md](SECURITY.md) for the full trust model.
+
+Installing a tool never runs it: `install` verifies with `go tool -n`, which
+builds the tool without executing it. Tools run only via `exec`, `check` and
+`doctor`.
+
 ## Commands
 
 | Command | Description |
 | :--- | :--- |
 | `init [flags]` | Bootstrap the project. |
-| `install [name] <pkg>` | Install a new tool. |
-| `<stdin> \| gotools.sh` | Pipe `go install <pkg>@<ver>` lines from stdin. |
+| `install [name] <pkg>` | Install a new tool. One tool gets one name: if the package is already managed under another name at the same version (any version in `unified`), install refuses and points at `rename`; at a different version in `split`/`module` it is a separate tool, and on a terminal install asks whether to add it, upgrade the existing one, rename it, or skip. Same name + package refuses without `--force`. |
+| `<stdin> \| gotools` | With no command, install the tools listed on stdin: `go install <pkg>@<ver>`, `<pkg>@<ver>` or `<name> <pkg>@<ver>` per line (blank lines and `#` comments skipped). Every line is checked before anything installs. Works with pipes, heredocs and `< file`. |
 | `exec <name> [args]` | Run a managed tool. |
-| `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch; skips work via a state fingerprint when nothing changed. |
+| `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch; skips work via a state fingerprint (tool list, settings and the content of the tool files) when nothing changed. |
 | `upgrade <name\|all>` | Upgrade tools to `@latest`. |
 | `list [--format=json\|text]` | List all managed tools with Go version and modfile path. |
 | `info <name> [--format=json\|text]` | Show detailed information about a specific tool. |
+| `check` | Verify every managed tool is runnable: each is launched with `--version`, `--help` or `version`, and a tool that accepts none of them still passes if go can build it. Exits 5 when one is not runnable. |
 | `doctor [--format=json\|text] [--offline]` | Diagnose the environment: Go, proxy, config, tools, lock, integrity, disk. Read-only, always exits 0. |
 | `remove <name...>` | Remove specific tools. |
+| `rename <old-name> <new-name>` | Rename a tool: moves its modfiles (split) or module directory (module) and rewrites the module line. Refuses with the unified strategy (directives carry the names — migrate to split/module first). |
 | `migrate <strategy>` | Migrate to a different strategy. |
 | `config [key [value]]` | View or edit config. |
-| `purge` | Remove all tools and config. |
-| `uninstall` | Remove the script itself. |
-| `version [--format=json\|text]` | Print the script version. |
-| `self-update` | Update to the latest release (SHA-256 checksum verified). |
-| `completion [shell\|install]` | Generate or install shell completions (bash/zsh/fish). |
+| `purge [--restore]` | Remove all tools and the manifest (nothing happens without a `.gotools.json`); `--restore` first adds the tools back to your `go.mod`. |
+| `uninstall [--dry-run]` | Remove the gotools executable itself. |
+| `version [--format=json\|text]` | Print the version. |
+| `self-update` | Update to the latest release (SHA-256 checksum verified). Asks first; `--yes` skips the question. |
+| `completion [shell\|install]` | Generate or install shell completions (bash/zsh/fish/pwsh). |
 
 ### `init` Flags
 
@@ -77,10 +101,14 @@ installed into gotools at its **pinned version**, the directives are then
 stripped, and `go mod tidy` prunes the tool-only dependencies. The root
 `go.mod` is not touched until every tool has been installed successfully —
 a failed migration leaves the project exactly as it was and a re-run resumes
-where it left off.
+where it left off. That includes the tidy: if `go mod tidy` fails, the root
+`go.mod` and `go.sum` are put back, so the next `init` finds the directives and
+migrates them again. A tool that is already managed keeps the manifest's
+version; when the root `go.mod` pinned another one, `init` says so on stderr
+before the pin is stripped, so a newer pin is not lost without notice.
 
 ```text
-$ gotools.sh init
+$ gotools init
 🔍 Found 2 tool(s) in go.mod:
      goimports  golang.org/x/tools/cmd/goimports@v0.30.0
      gci        github.com/daixiang0/gci@v2.11.4
@@ -93,15 +121,40 @@ $ gotools.sh init
 To bootstrap without touching `go.mod`, pass `--no-migrate`. To preview the
 whole plan, pass `--dry-run`.
 
-The reverse direction exists too: `gotools.sh purge --restore` adds every
+The reverse direction exists too: `gotools purge --restore` adds every
 managed tool back to the root `go.mod` at its pinned version
 (`go get -tool pkg@version`) and then removes the tools directory and the
-manifest — leaving the project exactly as Go's built-in tool management
-would have it.
+manifest — leaving the project as Go's built-in tool management would have it.
+
+The tools come back at exactly their pinned versions, but Go works out the rest
+of their dependency graph again by its own rules. The indirect `require` lines
+that end up in your `go.mod` can therefore differ from the ones the tools had in
+their own modfiles, some raised and some lowered. Review the `go.mod` diff
+before you commit it.
+
+### Good to know
+
+- **`sync` takes the disk as it finds it.** A tool whose modfile is in the tools
+  directory but not in the manifest is added to the manifest (`✚ … discovered
+  from disk`). Deleting a tool's entry from `.gotools.json` by hand does not
+  remove it: the next `sync` finds the modfile and adds the tool back. Use
+  `gotools remove <name>`, which removes both.
+- **`gotools config KEY=VALUE` creates the manifest** when there is none, in the
+  current directory, and says `Created .gotools.json`. Run `init` first if you
+  want the rest of the setup.
+- **There is no `--verbose` flag.** Verbose output is the `verbose` setting:
+  `GOTOOLS_VERBOSE=1`, or `gotools config GOTOOLS_VERBOSE true`.
+- **The environment steers one run and is never written.** `GOTOOLS_DIR`,
+  `GOTOOLS_STRATEGY` and the other `GOTOOLS_*` variables apply to the command
+  you run, including `init`, but only a flag or `gotools config` changes the
+  manifest.
+- **A package that is not a `main` package is refused.** `install` builds the
+  tool with `go tool -n` and rolls back when it cannot be built or is not a
+  command, so a library path does not leave a tool that can never run.
 
 ### doctor — environment diagnostics
 
-`gotools.sh doctor` runs seven read-only checks and prints a report:
+`gotools doctor` runs seven read-only checks and prints a report:
 
 1. **Go installation** — installed, in `PATH`, version ≥ 1.24
 2. **Module proxy** — `GOPROXY` value + a 5-second `@latest` reachability probe (failure is a warning, never an error)
@@ -112,7 +165,7 @@ would have it.
 7. **Disk usage** — total size of the tools directory (informational)
 
 ```text
-$ gotools.sh doctor
+$ gotools doctor
 🔍 gotools doctor — checking your environment...
   ✅ All checks passed. Your environment is healthy.
 ```
@@ -126,7 +179,7 @@ fail fast (`GOPROXY=off`) instead of touching the network.
 For CI pre-flight, parse the JSON instead of exit codes:
 
 ```bash
-gotools.sh doctor --format=json | jq '.healthy'   # true/false
+gotools doctor --format=json | jq '.healthy'   # true/false
 ```
 
 ### Machine-readable output (`--format json`)
@@ -138,22 +191,56 @@ carries a `"schema_version": 1` field so automation can detect format
 changes. Invalid `--format=<x>` values exit 2.
 
 ```bash
-$ gotools.sh list --format=json
+$ gotools list --format=json
 {"schema_version":1,"strategy":"split","dir":"tools","go_version":"inherit","tools":[{"name":"goimports","source":"go","package":"golang.org/x/tools/cmd/goimports","version":"v0.30.0","go":"1.24"}]}
 
-$ gotools.sh info goimports --format=json
+$ gotools info goimports --format=json
 {"schema_version":1,"name":"goimports","source":"go","strategy":"split","go":"1.24","package":"golang.org/x/tools/cmd/goimports","version":"v0.30.0","runnable":true}
 
-$ gotools.sh doctor --format=json | jq '.checks[] | select(.name | startswith("tools.")) | select(.status != "pass")'
+$ gotools doctor --format=json | jq '.checks[] | select(.name | startswith("tools.")) | select(.status != "pass")'
+```
+
+An unknown tool is not a text error here: `info <name> --json` prints one JSON
+document with an `error` field on **stdout** and exits 5, so a script that reads
+stdout always gets a document to parse, and checks the exit code for the failure.
+
+```bash
+$ gotools info nope --json; echo $?
+{"schema_version":1,"error":"tool not found: nope"}
+5
 ```
 
 > **Note:** `list --json` previously emitted a bare array. It now emits an
 > object with top-level metadata and a `tools` array — update any scripts
 > written against the old shape.
 
+### `exec` — where the tool runs
+
+`gotools exec <tool> <args>` runs the tool in the directory you ran it from, in
+every strategy, the way `go tool <tool>` does. From a package directory,
+`gotools exec gofumpt -l .` looks at that package and nothing else, and
+relative paths and `./...` mean what they mean in a shell there.
+
+That is what makes it usable from a `go:generate` directive, which `go generate`
+runs in the directory of the file that holds it:
+
+```go
+//go:generate gotools exec mockgen -source=$GOFILE -destination=mock_$GOFILE
+```
+
+The tool is built in the tools directory, so its dependencies stay apart from
+your module, and then run where you are. This works without a `go.mod` in the
+project root too, with the `module` and `unified` strategies.
+
+> **Changed in v0.7.0.** Earlier versions ran the tool in the project root
+> (`split`) or in the tools directory (`unified`, `module`), wherever you started.
+> A script that ran `gotools exec <tool> .` from a subdirectory and relied on the
+> project-wide scope should pass the path it means, such as `$(git rev-parse
+> --show-toplevel)` or `./...` from the root.
+
 ### Tracing (`GOTOOLS_TRACE`)
 
-`gotools.sh exec` can log every tool invocation as a JSON Lines record.
+`gotools exec` can log every tool invocation as a JSON Lines record.
 Opt in per run with the env var, or per project via the manifest
 `"trace": true` setting:
 
@@ -181,59 +268,59 @@ Only `exec` is traced; `trace: false` in the manifest keeps it opt-in.
 
 ```bash
 # Split strategy (default)
-gotools.sh init
+gotools init
 
 # Module strategy (safest)
-gotools.sh init --strategy=module
+gotools init --strategy=module
 
 # Unified strategy
-gotools.sh init --strategy=unified
+gotools init --strategy=unified
 
 # Custom directory and explicit Go version
-gotools.sh init --strategy=split \
+gotools init --strategy=split \
   --dir=.build-tools --go=1.24
 
 # Explicit module prefix override
-gotools.sh init --prefix=github.com/myorg/myrepo
+gotools init --prefix=github.com/myorg/myrepo
 ```
 
 **Install tools:**
 
 ```bash
 # Inferred name from package path
-gotools.sh install github.com/google/addlicense
+gotools install github.com/google/addlicense
 
 # Explicit name
-gotools.sh install task \
+gotools install task \
   github.com/go-task/task/v3/cmd/task
 
 # Pin to a specific version
-gotools.sh install \
+gotools install \
   github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 ```
 
 **Execute a tool:**
 
 ```bash
-gotools.sh exec addlicense -check .
-gotools.sh exec golangci-lint run ./...
+gotools exec addlicense -check .
+gotools exec golangci-lint run ./...
 ```
 
 **Upgrade tools:**
 
 ```bash
 # Upgrade all tools to their latest versions
-gotools.sh upgrade all
+gotools upgrade all
 
 # Upgrade a single tool
-gotools.sh upgrade addlicense
+gotools upgrade addlicense
 ```
 
 **Sync tool Go versions:**
 
 ```bash
 # After updating your root go.mod
-gotools.sh sync
+gotools sync
 ```
 
 If `sync` detects that the directory structure doesn't
@@ -248,14 +335,14 @@ match the strategy in `.gotools.json`, it auto-migrates:
 
 ```bash
 # Show all config
-gotools.sh config
+gotools config
 
 # Get a single value
-gotools.sh config GOTOOLS_STRATEGY
+gotools config GOTOOLS_STRATEGY
 
 # Set a value
-gotools.sh config GOTOOLS_STRATEGY module
-gotools.sh config GOTOOLS_MODULE_PREFIX \
+gotools config GOTOOLS_STRATEGY module
+gotools config GOTOOLS_MODULE_PREFIX \
   github.com/myorg/myrepo
 ```
 
@@ -263,14 +350,14 @@ gotools.sh config GOTOOLS_MODULE_PREFIX \
 
 ```bash
 # List all managed tools (shows Go version and modfile path)
-gotools.sh list
+gotools list
 #   TOOL               STRATEGY   GO       MODFILE                        PACKAGE@VERSION
 #   ----               --------   --       -------                        ---------------
 #   addlicense         split      1.24     tools/addlicense.mod           github.com/google/addlicense@v1.2.0
 #   golangci-lint      split      1.24     tools/golangci-lint.mod        github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
 
 # Get detailed info about a specific tool
-gotools.sh info addlicense
+gotools info addlicense
 #   Tool:       addlicense
 #   Package:    github.com/google/addlicense
 #   Version:    v1.2.0
@@ -282,38 +369,53 @@ gotools.sh info addlicense
 **Version and self-update:**
 
 ```bash
-gotools.sh version
-gotools.sh self-update
+gotools version
+gotools self-update
 ```
 
-Before installing, `self-update` verifies the downloaded script against the
-SHA-256 checksum published in the release's `checksums-sha256.txt`. A
-mismatch deletes the download and refuses to install — the script is never
-replaced by an unverified file.
+`self-update` downloads the release binary for your OS and architecture and
+checks its SHA-256 against the `checksums-sha256.txt` published with the
+release. A mismatch deletes the download and refuses to install — the
+running binary is never replaced by an unverified file.
+
+A verified binary then has to run (`<candidate> version`) before it replaces
+anything. The current binary is copied to `gotools.old`, the new one is
+renamed over it atomically and run once more from its final location; if that
+fails the backup is restored and the update exits non-zero. The backup is
+removed only after the new binary proves it works.
+
+Only a strictly newer release is an update, so a build ahead of the latest
+release is left alone. `--dry-run` shows what would be downloaded;
+`--offline` (or `GOTOOLS_OFFLINE=1`) refuses with exit 6. If the binary's
+directory is not writable, `self-update` says so and points at
+`go install`.
+
+A checksum proves the download matches the published release. It does not
+prove who published it — see [SECURITY.md](SECURITY.md) for the trust model.
 
 ## Shell Completions
 
-`gotools.sh` can generate tab completions for bash, zsh, and fish.
+`gotools` can generate tab completions for bash, zsh, and fish.
 
 ### Generate (for manual sourcing)
 
 ```bash
-gotools.sh completion bash    # bash completion script
-gotools.sh completion zsh     # zsh completion script
-gotools.sh completion fish    # fish completion script
+gotools completion bash    # bash completion script
+gotools completion zsh     # zsh completion script
+gotools completion fish    # fish completion script
 ```
 
 These print the completion script to stdout. Manually source them with:
 
 ```bash
 # bash
-source <(gotools.sh completion bash)
+source <(gotools completion bash)
 
 # zsh
-source <(gotools.sh completion zsh)
+source <(gotools completion zsh)
 
 # fish
-gotools.sh completion fish | source
+gotools completion fish | source
 ```
 
 ### Auto-install
@@ -323,12 +425,13 @@ user location for your shell:
 
 ```bash
 # Auto-detect your shell from $SHELL
-gotools.sh completion install
+gotools completion install
 
 # Or specify explicitly
-gotools.sh completion install bash
-gotools.sh completion install zsh
-gotools.sh completion install fish
+gotools completion install bash
+gotools completion install zsh
+gotools completion install fish
+gotools completion install pwsh
 ```
 
 | Shell | Install path | Activation needed? |
@@ -336,16 +439,21 @@ gotools.sh completion install fish
 | bash | `~/.local/share/bash-completion/completions/gotools` | Add `source <path>` to `~/.bashrc` |
 | zsh | `~/.zsh/completions/_gotools` | Add `fpath=(~/.zsh/completions $fpath)` + `compinit` to `~/.zshrc` |
 | fish | `~/.config/fish/completions/gotools.fish` | None — auto-loaded on shell start |
+| pwsh | `~/.config/powershell/completions/gotools.ps1` (under `$XDG_CONFIG_HOME` when set) | Add `. <path>` to your PowerShell profile (`$PROFILE`) |
+
+If a different file is already there (say one you edited by hand), it is kept
+next to the new one with a `.bak` suffix before being replaced; running the
+command again with nothing to change leaves it alone.
 
 After activation, restart your shell or re-source your rc file. Tab
-completion will then work for all `gotools` and `gotools.sh` commands.
+completion will then work for all `gotools` commands.
 
 ## Cleanup
 
 **Remove specific tools:**
 
 ```bash
-gotools.sh remove golangci-lint mockgen
+gotools remove golangci-lint mockgen
 ```
 
 **Total purge (interactive, requires typing YES):**
@@ -358,14 +466,14 @@ exact `init` command that recreates the project's
 configuration:
 
 ```bash
-gotools.sh purge
-gotools.sh purge --restore   # put tools back into go.mod, then wipe
+gotools purge
+gotools purge --restore   # put tools back into go.mod, then wipe
 ```
 
-**Uninstall gotools.sh itself (interactive):**
+**Uninstall gotools itself (interactive):**
 
 ```bash
-gotools.sh uninstall
+gotools uninstall
 ```
 
 ## Exit Codes
@@ -380,12 +488,17 @@ intelligently instead of treating every failure the same:
 | 2    | Usage error | Bad flags, wrong args, invalid input | Fail the build (no retry) |
 | 3    | Network error | Proxy unreachable, DNS failure, timeout | Retry with backoff |
 | 4    | Lock contention | Another gotools process holds the lock | Wait and retry |
-| 5    | Tool not found | Requested tool isn't installed | Run `gotools.sh sync` and retry |
-| 6    | Offline required | Network needed but `--offline` set | Run `gotools.sh sync` locally |
+| 5    | Tool not found | Requested tool isn't installed | Run `gotools sync` and retry |
+| 6    | Offline required | Network needed but `--offline` set | Run `gotools sync` locally |
 | 7    | Policy violation | Tool banned, version not pinned, vuln found | Block merge |
 | 8    | Environment error | Go missing/too old, bad manifest schema | Fix environment |
 
 Code 7 (policy) is reserved for future releases.
+
+`exec` exits with the tool's own exit code. A run that a signal cut short exits
+with 128 plus the signal number, the shell convention: 130 after SIGINT
+(Ctrl-C), 143 after SIGTERM. A signal sent to gotools is passed on to the tool
+it is running.
 
 ```yaml
 # GitHub Actions — react differently per failure mode

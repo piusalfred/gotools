@@ -1,0 +1,17 @@
+Usage: gotools purge [options]
+
+  Remove all tools and the .gotools.json manifest. With --restore, the managed
+  tools are added back to the root go.mod at their pinned versions (go get
+  -tool) before the wipe, and the init command that recreates this project is
+  printed.
+
+  Interactive: requires typing YES to confirm.
+
+  Examples:
+    gotools purge
+    gotools purge --restore
+    gotools purge --restore --dry-run
+
+  Options:
+    --restore  Put the managed tools back into the root go.mod
+    --dry-run  Show what would be removed without deleting

@@ -18,13 +18,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// Package gotools manages Go build tools with `tool` directives. The
+// program is cmd/gotools; the implementation lives in the packages under
+// internal (one self-standing package per concern, and internal/command with
+// one file per command).
+//
+// The version lives in version.txt at the module root, the one place the
+// Makefile, the Version Guard workflow and the release workflow read it from,
+// and is embedded in the binary.
 package gotools
 
 import (
 	_ "embed"
+	"strings"
 )
 
-//go:generate bash build/bundle.sh
+//go:embed version.txt
+var version string
 
-//go:embed gotools.sh
-var SCRIPT string
+// Version is the gotools version, such as "v0.7.0", from version.txt.
+func Version() string { return strings.TrimSpace(version) }

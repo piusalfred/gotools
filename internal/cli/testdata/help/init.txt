@@ -1,0 +1,23 @@
+Usage: gotools init [options]
+
+  Bootstrap the project with a .gotools.json manifest. If the root go.mod
+  declares tools via 'go get -tool', they are adopted automatically (installed
+  into gotools, directives stripped, go.mod tidied) unless --no-migrate is
+  given.
+
+  Running init again keeps what the manifest already says: a value is changed
+  only by its flag. The environment steers one run and is never written to the
+  manifest.
+
+  Examples:
+    gotools init
+    gotools init --strategy=module --dir=.tools
+    gotools init --go=1.24 --prefix=github.com/me/repo
+
+  Options:
+    --strategy <string>  Isolation strategy: unified, split or module (default: "split")
+    --dir <string>       Tools directory (default: "tools")
+    --go <string>        Go version for tools, or inherit (default: "inherit")
+    --prefix <string>    Module path prefix (default: auto from go.mod)
+    --no-migrate         Leave the root go.mod untouched
+    --dry-run            Print the plan without writing anything

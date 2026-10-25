@@ -1,0 +1,8 @@
+Usage: gotools check
+
+  Verify all managed tools are installed and runnable. Runs each tool with
+  --version, --help, or version and reports pass/fail. Exits 5 when any tool is
+  not runnable.
+
+  Examples:
+    gotools check

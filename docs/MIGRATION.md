@@ -12,13 +12,13 @@ Related: [Strategies](STRATEGIES.md) · [Usage](USAGE.md)
 
 ```bash
 # Migrate from any strategy to module
-gotools.sh migrate module
+gotools migrate module
 
 # Migrate to split
-gotools.sh migrate split
+gotools migrate split
 
 # Migrate to unified
-gotools.sh migrate unified
+gotools migrate unified
 ```
 
 The migration process:

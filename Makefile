@@ -1,7 +1,11 @@
 # Copyright (c) 2026 Pius Alfred
 # License: MIT
 
-GOTOOLS       := ./gotools.sh
+# gotools builds and lints itself with the tools it manages (tools/*.mod).
+# They run through the binary built from this checkout, so a change to gotools
+# is exercised by its own Makefile.
+BIN           := bin/gotools
+GOTOOLS       := ./$(BIN)
 ADDLICENSE    := $(GOTOOLS) exec addlicense
 GOFUMPT       := $(GOTOOLS) exec gofumpt
 GCI           := $(GOTOOLS) exec gci
@@ -20,90 +24,110 @@ LICENSE_IGNORE := \
 	-ignore ".gitignore" \
 	-ignore "go.work"    \
 	-ignore ".rumdl.toml" \
-	-ignore ".claude/**"
+	-ignore ".claude/**" \
+	-ignore "bin/**"     \
+	-ignore ".delta/**"  \
+	-ignore "gotoolstest/**"
+
+GO := GOWORK=off go
+
+# The tree walkers (gofumpt/gci) must skip gotoolstest/: it carries a large
+# read-only assessment archive (module-cache copies) that makes them fail.
+# find keeps untracked .go files included, unlike a git ls-files list.
+GO_SOURCES := $$(find . -name '*.go' -not -path './gotoolstest/*' -not -path './test/testdata/*' -not -path './.delta/*' -not -path './.claude/*')
 
 GCI_SECTIONS := \
 	-s standard \
 	-s default \
 	-s 'prefix($(MODULE))'
 
-.PHONY: fmt fmt-license fmt-imports fmt-go fmt-mod build clean install help test test-unit test-integration \
+# The version lives in one place: version.txt at the repository root. Older
+# bases kept it as `var Version = "..."` in Go; the gate still reads those.
+VERSION_FILE := version.txt
+LEGACY_VERSION_FILES := internal/version/version.go lib/config.go
+VERSION_GREP := grep -E '^var Version = ' | cut -d'"' -f2
+
+.PHONY: all build install clean help \
+        fmt fix-go fmt-license fmt-imports fmt-go fmt-mod fmt-md \
+        test test-race test-integration cover \
         lint lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt \
-        version-check get-version set-version govulncheck check bundle check-bundle generate sync-main
+        govulncheck check version-check get-version set-version sync-main
 
+all: build
 
-fmt: fmt-license fmt-imports fmt-go fmt-mod fmt-md
+help:
+	@echo "build             build $(BIN)"
+	@echo "install           go install ./cmd/gotools"
+	@echo "test              unit tests (fake go, offline)"
+	@echo "test-race         unit tests with the race detector"
+	@echo "test-integration  real go and network: -tags integration ./test/..."
+	@echo "lint              vet, staticcheck, license, imports, gofumpt, markdown, shellcheck"
+	@echo "fmt               go fix, license headers, imports, gofumpt, go mod tidy, markdown"
+	@echo "check             lint + test (what CI's static-analysis job runs)"
+	@echo "get-version / set-version VER=vX.Y.Z / version-check"
 
-fmt-license:
+# Rebuilt whenever a non-test Go source changes.
+$(BIN): $(shell find cmd internal -name '*.go' -not -name '*_test.go') go.mod go.sum
+	@mkdir -p bin
+	go build -trimpath -ldflags="-s -w" -o $(BIN) ./cmd/gotools
+
+build: $(BIN)
+
+install:
+	go install -trimpath -ldflags="-s -w" ./cmd/gotools
+
+clean:
+	rm -rf bin dist
+
+# fix-go runs first: go fix rewrites code that gci and gofumpt then format.
+fmt: fix-go fmt-license fmt-imports fmt-go fmt-mod fmt-md
+
+fmt-license: $(BIN)
 	$(ADDLICENSE) -l $(LICENSE_TYPE) -c "$(LICENSE_OWNER)" $(LICENSE_IGNORE) .
 
-fmt-imports:
-	$(GCI) write $(GCI_SECTIONS) . </dev/null
+fmt-imports: $(BIN)
+	$(GCI) write $(GCI_SECTIONS) $(GO_SOURCES) </dev/null
 
-fmt-go:
-	$(GOFUMPT) -w -extra .
+fmt-go: $(BIN)
+	$(GOFUMPT) -w -extra $(GO_SOURCES)
 
 fmt-mod:
-	go mod tidy
+	$(GO) mod tidy
 
 fmt-md:
 	$(RUMDL) fmt *.md
 
-build: generate
-	go build -trimpath -ldflags="-s -w" -o gotools ./cmd/gotools
+# go fix takes packages, not files; ./... stays inside this module (gotoolstest/
+# is its own module) and the tag brings in the integration tests.
+fix-go:
+	go fix -tags integration ./...
 
-clean:
-	rm -f gotools
-	rm -rf dist
+test:
+	$(GO) test -timeout 30m -count=1 ./...
 
-install: generate
-	go install -trimpath -ldflags="-s -w" ./cmd/gotools
+test-race:
+	$(GO) test -race -timeout 30m -count=1 ./...
 
-test: test-unit test-integration
+# Needs network access and a Go toolchain; takes a few minutes.
+test-integration:
+	@# pipefail: a failing test must fail the target even though tee ends the pipe.
+	@bash -o pipefail -c '$(GO) test -tags integration -timeout 30m -count=1 ./test/... | tee /tmp/test-integration.log'
 
-test-unit: build
-	bash test/unit/run_all.sh
+cover:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out | tail -n 1
 
-test-integration: build
-	cd test && bash test.sh
-
-gotools: generate
-	@echo "Building gotools into bin/gotools"
-	@mkdir -p bin
-	go build -trimpath -ldflags="-s -w" -o bin/gotools ./cmd/gotools
-
-# Run the //go:generate directive in gotools.go (regenerates gotools.sh).
-generate:
-	@echo "Generating gotools.sh (go:generate)"
-	@go generate ./...
-
-# ---- modular source (lib/) -> single distributable (gotools.sh) ----
-# gotools.sh is consumed as one file by install.sh, self-update, the release
-# workflow, and the Go embed — edit lib/, then run `make bundle`.
-bundle:
-	@echo "Bundling gotools.sh from lib/"
-	@bash build/bundle.sh
-
-# Fail when the committed gotools.sh is out of sync with lib/.
-check-bundle: bundle
-	@if git diff --quiet -- gotools.sh; then \
-		echo "✅ gotools.sh is in sync with lib/"; \
-	else \
-		echo "❌ gotools.sh is out of sync with lib/. Run: make bundle" >&2; \
-		exit 1; \
-	fi
-
-govulncheck:
+govulncheck: $(BIN)
 	@echo "Running govulncheck"
 	$(GOVULNCHECK) ./...
 
-# ---- lint targets (mirror pre-commit hooks) ----
 lint: lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt
 
+# install.sh is the only shell script left.
 lint-shellcheck:
 	@echo "Running shellcheck"
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		$(SHELLCHECK) --severity=warning gotools.sh install.sh test/test.sh; \
+		$(SHELLCHECK) --severity=warning install.sh; \
 	else \
 		echo "  shellcheck not found, using pre-commit..."; \
 		pre-commit run shellcheck --all-files; \
@@ -112,8 +136,9 @@ lint-shellcheck:
 lint-go-vet:
 	@echo "Running go vet"
 	go vet ./...
+	go vet -tags integration ./test/...
 
-lint-staticcheck:
+lint-staticcheck: $(BIN)
 	@echo "Running staticcheck"
 	$(STATICCHECK) ./...
 
@@ -126,33 +151,47 @@ lint-rumdl:
 		pre-commit run rumdl --all-files; \
 	fi
 
-lint-license:
+lint-license: $(BIN)
 	@echo "Checking license headers"
 	$(ADDLICENSE) -check -l $(LICENSE_TYPE) -c "$(LICENSE_OWNER)" $(LICENSE_IGNORE) .
 
-lint-imports:
+lint-imports: $(BIN)
 	@echo "Checking import ordering"
-	$(GCI) diff $(GCI_SECTIONS) . </dev/null
+	$(GCI) diff $(GCI_SECTIONS) $(GO_SOURCES) </dev/null
 
-lint-go-fmt:
+lint-go-fmt: $(BIN)
 	@echo "Checking Go formatting"
-	@diff=$$($(GOFUMPT) -d -extra .); if [ -n "$$diff" ]; then printf "%s\n" "$$diff"; exit 1; fi
+	@diff=$$($(GOFUMPT) -d -extra $(GO_SOURCES)); if [ -n "$$diff" ]; then printf "%s\n" "$$diff"; exit 1; fi
 
-# ---- CI-equivalent: lint + test (mirrors static-analysis job) ----
-check: lint check-bundle test-unit
+check: lint test
 	@echo "✅ All checks passed"
 
-# ---- version management ----
+get-version:
+	@tr -d '[:space:]' < $(VERSION_FILE)
+
+# Fails unless the version was raised against BASE (default origin/main). The
+# previous value is read from version.txt, else from where an older base kept it
+# (the Go files in LEGACY_VERSION_FILES, then the old bundled gotools.sh). A base
+# with no version at all is the first release: nothing to compare.
 version-check:
-	@new=$$(grep '^VERSION=' gotools.sh | cut -d'"' -f2); \
+	@new=$$(tr -d '[:space:]' < $(VERSION_FILE)); \
 	base=$${BASE:-origin/main}; \
 	if git merge-base --is-ancestor HEAD $$base 2>/dev/null; then \
 		old_ref="$$base~1"; \
 	else \
 		old_ref="$$base"; \
 	fi; \
-	old=$$(git show $$old_ref:gotools.sh 2>/dev/null | grep '^VERSION=' | cut -d'"' -f2); \
+	old=$$(git show $$old_ref:$(VERSION_FILE) 2>/dev/null | tr -d '[:space:]'); \
+	for f in $(LEGACY_VERSION_FILES); do \
+		if [ -z "$$old" ]; then old=$$(git show $$old_ref:$$f 2>/dev/null | $(VERSION_GREP)); fi; \
+	done; \
+	if [ -z "$$old" ]; then \
+		old=$$(git show $$old_ref:gotools.sh 2>/dev/null | grep '^VERSION=' | cut -d'"' -f2); \
+	fi; \
 	if [ -z "$$old" ]; then echo "No previous version to compare (ref: $$old_ref)."; exit 0; fi; \
+	if ! printf '%s' "$$new" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$$'; then \
+		echo "❌ $(VERSION_FILE) must hold a version like v1.2.3, not '$$new'." >&2; exit 1; \
+	fi; \
 	if [ "$$new" = "$$old" ]; then \
 		echo "❌ VERSION ($$new) was not incremented (vs $$old_ref)." >&2; exit 1; \
 	fi; \
@@ -162,13 +201,10 @@ version-check:
 	fi; \
 	echo "✅ Version $$old → $$new (vs $$old_ref)"
 
-get-version:
-	@grep '^VERSION=' gotools.sh | cut -d'"' -f2
-
-set-version: bundle
+set-version:
 	@if [ -z "$(VER)" ]; then echo "Usage: make set-version VER=vX.Y.Z" >&2; exit 1; fi
-	@sed -i '' 's/^VERSION=.*/VERSION="$(VER)"/' lib/config.sh
-	@$(MAKE) bundle
+	@if ! printf '%s' "$(VER)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$$'; then echo "VER must look like v1.2.3, not '$(VER)'" >&2; exit 1; fi
+	@printf '%s\n' "$(VER)" > $(VERSION_FILE)
 	@echo "Version set to $(VER)"
 
 sync-main:
@@ -180,4 +216,3 @@ sync-main:
 	git merge dev --ff-only
 	git push origin main
 	@echo "✅ main synced with dev"
-

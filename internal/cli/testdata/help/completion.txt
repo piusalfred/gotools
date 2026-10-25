@@ -1,0 +1,15 @@
+Usage: gotools completion <bash|zsh|fish|pwsh|install>
+
+  Print the completion script of a shell, or install it where the shell loads it
+  from. The scripts ask gotools for the commands, flags and tool names as you
+  type, so they never go stale.
+
+    source <(gotools completion bash)    # bash: put it in ~/.bashrc
+    source <(gotools completion zsh)     # zsh: put it in ~/.zshrc
+    gotools completion fish | source     # fish
+    gotools completion install           # write it where the shell loads it from
+
+  Examples:
+    gotools completion bash
+    gotools completion install
+    gotools completion install zsh

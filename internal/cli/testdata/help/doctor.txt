@@ -1,0 +1,19 @@
+Usage: gotools doctor [options]
+
+  Diagnose your environment: Go installation, module proxy, .gotools.json
+  configuration, managed tools, lock file, module integrity, and disk usage.
+
+  Read-only: never modifies tools, the manifest, or the lock. Always exits 0
+  (diagnostics are not failures) — invalid flags still exit 2. For CI, gate on
+  'doctor --format=json' and the "healthy"/"issues" fields.
+
+  Examples:
+    gotools doctor
+    gotools doctor --json
+    gotools doctor --offline
+
+  Options:
+    --format <string>  Output format: json or text (the default)
+    --json             Alias for --format=json
+    --text             Alias for --format=text
+    --offline          Skip the proxy reachability check; probes fail fast instead of touching the network

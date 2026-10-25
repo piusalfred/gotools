@@ -1,0 +1,15 @@
+Usage: gotools list [options]
+
+  List all managed tools with their versions and strategy info.
+
+  With --format=json the output is a JSON object with metadata and a "tools"
+  array (stable for scripting/CI).
+
+  Examples:
+    gotools list
+    gotools list --json
+
+  Options:
+    --format <string>  Output format: json or text (the default)
+    --json             Alias for --format=json
+    --text             Alias for --format=text
