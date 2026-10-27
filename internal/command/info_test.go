@@ -60,13 +60,13 @@ func infoFixture(t *testing.T, st string) string {
 	return dir
 }
 
-func infoIn(t *testing.T, dir string, g *fakeGo, args ...string) (out, errs string, err error) {
+func infoIn(t *testing.T, dir string, g *fakeGo, args ...string) (string, string, error) {
 	t.Helper()
 
 	var o, e bytes.Buffer
 
 	c := &command.Context{Stdout: &o, Stderr: &e, Program: "gotools", WorkDir: dir, Go: g}
-	err = run(command.NewInfo(), c, args...)
+	err := run(command.NewInfo(), c, args...)
 
 	return o.String(), e.String(), err
 }
@@ -170,7 +170,11 @@ func TestInfoUsageErrors(t *testing.T) {
 
 func TestInfoWarnsAboutManifestProblems(t *testing.T) {
 	dir := infoFixture(t, "split")
-	writeFile(t, filepath.Join(dir, config.ManifestFile), `{"schema_version":1,"strategy":"split","dir":"tools","tools":{"goimports":{"source":"go","package":"`+imports+`","version":"v0.30.0"}},"extra":1}`)
+	writeFile(
+		t,
+		filepath.Join(dir, config.ManifestFile),
+		`{"schema_version":1,"strategy":"split","dir":"tools","tools":{"goimports":{"source":"go","package":"`+imports+`","version":"v0.30.0"}},"extra":1}`,
+	)
 
 	if _, _, err := infoIn(t, dir, &fakeGo{}, "goimports"); err != nil {
 		t.Fatal(err)

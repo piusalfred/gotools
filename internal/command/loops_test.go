@@ -133,7 +133,8 @@ func TestRemoveToolsDryRunAsksForNothing(t *testing.T) {
 		t.Fatalf("a dry run removed %v", f.removed)
 	}
 
-	if !strings.Contains(out.String(), "[dry-run] Would remove a") || !strings.Contains(out.String(), "[dry-run] Would remove b") {
+	if !strings.Contains(out.String(), "[dry-run] Would remove a") ||
+		!strings.Contains(out.String(), "[dry-run] Would remove b") {
 		t.Fatalf("output:\n%s", &out)
 	}
 }
@@ -191,7 +192,17 @@ func TestUpgradeToolsSkipsUnknownNamesAndFailsAtTheEnd(t *testing.T) {
 func TestUpgradeToolsStopsAtTheFirstFailureAndDryRunAsksForNothing(t *testing.T) {
 	f := &fakeManager{failOn: "x"}
 
-	if err := upgradeTools(context.Background(), &bytes.Buffer{}, upgradeManifest(), f, []string{"x", "y"}, false); !errors.Is(err, errBoom) {
+	if err := upgradeTools(
+		context.Background(),
+		&bytes.Buffer{},
+		upgradeManifest(),
+		f,
+		[]string{"x", "y"},
+		false,
+	); !errors.Is(
+		err,
+		errBoom,
+	) {
 		t.Fatalf("err = %v", err)
 	}
 

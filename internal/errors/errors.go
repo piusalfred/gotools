@@ -56,6 +56,8 @@ type Doc struct {
 
 // Table is the user-facing exit-code table, in code order. The help text is
 // built from it, so it cannot drift from the codes.
+//
+//nolint:gochecknoglobals // read-only data shared by the help text and the docs test, never reassigned
 var Table = []Doc{
 	{OK, "Success", "Everything worked", "Proceed"},
 	{Generic, "Generic failure", "Something went wrong (catch-all)", "Fail the build"},

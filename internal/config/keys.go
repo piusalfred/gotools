@@ -36,6 +36,8 @@ const DefaultLockStaleTimeout = 300
 
 // Keys lists the GOTOOLS_* names a user can read and change, in help order. The
 // first four are layout keys; the rest are settings.
+//
+//nolint:gochecknoglobals // exported read-only list of the accepted keys, never modified after init
 var Keys = []string{
 	EnvVarStrategy, EnvVarDir, EnvVarGoVersion, EnvVarModulePrefix,
 	EnvVarOffline, EnvVarJobs, EnvVarOperationTimeout, EnvVarLockTimeout,
@@ -78,20 +80,12 @@ func ParseSetting(name, value string, s *Settings) error {
 			s.Verbose = b
 		}
 	case EnvVarTrace:
-		switch value {
-		case "stdout":
-			s.Trace = TraceStdout
-		default:
-			b, ok := parseBool(value)
-			if !ok {
-				return invalid(value, "true, false, or stdout")
-			}
-
-			s.Trace = TraceOff
-			if b {
-				s.Trace = TraceStderr
-			}
+		mode, err := parseTrace(value)
+		if err != nil {
+			return err
 		}
+
+		s.Trace = mode
 	case EnvVarJobs:
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 1 || !digits(value) {
@@ -144,7 +138,27 @@ func FormatSetting(name string, s Settings) (string, bool) {
 	return "", false
 }
 
-func parseBool(v string) (value, ok bool) {
+// parseTrace maps a trace setting to its mode: stdout, or a boolean where true
+// traces to stderr.
+func parseTrace(value string) (TraceMode, error) {
+	if value == "stdout" {
+		return TraceStdout, nil
+	}
+
+	on, ok := parseBool(value)
+	if !ok {
+		return TraceOff, invalid(value, "true, false, or stdout")
+	}
+
+	if on {
+		return TraceStderr, nil
+	}
+
+	return TraceOff, nil
+}
+
+// parseBool returns the boolean v spells and whether v spelled one at all.
+func parseBool(v string) (bool, bool) {
 	switch v {
 	case "true", "1":
 		return true, true

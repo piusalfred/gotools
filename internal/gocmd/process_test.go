@@ -51,9 +51,12 @@ const sleepsUntilStopped = "exec sleep 30"
 func TestProcessPassesTheStreamsThrough(t *testing.T) {
 	var out, errb bytes.Buffer
 
-	code, err := gocmd.ExecProcessRunner{}.Run(context.Background(), sh(`read x; echo "out:$x $1"; echo "err:$x" >&2`, gocmd.Process{
-		Stdin: strings.NewReader("hello\n"), Stdout: &out, Stderr: &errb, Args: nil,
-	}))
+	code, err := gocmd.ExecProcessRunner{}.Run(
+		context.Background(),
+		sh(`read x; echo "out:$x $1"; echo "err:$x" >&2`, gocmd.Process{
+			Stdin: strings.NewReader("hello\n"), Stdout: &out, Stderr: &errb, Args: nil,
+		}),
+	)
 	if err != nil || code != 0 {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
@@ -66,7 +69,11 @@ func TestProcessPassesTheStreamsThrough(t *testing.T) {
 func TestProcessGetsItsArgumentsVerbatim(t *testing.T) {
 	var out bytes.Buffer
 
-	p := gocmd.Process{Bin: "sh", Args: []string{"-c", `printf '%s|' "$@"`, "sh", "a b", "--flag", "", "$HOME"}, Stdout: &out}
+	p := gocmd.Process{
+		Bin:    "sh",
+		Args:   []string{"-c", `printf '%s|' "$@"`, "sh", "a b", "--flag", "", "$HOME"},
+		Stdout: &out,
+	}
 	if _, err := (gocmd.ExecProcessRunner{}).Run(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +91,10 @@ func TestProcessRunsInItsDirectory(t *testing.T) {
 
 	var out bytes.Buffer
 
-	if _, err := (gocmd.ExecProcessRunner{}).Run(context.Background(), sh("pwd", gocmd.Process{Dir: dir, Stdout: &out})); err != nil {
+	if _, err := (gocmd.ExecProcessRunner{}).Run(
+		context.Background(),
+		sh("pwd", gocmd.Process{Dir: dir, Stdout: &out}),
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,7 +119,10 @@ func TestProcessReportsTheExitStatus(t *testing.T) {
 }
 
 func TestProcessThatCannotStartIsAnError(t *testing.T) {
-	code, err := gocmd.ExecProcessRunner{}.Run(context.Background(), gocmd.Process{Bin: filepath.Join(t.TempDir(), "nope")})
+	code, err := gocmd.ExecProcessRunner{}.Run(
+		context.Background(),
+		gocmd.Process{Bin: filepath.Join(t.TempDir(), "nope")},
+	)
 	if err == nil || code != 0 {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
@@ -149,7 +162,11 @@ func TestProcessGetsTheSignalThatCancelledTheContext(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	time.AfterFunc(100*time.Millisecond, func() { cancel(errors.New("done")) })
 
-	if code, err := (gocmd.ExecProcessRunner{}).Run(ctx, sh(sleepsUntilStopped, gocmd.Process{})); err != nil || code != 128+15 {
+	if code, err := (gocmd.ExecProcessRunner{}).Run(
+		ctx,
+		sh(sleepsUntilStopped, gocmd.Process{}),
+	); err != nil ||
+		code != 128+15 {
 		t.Errorf("code=%d err=%v", code, err)
 	}
 }

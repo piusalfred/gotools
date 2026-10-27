@@ -7,14 +7,11 @@
 BIN           := bin/gotools
 GOTOOLS       := ./$(BIN)
 ADDLICENSE    := $(GOTOOLS) exec addlicense
-GOFUMPT       := $(GOTOOLS) exec gofumpt
-GCI           := $(GOTOOLS) exec gci
+GOLANGCI      := $(GOTOOLS) exec golangci-lint
 GOVULNCHECK   := $(GOTOOLS) exec govulncheck
-STATICCHECK   := $(GOTOOLS) exec staticcheck
 SHELLCHECK    := shellcheck
 RUMDL         := rumdl
 
-MODULE        := github.com/piusalfred/gotools
 LICENSE_TYPE  := mit
 LICENSE_OWNER := Pius Alfred
 
@@ -31,16 +28,6 @@ LICENSE_IGNORE := \
 
 GO := GOWORK=off go
 
-# The tree walkers (gofumpt/gci) must skip gotoolstest/: it carries a large
-# read-only assessment archive (module-cache copies) that makes them fail.
-# find keeps untracked .go files included, unlike a git ls-files list.
-GO_SOURCES := $$(find . -name '*.go' -not -path './gotoolstest/*' -not -path './test/testdata/*' -not -path './.delta/*' -not -path './.claude/*')
-
-GCI_SECTIONS := \
-	-s standard \
-	-s default \
-	-s 'prefix($(MODULE))'
-
 # The version lives in one place: version.txt at the repository root. Older
 # bases kept it as `var Version = "..."` in Go; the gate still reads those.
 VERSION_FILE := version.txt
@@ -48,10 +35,10 @@ LEGACY_VERSION_FILES := internal/version/version.go lib/config.go
 VERSION_GREP := grep -E '^var Version = ' | cut -d'"' -f2
 
 .PHONY: all build install clean help \
-        fmt fix-go fmt-license fmt-imports fmt-go fmt-mod fmt-md \
+        fmt fix fix-go fix-lint fmt-license fmt-go fmt-mod fmt-md \
         test go-build test-unit test-integration cover \
-        lint lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt \
-        govulncheck check version-check get-version set-version sync-main
+        lint lint-shellcheck lint-go-vet lint-golangci lint-rumdl lint-license \
+        govulncheck check docker-build version-check get-version set-version sync-main
 
 all: build
 
@@ -62,9 +49,11 @@ help:
 	@echo "go-build          compile every package (go build ./...), nothing is written"
 	@echo "test-unit         unit tests with the race detector (fake go, offline)"
 	@echo "test-integration  real go and network: -tags integration ./test/..."
-	@echo "lint              vet, staticcheck, license, imports, gofumpt, markdown, shellcheck"
-	@echo "fmt               go fix, license headers, imports, gofumpt, go mod tidy, markdown"
+	@echo "lint              golangci-lint (linters and formatters), vet, license, markdown, shellcheck"
+	@echo "fmt               go fix, license headers, golangci-lint fmt, go mod tidy, markdown"
+	@echo "fix               golangci-lint run --fix, then fmt (review the diff: some fixes change code)"
 	@echo "check             lint + test-unit (what CI's static-analysis job runs)"
+	@echo "docker-build      build the image for this machine: gotools:dev (needs docker)"
 	@echo "get-version / set-version VER=vX.Y.Z / version-check"
 
 # Rebuilt whenever a non-test Go source changes.
@@ -80,17 +69,20 @@ install:
 clean:
 	rm -rf bin dist
 
-# fix-go runs first: go fix rewrites code that gci and gofumpt then format.
-fmt: fix-go fmt-license fmt-imports fmt-go fmt-mod fmt-md
+# fix-go runs first: go fix rewrites code that the golangci-lint formatters
+# (goimports, golines, gci, gofumpt; see .golangci.yaml) then format.
+fmt: fix-go fmt-license fmt-go fmt-mod fmt-md
+
+# Formatting plus every autofix the enabled linters offer. Unlike fmt this can
+# change what the code does (a rewritten error check, a renamed variable), so
+# read the diff and run the tests before committing it.
+fix: fix-lint fmt
 
 fmt-license: $(BIN)
 	$(ADDLICENSE) -l $(LICENSE_TYPE) -c "$(LICENSE_OWNER)" $(LICENSE_IGNORE) .
 
-fmt-imports: $(BIN)
-	$(GCI) write $(GCI_SECTIONS) $(GO_SOURCES) </dev/null
-
 fmt-go: $(BIN)
-	$(GOFUMPT) -w -extra $(GO_SOURCES)
+	$(GOLANGCI) fmt
 
 fmt-mod:
 	$(GO) mod tidy
@@ -102,6 +94,9 @@ fmt-md:
 # is its own module) and the tag brings in the integration tests.
 fix-go:
 	go fix -tags integration ./...
+
+fix-lint: $(BIN)
+	$(GOLANGCI) run --fix
 
 # Every test the project has, compile check first so a build error is reported
 # before any test runs. The integration half needs network access and a Go
@@ -129,7 +124,7 @@ govulncheck: $(BIN)
 	@echo "Running govulncheck"
 	$(GOVULNCHECK) ./...
 
-lint: lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt
+lint: lint-shellcheck lint-go-vet lint-golangci lint-rumdl lint-license
 
 # install.sh is the only shell script left.
 lint-shellcheck:
@@ -146,9 +141,11 @@ lint-go-vet:
 	go vet ./...
 	go vet -tags integration ./test/...
 
-lint-staticcheck: $(BIN)
-	@echo "Running staticcheck"
-	$(STATICCHECK) ./...
+# Also fails on unformatted code: the formatters in .golangci.yaml run as part
+# of run. The build tag in the same file brings in the integration tests.
+lint-golangci: $(BIN)
+	@echo "Running golangci-lint"
+	$(GOLANGCI) run
 
 lint-rumdl:
 	@echo "Running rumdl"
@@ -163,16 +160,16 @@ lint-license: $(BIN)
 	@echo "Checking license headers"
 	$(ADDLICENSE) -check -l $(LICENSE_TYPE) -c "$(LICENSE_OWNER)" $(LICENSE_IGNORE) .
 
-lint-imports: $(BIN)
-	@echo "Checking import ordering"
-	$(GCI) diff $(GCI_SECTIONS) $(GO_SOURCES) </dev/null
-
-lint-go-fmt: $(BIN)
-	@echo "Checking Go formatting"
-	@diff=$$($(GOFUMPT) -d -extra $(GO_SOURCES)); if [ -n "$$diff" ]; then printf "%s\n" "$$diff"; exit 1; fi
-
 check: lint test-unit
 	@echo "✅ All checks passed"
+
+# The image copies the linux binaries the release workflow builds, so both
+# architectures are cross-compiled here and docker picks the one it needs.
+docker-build:
+	@for arch in amd64 arm64; do \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags="-s -w" -o dist/gotools-linux-$$arch ./cmd/gotools || exit 1; \
+	done
+	docker build --build-arg GO_VERSION=$$(awk '/^go /{print $$2; exit}' go.mod) -t gotools:dev .
 
 get-version:
 	@tr -d '[:space:]' < $(VERSION_FILE)

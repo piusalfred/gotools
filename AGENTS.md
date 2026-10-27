@@ -50,11 +50,14 @@ internal/            # the implementation, one self-standing package per concern
   errors/            # Code, Error, CodeOf, the exit-code table (every package uses it)
 test/                # integration tests (build tag integration) + install.sh test
   testdata/project/  # throw-away module the integration tests copy
-tools/               # the tools this repo builds with (split strategy, committed)
+tools/               # the tools this repo builds with (module strategy, committed)
 .gotools.json        # manifest for those tools
+.golangci.yaml       # golangci-lint: the linters and the formatters (one config, one place)
 install.sh           # standalone curl-to-install script (the only shell left)
-Makefile             # build, fmt, lint, test, version targets
-docs/                # USAGE, INSTALLATION, STRATEGIES, MIGRATION, CONFIGURATION,
+Dockerfile           # the image: golang + the release's linux binary (docs/DOCKER.md)
+.dockerignore        # the build context is just dist/gotools-linux-{amd64,arm64}
+Makefile             # build, fmt, lint, test, docker-build, version targets
+docs/                # USAGE, INSTALLATION, DOCKER, STRATEGIES, MIGRATION, CONFIGURATION,
                      # CI, SECURITY, DEVELOPMENT (README.md is a slim landing page)
 ```
 
@@ -132,8 +135,10 @@ make test               # every test: go build, unit, then integration (needs go
 make go-build           # go build ./...  (compile check, writes nothing)
 make test-unit          # go test -race ./...   (offline, fake go, fast)
 make test-integration   # real go + network: go test -tags integration ./test/...
-make lint               # vet, staticcheck, license, imports, gofumpt, rumdl, shellcheck
-make fmt                # addlicense, gci, gofumpt, go mod tidy, rumdl
+make lint               # golangci-lint (linters + formatters), vet, license, rumdl, shellcheck
+make fmt                # go fix, addlicense, golangci-lint fmt, go mod tidy, rumdl
+make fix                # golangci-lint run --fix, then fmt (review the diff, run the tests)
+make docker-build       # the image for this machine -> gotools:dev (needs docker)
 make check              # lint + test-unit (what CI's static-analysis job runs)
 pre-commit run --all-files
 make set-version VER=vX.Y.Z   # write version.txt
@@ -162,9 +167,18 @@ builds itself with itself. `bin/` is git-ignored.
 - Shared work goes on `Context` as a method when two commands need it; a helper
   used by one command stays in that file. Keep dependency arrows pointing down:
   `command -> the packages it uses`, never back.
-- Format with gofumpt (`-extra`), imports ordered standard / third-party /
-  `github.com/piusalfred/gotools` (gci). Every `.go` file starts with the MIT
-  license header (`make fmt-license`).
+- Format with golangci-lint (`make fmt`): goimports, golines (120 columns), gci
+  and gofumpt, configured in `.golangci.yaml`. Imports are ordered standard /
+  third-party / `github.com/piusalfred/gotools`. Every `.go` file starts with
+  the MIT license header (`make fmt-license`).
+- `make lint` must report 0 issues. Fix a finding rather than silencing it;
+  `wrapcheck` is on, so an error from outside this module is wrapped with
+  context (`ierrors.Wrap` or `%w`), not returned bare. When a finding is
+  deliberate (a read-only table, a `nil` return that is the contract), say so
+  with `//nolint:<linter> // <why>`: `nolintlint` rejects a bare or unspecific
+  directive. Run `make fix` only with a clean tree and read the diff: an
+  autofix once inverted a test's condition (`errorlint` turning a failed type
+  assertion into `errors.As`).
 - Comments explain why. A bug fix comes with the test that reproduces it,
   named for the behavior it protects.
 
@@ -330,7 +344,11 @@ a key. The exit-code table is checked against `docs/USAGE.md`, and the release a
    `gotools-<os>-<arch>` for linux and
    darwin on amd64 and arm64, smoke-runs one, attaches `install.sh` stamped
    with the release's version (`DEFAULT_VERSION`), writes `checksums-sha256.txt`
-   (the binaries and `install.sh`) and creates the GitHub release.
+   (the binaries and `install.sh`) and creates the GitHub release. Before the
+   release, the `docker` job builds the multi-arch image from the linux
+   binaries, smoke-tests it and pushes it to `ghcr.io/piusalfred/gotools`
+   (`vX.Y.Z`, plus `latest` for non-pre-releases); the release job needs it, so
+   a failed push publishes nothing and a re-run retries both.
 
 `install.sh` and `self-update` refuse a binary whose hash is not in
 `checksums-sha256.txt`, so keep every shipped binary listed there when changing

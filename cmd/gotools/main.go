@@ -68,13 +68,17 @@ func Run(args ...string) int {
 	return signalExit(ctx, app.Report(app.Run(ctx, args[1:])))
 }
 
-// signalExit is the exit code of a run that a signal cut short: 128 plus the
-// signal's number, the shell convention (130 for SIGINT, 143 for SIGTERM). A
-// run that succeeded keeps its code even if a signal came after.
+// signalExitBase is added to a signal's number to make the exit code of a run
+// it ended, as shells do.
+const signalExitBase = 128
+
+// signalExit is the exit code of a run that a signal cut short: signalExitBase
+// plus the signal's number, the shell convention (130 for SIGINT, 143 for
+// SIGTERM). A run that succeeded keeps its code even if a signal came after.
 func signalExit(ctx context.Context, code int) int {
 	if sig, ok := gocmd.SignalOf(ctx); ok && code != 0 {
 		if n, ok := sig.(syscall.Signal); ok {
-			return 128 + int(n)
+			return signalExitBase + int(n)
 		}
 	}
 

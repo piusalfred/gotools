@@ -117,7 +117,8 @@ func TestParseSettingRefusesAValueThatDoesNotFit(t *testing.T) {
 		s := before
 
 		err := config.ParseSetting(tc.key, tc.value, &s)
-		if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "Invalid value: "+tc.value+" (must be "+tc.want+")") {
+		if ierrors.CodeOf(err) != ierrors.Usage ||
+			!strings.Contains(err.Error(), "Invalid value: "+tc.value+" (must be "+tc.want+")") {
 			t.Errorf("%s=%q: err=%v", tc.key, tc.value, err)
 		}
 
@@ -130,7 +131,13 @@ func TestParseSettingRefusesAValueThatDoesNotFit(t *testing.T) {
 		t.Errorf("unknown key: %v", err)
 	}
 
-	if err := config.ParseSetting(config.EnvVarStrategy, "split", &config.Settings{}); ierrors.CodeOf(err) != ierrors.Usage {
+	if err := config.ParseSetting(
+		config.EnvVarStrategy,
+		"split",
+		&config.Settings{},
+	); ierrors.CodeOf(
+		err,
+	) != ierrors.Usage {
 		t.Errorf("a layout key is not a setting: %v", err)
 	}
 }
@@ -145,7 +152,14 @@ func TestStaleTimeoutIsCheckedAndNeverStored(t *testing.T) {
 }
 
 func TestFormatSettingIsWhatParseSettingAccepts(t *testing.T) {
-	s := config.Settings{Offline: true, Jobs: 6, OperationTimeout: 30, LockTimeout: 0, Trace: config.TraceStdout, Verbose: true}
+	s := config.Settings{
+		Offline:          true,
+		Jobs:             6,
+		OperationTimeout: 30,
+		LockTimeout:      0,
+		Trace:            config.TraceStdout,
+		Verbose:          true,
+	}
 
 	want := map[string]string{
 		config.EnvVarOffline: "true", config.EnvVarNoLock: "false", config.EnvVarVerbose: "true",
@@ -178,7 +192,11 @@ func TestFormatSettingIsWhatParseSettingAccepts(t *testing.T) {
 
 func TestWithoutManifestIgnoresTheFileAndKeepsTheEnvironment(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, config.ManifestFile), []byte(`{"strategy":"module","dir":"dev/tools"}`), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, config.ManifestFile),
+		[]byte(`{"strategy":"module","dir":"dev/tools"}`),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 

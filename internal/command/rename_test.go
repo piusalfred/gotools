@@ -76,7 +76,13 @@ func TestRenameModule(t *testing.T) {
 		t.Fatal("old dir remains")
 	}
 
-	if mod := readFile(t, filepath.Join(dir, "tools", "gi", "go.mod")); !strings.Contains(mod, "module tools/tools/gi\n") {
+	if mod := readFile(
+		t,
+		filepath.Join(dir, "tools", "gi", "go.mod"),
+	); !strings.Contains(
+		mod,
+		"module tools/tools/gi\n",
+	) {
 		t.Fatalf("mod = %s", mod)
 	}
 }
@@ -85,7 +91,8 @@ func TestRenameUnifiedIsRefused(t *testing.T) {
 	dir := infoFixture(t, "unified")
 
 	_, _, err := runCommand(t, command.NewRename(), dir, &fakeGo{}, nil, "goimports", "gi")
-	if ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "not supported with the unified strategy") ||
+	if ierrors.CodeOf(err) != ierrors.Environment ||
+		!strings.Contains(err.Error(), "not supported with the unified strategy") ||
 		!strings.Contains(err.Error(), "gotools install gi golang.org/x/tools/cmd/goimports@v0.30.0") {
 		t.Fatalf("err = %v", err)
 	}
@@ -208,7 +215,8 @@ func TestRenameRollsBackWhenTheManifestWriteFails(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	if exists(filepath.Join(dir, "tools", "gi.mod")) || readFile(t, filepath.Join(dir, "tools", "goimports.mod")) != orig {
+	if exists(filepath.Join(dir, "tools", "gi.mod")) ||
+		readFile(t, filepath.Join(dir, "tools", "goimports.mod")) != orig {
 		t.Fatal("rename was not rolled back")
 	}
 }

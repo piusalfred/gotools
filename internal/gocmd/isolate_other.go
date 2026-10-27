@@ -25,18 +25,17 @@ package gocmd
 import (
 	"context"
 	"os/exec"
-	"time"
 )
 
 // isolate: there are no process groups here, so cancellation kills the direct
 // child only.
 func isolate(cmd *exec.Cmd) {
-	cmd.WaitDelay = 3 * time.Second
+	cmd.WaitDelay = killDelay
 }
 
 // terminateOnCancel: cancellation kills the direct child.
 func terminateOnCancel(_ context.Context, cmd *exec.Cmd) {
-	cmd.WaitDelay = 3 * time.Second
+	cmd.WaitDelay = killDelay
 }
 
 // exitCode returns the child's exit code.

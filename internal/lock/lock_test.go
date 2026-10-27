@@ -303,7 +303,12 @@ func TestWithIsReentrant(t *testing.T) {
 		// The same directory spelled differently, through another locker.
 		other := lock.NewFileLocker(filepath.Join(dir, "..", filepath.Base(dir)))
 
-		if err := lock.With(ctx, other, filepath.Join(dir, "."), func(context.Context) error { ran = true; return nil }); err != nil {
+		if err := lock.With(
+			ctx,
+			other,
+			filepath.Join(dir, "."),
+			func(context.Context) error { ran = true; return nil },
+		); err != nil {
 			return err
 		}
 
@@ -390,7 +395,12 @@ func TestWithStopsWhenTheLockerFails(t *testing.T) {
 	busy := errors.New("busy")
 	ran := false
 
-	err := lock.With(context.Background(), &fakeLocker{err: busy}, "d", func(context.Context) error { ran = true; return nil })
+	err := lock.With(
+		context.Background(),
+		&fakeLocker{err: busy},
+		"d",
+		func(context.Context) error { ran = true; return nil },
+	)
 	if !errors.Is(err, busy) || ran {
 		t.Fatalf("err=%v ran=%v", err, ran)
 	}
@@ -403,7 +413,8 @@ func TestLockErrorsCarryExitCodes(t *testing.T) {
 	defer l.Unlock()
 
 	_, err := lock.NewFileLocker(dir).Lock(context.Background())
-	if ierrors.CodeOf(err) != ierrors.Lock || !strings.Contains(err.Error(), "Another gotools process is running (pid ") {
+	if ierrors.CodeOf(err) != ierrors.Lock ||
+		!strings.Contains(err.Error(), "Another gotools process is running (pid ") {
 		t.Fatalf("held: code=%d err=%v", ierrors.CodeOf(err), err)
 	}
 

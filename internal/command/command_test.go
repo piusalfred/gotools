@@ -62,7 +62,25 @@ func TestEveryCommandIsDocumented(t *testing.T) {
 }
 
 func TestNamesAreTheConstants(t *testing.T) {
-	want := map[string]bool{command.NameInit: true, command.NameInstall: true, command.NameSync: true, command.NameMigrate: true, command.NameVersion: true, command.NameInfo: true, command.NameCheck: true, command.NameConfig: true, command.NameRemove: true, command.NameRename: true, command.NameUpgrade: true, command.NameList: true, command.NameExec: true, command.NameUninstall: true, command.NamePurge: true, command.NameDoctor: true, command.NameSelfUpdate: true}
+	want := map[string]bool{
+		command.NameInit:       true,
+		command.NameInstall:    true,
+		command.NameSync:       true,
+		command.NameMigrate:    true,
+		command.NameVersion:    true,
+		command.NameInfo:       true,
+		command.NameCheck:      true,
+		command.NameConfig:     true,
+		command.NameRemove:     true,
+		command.NameRename:     true,
+		command.NameUpgrade:    true,
+		command.NameList:       true,
+		command.NameExec:       true,
+		command.NameUninstall:  true,
+		command.NamePurge:      true,
+		command.NameDoctor:     true,
+		command.NameSelfUpdate: true,
+	}
 
 	for _, cmd := range command.All() {
 		if !want[cmd.Name()] {

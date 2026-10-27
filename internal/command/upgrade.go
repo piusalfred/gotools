@@ -85,10 +85,13 @@ func (base *Upgrade) Build(c *Context) *urfave.Command {
 			&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be upgraded without making changes"},
 			&urfave.BoolFlag{Name: FlagOffline, Usage: "Refuse to upgrade (needs the network), exit 6"},
 		},
-		Args:     []urfave.Argument{&urfave.StringArgs{Name: argUpgrade, Min: 1, Max: -1}},
-		Complete: u.c.completeArguments(-1, func(ctx context.Context) []string { return append([]string{allTools}, u.c.toolNames(ctx)...) }),
-		Before:   u.before,
-		Run:      u.run,
+		Args: []urfave.Argument{&urfave.StringArgs{Name: argUpgrade, Min: 1, Max: -1}},
+		Complete: u.c.completeArguments(
+			-1,
+			func(ctx context.Context) []string { return append([]string{allTools}, u.c.toolNames(ctx)...) },
+		),
+		Before: u.before,
+		Run:    u.run,
 	}.Build(c)
 }
 
@@ -100,7 +103,12 @@ func (u *Upgrade) before(ctx context.Context, cmd *urfave.Command) error {
 
 	u.all = names[0] == allTools
 	if u.all && len(names) > 1 {
-		return UsageError(ctx, cmd, ierrors.New(ierrors.Usage, "all stands for every tool and takes no other name"), false)
+		return UsageError(
+			ctx,
+			cmd,
+			ierrors.New(ierrors.Usage, "all stands for every tool and takes no other name"),
+			false,
+		)
 	}
 
 	if !u.all {
@@ -142,7 +150,14 @@ func (u *Upgrade) run(ctx context.Context, _ *urfave.Command) error {
 // upgradeTools upgrades each named tool. A name the manifest does not know is
 // skipped and reported as tool-not-found once the others have been processed, so
 // a typo in a script is never silent.
-func upgradeTools(ctx context.Context, out io.Writer, m *manifest.Manifest, manager tools.Manager, names []string, dryRun bool) error {
+func upgradeTools(
+	ctx context.Context,
+	out io.Writer,
+	m *manifest.Manifest,
+	manager tools.Manager,
+	names []string,
+	dryRun bool,
+) error {
 	var (
 		unknown  []string
 		upgraded int

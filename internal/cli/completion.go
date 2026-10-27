@@ -64,11 +64,19 @@ const (
 // replaces.
 const backupSuffix = ".bak"
 
+// The shells `completion install` knows a place for.
+const (
+	shellBash = "bash"
+	shellZsh  = "zsh"
+	shellFish = "fish"
+	shellPwsh = "pwsh"
+)
+
 // installShells are the shells `completion install` knows a place for.
-var installShells = []string{"bash", "zsh", "fish", "pwsh"}
+func installShells() []string { return []string{shellBash, shellZsh, shellFish, shellPwsh} }
 
 // shellChoices is installShells as the usage text spells it.
-var shellChoices = strings.Join(installShells, "|")
+func shellChoices() string { return strings.Join(installShells(), "|") }
 
 // configureCompletion makes urfave/cli's completion command a part of the
 // overview and adds `install`, which writes the script where the shell loads it
@@ -92,7 +100,13 @@ func (a *App) configureCompletion(c *command.Context) func(*urfave.Command) {
 		// shows the shells.
 		cmd.Action = func(_ context.Context, cmd *urfave.Command) error {
 			if cmd.Args().Present() {
-				return ierrors.New(ierrors.Usage, "Unknown shell: %s\n   Usage: %s completion %s", cmd.Args().First(), a.Program, argsUsageCompletion)
+				return ierrors.New(
+					ierrors.Usage,
+					"Unknown shell: %s\n   Usage: %s completion %s",
+					cmd.Args().First(),
+					a.Program,
+					argsUsageCompletion,
+				)
 			}
 
 			urfave.HelpPrinter(cmd.Root().Writer, command.HelpTemplate, cmd)
@@ -103,7 +117,7 @@ func (a *App) configureCompletion(c *command.Context) func(*urfave.Command) {
 		install := &urfave.Command{
 			Name:      "install",
 			Usage:     "Write the completion script where the shell loads it from",
-			ArgsUsage: "[" + shellChoices + "]",
+			ArgsUsage: "[" + shellChoices() + "]",
 			Action:    a.installCompletion(c),
 		}
 
@@ -117,18 +131,14 @@ func (a *App) installCompletion(c *command.Context) urfave.ActionFunc {
 	return func(ctx context.Context, cmd *urfave.Command) error {
 		env := lookup(c.Environ)
 
-		shell := cmd.Args().First()
-		if shell == "" {
-			if base := filepath.Base(env("SHELL")); slices.Contains(installShells, base) {
-				shell = base
-			} else {
-				return ierrors.New(ierrors.Usage, "Could not detect shell from $SHELL.\n   Please specify: %s completion install <%s>", a.Program, shellChoices)
-			}
+		shell, err := a.installShell(cmd.Args().First(), env)
+		if err != nil {
+			return err
 		}
 
 		path := a.completionPath(shell, env)
 		if path == "" {
-			return ierrors.New(ierrors.Usage, "Usage: %s completion install <%s>", a.Program, shellChoices)
+			return ierrors.New(ierrors.Usage, "Usage: %s completion install <%s>", a.Program, shellChoices())
 		}
 
 		script, err := a.completionScript(ctx, shell)
@@ -136,44 +146,94 @@ func (a *App) installCompletion(c *command.Context) urfave.ActionFunc {
 			return err
 		}
 
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		if err = os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return ierrors.New(ierrors.Generic, "Could not create directory: %s", filepath.Dir(path))
 		}
 
 		out := a.stdout()
 
-		switch previous, err := os.ReadFile(path); {
-		case err != nil:
-			_, _ = fmt.Fprintf(out, "✅ Installing completion to %s\n", path)
-		case string(previous) == script:
-			_, _ = fmt.Fprintf(out, "📝 Completion at %s is already up to date\n", path)
-		default:
-			// What was there may have been edited by hand: keep it.
-			if err := fsx.WriteFileAtomic(path+backupSuffix, previous, 0o644); err != nil {
-				return ierrors.New(ierrors.Generic, "Could not back up %s: %v", path, err)
-			}
-
-			_, _ = fmt.Fprintf(out, "📝 Updating existing completion at %s (the previous one is kept as %s%s)\n", path, filepath.Base(path), backupSuffix)
-		}
-
-		if err := fsx.WriteFileAtomic(path, []byte(script), 0o644); err != nil {
-			return ierrors.New(ierrors.Generic, "Could not write %s: %v", path, err)
+		if err = writeCompletion(out, path, script); err != nil {
+			return err
 		}
 
 		_, _ = fmt.Fprintf(out, "✅ Completion installed for %s: %s\n", shell, path)
-
-		switch shell {
-		case "bash":
-			_, _ = fmt.Fprintf(out, "\n💡 To activate, add this to your ~/.bashrc:\n   source %q\n", path)
-		case "zsh":
-			_, _ = fmt.Fprint(out, "\n💡 To activate, add this to your ~/.zshrc:\n   fpath=($HOME/.zsh/completions $fpath)\n   autoload -Uz compinit && compinit\n")
-		case "pwsh":
-			_, _ = fmt.Fprintf(out, "\n💡 To activate, add this line to your PowerShell profile ($PROFILE):\n   . %q\n", path)
-		case "fish":
-			_, _ = fmt.Fprintf(out, "\n💡 Fish auto-loads completions from ~/.config/fish/completions/\n   No further setup needed. Restart your shell or run:\n   source %q\n", path)
-		}
+		printActivation(out, shell, path)
 
 		return nil
+	}
+}
+
+// installShell is the shell to install for: the one named, else the one in
+// $SHELL.
+func (a *App) installShell(named string, env func(string) string) (string, error) {
+	if named != "" {
+		return named, nil
+	}
+
+	if base := filepath.Base(env("SHELL")); slices.Contains(installShells(), base) {
+		return base, nil
+	}
+
+	return "", ierrors.New(
+		ierrors.Usage,
+		"Could not detect shell from $SHELL.\n   Please specify: %s completion install <%s>",
+		a.Program,
+		shellChoices(),
+	)
+}
+
+// writeCompletion writes script to path and says what it did. A different
+// script already there is kept next to it under backupSuffix.
+func writeCompletion(out io.Writer, path, script string) error {
+	switch previous, err := os.ReadFile(path); {
+	case err != nil:
+		_, _ = fmt.Fprintf(out, "✅ Installing completion to %s\n", path)
+	case string(previous) == script:
+		_, _ = fmt.Fprintf(out, "📝 Completion at %s is already up to date\n", path)
+	default:
+		// What was there may have been edited by hand: keep it.
+		if err = fsx.WriteFileAtomic(path+backupSuffix, previous, 0o644); err != nil {
+			return ierrors.New(ierrors.Generic, "Could not back up %s: %v", path, err)
+		}
+
+		_, _ = fmt.Fprintf(
+			out,
+			"📝 Updating existing completion at %s (the previous one is kept as %s%s)\n",
+			path,
+			filepath.Base(path),
+			backupSuffix,
+		)
+	}
+
+	if err := fsx.WriteFileAtomic(path, []byte(script), 0o644); err != nil {
+		return ierrors.New(ierrors.Generic, "Could not write %s: %v", path, err)
+	}
+
+	return nil
+}
+
+// printActivation tells the user what their shell needs besides the file.
+func printActivation(out io.Writer, shell, path string) {
+	switch shell {
+	case shellBash:
+		_, _ = fmt.Fprintf(out, "\n💡 To activate, add this to your ~/.bashrc:\n   source %q\n", path)
+	case shellZsh:
+		_, _ = fmt.Fprint(
+			out,
+			"\n💡 To activate, add this to your ~/.zshrc:\n   fpath=($HOME/.zsh/completions $fpath)\n   autoload -Uz compinit && compinit\n",
+		)
+	case shellPwsh:
+		_, _ = fmt.Fprintf(
+			out,
+			"\n💡 To activate, add this line to your PowerShell profile ($PROFILE):\n   . %q\n",
+			path,
+		)
+	case shellFish:
+		_, _ = fmt.Fprintf(
+			out,
+			"\n💡 Fish auto-loads completions from ~/.config/fish/completions/\n   No further setup needed. Restart your shell or run:\n   source %q\n",
+			path,
+		)
 	}
 }
 
@@ -196,7 +256,9 @@ func (a *App) completionScript(ctx context.Context, shell string) (string, error
 
 	var unknown string
 
-	if err := inner.root(inner.context(), &unknown).Run(innerCtx, []string{a.Program, completionName, shell}); err != nil {
+	root := inner.root(inner.context(), &unknown)
+
+	if err := command.RunRoot(innerCtx, root, []string{a.Program, completionName, shell}); err != nil {
 		return "", err
 	}
 
@@ -209,7 +271,7 @@ func (a *App) completionPath(shell string, env func(string) string) string {
 	home := env("HOME")
 
 	switch shell {
-	case "bash":
+	case shellBash:
 		if d := env("BASH_COMPLETION_USER_DIR"); d != "" {
 			return filepath.Join(d, "completions", a.Program)
 		}
@@ -219,11 +281,11 @@ func (a *App) completionPath(shell string, env func(string) string) string {
 		}
 
 		return filepath.Join(home, ".local/share/bash-completion/completions", a.Program)
-	case "zsh":
+	case shellZsh:
 		return filepath.Join(home, ".zsh/completions", "_"+a.Program)
-	case "fish":
+	case shellFish:
 		return filepath.Join(home, ".config/fish/completions", a.Program+".fish")
-	case "pwsh":
+	case shellPwsh:
 		// The script registers itself under the name of the file that holds it.
 		config := env("XDG_CONFIG_HOME")
 		if config == "" {

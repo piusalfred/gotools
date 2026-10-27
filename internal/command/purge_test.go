@@ -35,11 +35,11 @@ import (
 	"github.com/piusalfred/gotools/internal/manifest"
 )
 
-func purgeIn(t *testing.T, g *fakeGo, dir, stdin string, args ...string) (out, errs string, err error) {
+func purgeIn(t *testing.T, g *fakeGo, dir, stdin string, args ...string) (string, string, error) {
 	t.Helper()
 
 	c, o, e := installContext(dir, g, installOpts{stdin: stdin})
-	err = run(command.NewPurge(), c, args...)
+	err := run(command.NewPurge(), c, args...)
 
 	return o.String(), e.String(), err
 }
@@ -95,8 +95,10 @@ func TestPurgeDryRun(t *testing.T) {
 	before := tree(t, dir)
 
 	out, _, err := purgeIn(t, installGo(installOpts{}), dir, "", "--dry-run")
-	if err != nil || !strings.Contains(out, "Would delete:") || !strings.Contains(out, "  - tools/ (tools directory)") ||
-		!strings.Contains(out, "  - .gotools.json (manifest)") || strings.Contains(out, "Are you sure") {
+	if err != nil || !strings.Contains(out, "Would delete:") ||
+		!strings.Contains(out, "  - tools/ (tools directory)") ||
+		!strings.Contains(out, "  - .gotools.json (manifest)") ||
+		strings.Contains(out, "Are you sure") {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 
@@ -166,7 +168,8 @@ func TestPurgeRestoreAddsToolsBackToGoMod(t *testing.T) {
 	}
 
 	mod := readFile(t, filepath.Join(dir, "go.mod"))
-	if !strings.Contains(mod, "tool "+pkgX) || !strings.Contains(mod, "tool "+pkgY) || !strings.Contains(mod, "v1.2.0") {
+	if !strings.Contains(mod, "tool "+pkgX) || !strings.Contains(mod, "tool "+pkgY) ||
+		!strings.Contains(mod, "v1.2.0") {
 		t.Fatalf("go.mod:\n%s", mod)
 	}
 
@@ -217,7 +220,11 @@ func TestPurgeRestoreHintCarriesTheConfiguration(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.24\n")
 
 	out, _, err := purgeIn(t, installGo(installOpts{}), dir, "", "--restore", "--dry-run")
-	if err != nil || !strings.Contains(out, "To come back: gotools init --strategy=module '--dir=.tools dir' --go=1.24 --prefix=example.com/test") {
+	if err != nil ||
+		!strings.Contains(
+			out,
+			"To come back: gotools init --strategy=module '--dir=.tools dir' --go=1.24 --prefix=example.com/test",
+		) {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 }
@@ -237,7 +244,13 @@ func TestPurgeRestoreFailureChangesNothing(t *testing.T) {
 	sameTree(t, before, tree(t, dir))
 
 	// A network failure keeps its exit code.
-	_, _, err = purgeIn(t, installGo(installOpts{getFail: "dial tcp: lookup proxy.golang.org: no such host"}), dir, "YES\n", "--restore")
+	_, _, err = purgeIn(
+		t,
+		installGo(installOpts{getFail: "dial tcp: lookup proxy.golang.org: no such host"}),
+		dir,
+		"YES\n",
+		"--restore",
+	)
 	if ierrors.CodeOf(err) != ierrors.Network {
 		t.Fatalf("network: err=%v", err)
 	}
@@ -264,10 +277,10 @@ func TestPurgeRestoreNeedsARootGoMod(t *testing.T) {
 
 func TestPurgeRestoreRefusesASymlinkedRootGoMod(t *testing.T) {
 	dir := installedProject(t, "split")
-	real := filepath.Join(dir, "real.mod")
-	writeFile(t, real, "module example.com/test\n\ngo 1.24\n")
+	target := filepath.Join(dir, "real.mod")
+	writeFile(t, target, "module example.com/test\n\ngo 1.24\n")
 
-	if err := os.Symlink(real, filepath.Join(dir, "go.mod")); err != nil {
+	if err := os.Symlink(target, filepath.Join(dir, "go.mod")); err != nil {
 		t.Skip(err)
 	}
 
@@ -291,7 +304,9 @@ func TestPurgeRestoreSkipsToolsThatAreNotGoTools(t *testing.T) {
 	g := installGo(installOpts{})
 
 	out, _, err := purgeIn(t, g, dir, "YES\n", "--restore")
-	if err != nil || !strings.Contains(out, "bin: source 'binary' — skipping") || !strings.Contains(out, "No tools to restore.") || g.rootCalls(dir, "get") != 0 {
+	if err != nil || !strings.Contains(out, "bin: source 'binary' — skipping") ||
+		!strings.Contains(out, "No tools to restore.") ||
+		g.rootCalls(dir, "get") != 0 {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 }
@@ -304,11 +319,24 @@ func TestFlagLikePackagesFromTheManifestAreRefused(t *testing.T) {
 
 	g := installGo(installOpts{})
 
-	if r := syncIn(t, g, dir, installOpts{}); r.code() != ierrors.Environment || !strings.Contains(r.runErr.Error(), "Invalid package") {
+	if r := syncIn(
+		t,
+		g,
+		dir,
+		installOpts{},
+	); r.code() != ierrors.Environment ||
+		!strings.Contains(r.runErr.Error(), "Invalid package") {
 		t.Fatalf("sync: err=%v", r.runErr)
 	}
 
-	if _, _, err := purgeIn(t, g, dir, "YES\n", "--restore"); ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "Invalid package") {
+	if _, _, err := purgeIn(
+		t,
+		g,
+		dir,
+		"YES\n",
+		"--restore",
+	); ierrors.CodeOf(err) != ierrors.Environment ||
+		!strings.Contains(err.Error(), "Invalid package") {
 		t.Fatalf("purge: err=%v", err)
 	}
 
@@ -328,7 +356,9 @@ func TestFlagLikePackagesFromTheManifestAreRefused(t *testing.T) {
 // Only a restoring purge needs Go; a plain purge works without it.
 func TestPurgeNeedsGoOnlyToRestore(t *testing.T) {
 	missing := func() *fakeGo {
-		return &fakeGo{intercept: func(gocmd.Call) (gocmd.Result, error, bool) { return gocmd.Result{}, gocmd.ErrNotFound, true }}
+		return &fakeGo{
+			intercept: func(gocmd.Call) (gocmd.Result, error, bool) { return gocmd.Result{}, gocmd.ErrNotFound, true },
+		}
 	}
 
 	dir := purgeProject(t, "split")
@@ -350,18 +380,32 @@ func TestPurgeNeedsGoOnlyToRestore(t *testing.T) {
 func TestPurgeAsksBeforeTakingTheLock(t *testing.T) {
 	dir := purgeProject(t, "split")
 
-	holder := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: &fakeGo{}}
+	holder := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      &fakeGo{},
+	}
 	if err := holder.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	err := holder.WithLock(context.Background(), func(context.Context) error {
-		c, o, _ := installContext(dir, installGo(installOpts{}), installOpts{stdin: "no\n", environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}})
+		c, o, _ := installContext(
+			dir,
+			installGo(installOpts{}),
+			installOpts{stdin: "no\n", environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}},
+		)
 		if err := run(command.NewPurge(), c); err != nil || !strings.Contains(o.String(), "Purge cancelled") {
 			t.Errorf("declined: err=%v out=%q", err, o.String())
 		}
 
-		c, _, _ = installContext(dir, installGo(installOpts{}), installOpts{stdin: "YES\n", environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}})
+		c, _, _ = installContext(
+			dir,
+			installGo(installOpts{}),
+			installOpts{stdin: "YES\n", environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}},
+		)
 		if err := run(command.NewPurge(), c); ierrors.CodeOf(err) != ierrors.Lock {
 			t.Errorf("confirmed: err=%v", err)
 		}

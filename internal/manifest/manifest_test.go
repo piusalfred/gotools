@@ -198,7 +198,10 @@ func TestUnknownKeysDropped(t *testing.T) {
 	m := res.Manifest
 
 	out, _ := m.Render()
-	if s := string(out); strings.Contains(s, "extra") || strings.Contains(s, "bogus") || !strings.Contains(s, `"jobs": 4`) {
+	if s := string(
+		out,
+	); strings.Contains(s, "extra") || strings.Contains(s, "bogus") ||
+		!strings.Contains(s, `"jobs": 4`) {
 		t.Fatalf("unexpected output:\n%s", s)
 	}
 }
@@ -287,7 +290,10 @@ func TestCheck(t *testing.T) {
 		return p
 	}
 
-	if st, err := manifest.Check(filepath.Join(dir, "none")); st != manifest.Missing || !errors.Is(err, manifest.ErrMissing) {
+	if st, err := manifest.Check(
+		filepath.Join(dir, "none"),
+	); st != manifest.Missing ||
+		!errors.Is(err, manifest.ErrMissing) {
 		t.Errorf("missing: %v %v", st, err)
 	}
 

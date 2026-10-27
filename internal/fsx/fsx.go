@@ -37,7 +37,7 @@ import (
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp.*")
 	if err != nil {
-		return err
+		return ierrors.Wrap(ierrors.Generic, "create temporary file", err)
 	}
 
 	name := tmp.Name()
@@ -57,9 +57,11 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 
 	if err != nil {
 		_ = os.Remove(name)
+
+		return ierrors.Wrap(ierrors.Generic, "write file atomically", err)
 	}
 
-	return err
+	return nil
 }
 
 // RejectSymlink returns an Environment error when path is a symlink. A path
@@ -68,6 +70,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 func RejectSymlink(path, context string) error {
 	fi, err := os.Lstat(path)
 	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		//nolint:nilerr // a path that is missing or cannot be inspected is not a symlink to refuse
 		return nil
 	}
 
@@ -75,7 +78,12 @@ func RejectSymlink(path, context string) error {
 		context = " (" + context + ")"
 	}
 
-	return ierrors.New(ierrors.Environment, "Refusing to follow symlink: %s%s\n   Remove the symlink and retry.", path, context)
+	return ierrors.New(
+		ierrors.Environment,
+		"Refusing to follow symlink: %s%s\n   Remove the symlink and retry.",
+		path,
+		context,
+	)
 }
 
 // Lexists reports whether path exists, without following a symlink: a

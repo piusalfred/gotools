@@ -55,7 +55,7 @@ func doctorProject(t *testing.T, strategy string) string {
 	return dir
 }
 
-func doctorIn(t *testing.T, g *fakeGo, dir string, environ []string, args ...string) (out, errs string, err error) {
+func doctorIn(t *testing.T, g *fakeGo, dir string, environ []string, args ...string) (string, string, error) {
 	t.Helper()
 
 	return runCommand(t, command.NewDoctor(), dir, g, environ, args...)
@@ -186,7 +186,8 @@ func TestDoctorOfflineFromTheFlagOrTheEnvironment(t *testing.T) {
 				t.Fatalf("%s: the proxy was probed", name)
 			}
 
-			if len(c.Args) > 0 && (c.Args[0] == "mod" || c.Args[0] == "tool") && !slices.Contains(c.Env, "GOPROXY=off") {
+			if len(c.Args) > 0 && (c.Args[0] == "mod" || c.Args[0] == "tool") &&
+				!slices.Contains(c.Env, "GOPROXY=off") {
 				t.Fatalf("%s: %v ran without GOPROXY=off", name, c.Args)
 			}
 		}

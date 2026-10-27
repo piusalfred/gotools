@@ -32,7 +32,9 @@ import (
 )
 
 func fp(tools []fingerprint.Tool, strategy, goVersion, prefix string) fingerprint.Fingerprint {
-	return fingerprint.New(fingerprint.Params{Tools: tools, Strategy: strategy, GoVersion: goVersion, ModulePrefix: prefix})
+	return fingerprint.New(
+		fingerprint.Params{Tools: tools, Strategy: strategy, GoVersion: goVersion, ModulePrefix: prefix},
+	)
 }
 
 func TestSensitivity(t *testing.T) {
@@ -44,10 +46,30 @@ func TestSensitivity(t *testing.T) {
 	}
 
 	changed := map[string]fingerprint.Fingerprint{
-		"version":  fp([]fingerprint.Tool{{Name: "a", Source: "go", Package: "p/a", Version: "v2"}}, "split", "1.24", "pre"),
-		"name":     fp([]fingerprint.Tool{{Name: "b", Source: "go", Package: "p/a", Version: "v1"}}, "split", "1.24", "pre"),
-		"source":   fp([]fingerprint.Tool{{Name: "a", Source: "x", Package: "p/a", Version: "v1"}}, "split", "1.24", "pre"),
-		"package":  fp([]fingerprint.Tool{{Name: "a", Source: "go", Package: "p/b", Version: "v1"}}, "split", "1.24", "pre"),
+		"version": fp(
+			[]fingerprint.Tool{{Name: "a", Source: "go", Package: "p/a", Version: "v2"}},
+			"split",
+			"1.24",
+			"pre",
+		),
+		"name": fp(
+			[]fingerprint.Tool{{Name: "b", Source: "go", Package: "p/a", Version: "v1"}},
+			"split",
+			"1.24",
+			"pre",
+		),
+		"source": fp(
+			[]fingerprint.Tool{{Name: "a", Source: "x", Package: "p/a", Version: "v1"}},
+			"split",
+			"1.24",
+			"pre",
+		),
+		"package": fp(
+			[]fingerprint.Tool{{Name: "a", Source: "go", Package: "p/b", Version: "v1"}},
+			"split",
+			"1.24",
+			"pre",
+		),
 		"strategy": fp(tools, "module", "1.24", "pre"),
 		"go":       fp(tools, "split", "1.25", "pre"),
 		"prefix":   fp(tools, "split", "1.24", "other"),
@@ -80,7 +102,12 @@ func TestNewDoesNotReorderTheCallersSlice(t *testing.T) {
 }
 
 func TestStringAndParse(t *testing.T) {
-	f := fp([]fingerprint.Tool{{Name: "a", Source: "go", Package: "p/a", Version: "v1"}}, "split", "1.27", "github.com/x/tools")
+	f := fp(
+		[]fingerprint.Tool{{Name: "a", Source: "go", Package: "p/a", Version: "v1"}},
+		"split",
+		"1.27",
+		"github.com/x/tools",
+	)
 
 	if got := f.String(); !strings.HasSuffix(got, "|split|1.27|github.com/x/tools") || strings.Count(got, "|") != 3 {
 		t.Fatalf("String() = %q", got)
@@ -168,7 +195,8 @@ func TestWriteReplacesAndFailsInAMissingDirectory(t *testing.T) {
 		t.Fatalf("Read = %+v", got)
 	}
 
-	if err := fingerprint.NewFile(filepath.Join(dir, "no", "dir")).Write(fingerprint.Fingerprint{Digest: "d"}); err == nil {
+	if err := fingerprint.NewFile(filepath.Join(dir, "no", "dir")).
+		Write(fingerprint.Fingerprint{Digest: "d"}); err == nil {
 		t.Fatal("missing directory accepted")
 	}
 }
@@ -220,7 +248,9 @@ func TestFilesAreCoveredByTheirContentAndNotTheirOrder(t *testing.T) {
 	b := fingerprint.File{Path: "a.sum", Digest: "bbb"}
 
 	with := func(files ...fingerprint.File) fingerprint.Fingerprint {
-		return fingerprint.New(fingerprint.Params{Tools: tools, Files: files, Strategy: "split", GoVersion: "1.24", ModulePrefix: "p"})
+		return fingerprint.New(
+			fingerprint.Params{Tools: tools, Files: files, Strategy: "split", GoVersion: "1.24", ModulePrefix: "p"},
+		)
 	}
 
 	base := with(a, b)
@@ -245,7 +275,11 @@ func TestFilesAreCoveredByTheirContentAndNotTheirOrder(t *testing.T) {
 func TestNoFilesDigestsTheToolsAsBefore(t *testing.T) {
 	tools := []fingerprint.Tool{{Name: "a", Source: "go", Package: "p/a", Version: "v1"}}
 
-	if fingerprint.New(fingerprint.Params{Tools: tools}) != fingerprint.New(fingerprint.Params{Tools: tools, Files: []fingerprint.File{}}) {
+	if fingerprint.New(
+		fingerprint.Params{Tools: tools},
+	) != fingerprint.New(
+		fingerprint.Params{Tools: tools, Files: []fingerprint.File{}},
+	) {
 		t.Fatal("an empty file list changes the digest")
 	}
 }

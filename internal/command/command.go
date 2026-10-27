@@ -32,6 +32,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	urfave "github.com/urfave/cli/v3"
@@ -39,18 +40,39 @@ import (
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 )
 
+// unknownValue is what a table or document shows for a value that cannot be
+// determined.
+const unknownValue = "unknown"
+
 type Commander struct {
 	root     *urfave.Command
 	context  *Context
 	Commands []Command
 }
 
-// Run
+// Run runs the commander's root command with args, as RunRoot does.
 func (c *Commander) Run(ctx context.Context, args []string) error {
-	if err := c.root.Run(ctx, args); err != nil {
+	return RunRoot(ctx, c.root, args)
+}
+
+// RunRoot runs root with args and returns its failure as an *errors.Error. A
+// command's own failure already is one and passes through untouched, keeping
+// its exit code. Anything else comes from urfave/cli itself and has no code of
+// its own, so it is a generic failure (exit 1) that keeps its message.
+func RunRoot(ctx context.Context, root *urfave.Command, args []string) error {
+	return withExitCode(root.Run(ctx, args))
+}
+
+func withExitCode(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if _, ok := errors.AsType[*ierrors.Error](err); ok {
 		return err
 	}
-	return nil
+
+	return ierrors.Wrap(ierrors.Generic, "", err)
 }
 
 func (c *Commander) RegisterCommand(cmd Command) {
@@ -174,7 +196,25 @@ func (s Spec) bind(uc *urfave.Command, c *Context) {
 
 // All lists every command, in overview order.
 func All() []Command {
-	return []Command{NewInit(), NewInstall(), NewSync(), NewMigrate(), NewVersion(), NewInfo(), NewCheck(), NewConfig(), NewRemove(), NewRename(), NewUpgrade(), NewList(), NewExec(), NewUninstall(), NewPurge(), NewDoctor(), NewSelfUpdate()}
+	return []Command{
+		NewInit(),
+		NewInstall(),
+		NewSync(),
+		NewMigrate(),
+		NewVersion(),
+		NewInfo(),
+		NewCheck(),
+		NewConfig(),
+		NewRemove(),
+		NewRename(),
+		NewUpgrade(),
+		NewList(),
+		NewExec(),
+		NewUninstall(),
+		NewPurge(),
+		NewDoctor(),
+		NewSelfUpdate(),
+	}
 }
 
 func prefixed(prog string, lines []string) []string {
@@ -236,16 +276,16 @@ func noExtraArgs(c *urfave.Command) error {
 
 // positional returns the positional arguments for a Before step. urfave/cli
 // assigns them to the declared names only after Before has run, so a step that
-// checks them first reads them here, and refuses a count outside min..max (max
-// -1 is any number) as a usage error.
-func positional(c *urfave.Command, min, max int) ([]string, error) {
+// checks them first reads them here, and refuses a count outside minArgs..maxArgs
+// (maxArgs -1 is any number) as a usage error.
+func positional(c *urfave.Command, minArgs, maxArgs int) ([]string, error) {
 	args := c.Args().Slice()
 
 	switch {
-	case len(args) < min:
+	case len(args) < minArgs:
 		return nil, ierrors.New(ierrors.Usage, "Missing argument\n   Usage: %s", usageLine(c))
-	case max >= 0 && len(args) > max:
-		return nil, ierrors.New(ierrors.Usage, "Unknown argument: %s\n   Usage: %s", args[max], usageLine(c))
+	case maxArgs >= 0 && len(args) > maxArgs:
+		return nil, ierrors.New(ierrors.Usage, "Unknown argument: %s\n   Usage: %s", args[maxArgs], usageLine(c))
 	}
 
 	return args, nil

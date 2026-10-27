@@ -63,18 +63,58 @@ func TestDetect(t *testing.T) {
 		found []strategy.Strategy
 	}{
 		{"empty", map[string]string{"tools/": ""}, "", nil},
-		{"unified", map[string]string{"tools/go.mod": "tool github.com/foo/bar\n"}, strategy.Unified, []strategy.Strategy{strategy.Unified}},
-		{"unified block", map[string]string{"tools/go.mod": "module t\n\ntool (\n\ta/b\n)\n"}, strategy.Unified, []strategy.Strategy{strategy.Unified}},
+		{
+			"unified",
+			map[string]string{"tools/go.mod": "tool github.com/foo/bar\n"},
+			strategy.Unified,
+			[]strategy.Strategy{strategy.Unified},
+		},
+		{
+			"unified block",
+			map[string]string{"tools/go.mod": "module t\n\ntool (\n\ta/b\n)\n"},
+			strategy.Unified,
+			[]strategy.Strategy{strategy.Unified},
+		},
 		{"go.mod without tools is not unified", map[string]string{"tools/go.mod": "module t\n"}, "", nil},
-		{"split", map[string]string{"tools/gofumpt.mod": "module x\n"}, strategy.Split, []strategy.Strategy{strategy.Split}},
-		{"module", map[string]string{"tools/gofumpt/go.mod": "module x\n"}, strategy.Module, []strategy.Strategy{strategy.Module}},
+		{
+			"split",
+			map[string]string{"tools/gofumpt.mod": "module x\n"},
+			strategy.Split,
+			[]strategy.Strategy{strategy.Split},
+		},
+		{
+			"module",
+			map[string]string{"tools/gofumpt/go.mod": "module x\n"},
+			strategy.Module,
+			[]strategy.Strategy{strategy.Module},
+		},
 		{"dot entries ignored", map[string]string{
 			"tools/.gotools.lock/go.mod": "module x\n", "tools/.hidden.mod": "", "tools/.gotools.fingerprint": "x",
 		}, "", nil},
-		{"unified+split", map[string]string{"tools/go.mod": "tool a/b\n", "tools/extra.mod": ""}, strategy.Unified, []strategy.Strategy{strategy.Unified, strategy.Split}},
-		{"unified+module", map[string]string{"tools/go.mod": "tool a/b\n", "tools/sub/go.mod": ""}, strategy.Unified, []strategy.Strategy{strategy.Unified, strategy.Module}},
-		{"split+module", map[string]string{"tools/extra.mod": "", "tools/sub/go.mod": ""}, strategy.Module, []strategy.Strategy{strategy.Module, strategy.Split}},
-		{"all three", map[string]string{"tools/go.mod": "tool a/b\n", "tools/extra.mod": "", "tools/sub/go.mod": ""}, strategy.Unified, []strategy.Strategy{strategy.Unified, strategy.Module, strategy.Split}},
+		{
+			"unified+split",
+			map[string]string{"tools/go.mod": "tool a/b\n", "tools/extra.mod": ""},
+			strategy.Unified,
+			[]strategy.Strategy{strategy.Unified, strategy.Split},
+		},
+		{
+			"unified+module",
+			map[string]string{"tools/go.mod": "tool a/b\n", "tools/sub/go.mod": ""},
+			strategy.Unified,
+			[]strategy.Strategy{strategy.Unified, strategy.Module},
+		},
+		{
+			"split+module",
+			map[string]string{"tools/extra.mod": "", "tools/sub/go.mod": ""},
+			strategy.Module,
+			[]strategy.Strategy{strategy.Module, strategy.Split},
+		},
+		{
+			"all three",
+			map[string]string{"tools/go.mod": "tool a/b\n", "tools/extra.mod": "", "tools/sub/go.mod": ""},
+			strategy.Unified,
+			[]strategy.Strategy{strategy.Unified, strategy.Module, strategy.Split},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -147,7 +187,11 @@ func TestModFilePaths(t *testing.T) {
 		}
 	}
 
-	if _, err := (strategy.Layout{Strategy: "bogus", Dir: "tools"}).ModFileRel("x"); ierrors.CodeOf(err) != ierrors.Environment {
+	if _, err := (strategy.Layout{Strategy: "bogus", Dir: "tools"}).ModFileRel(
+		"x",
+	); ierrors.CodeOf(
+		err,
+	) != ierrors.Environment {
 		t.Errorf("unknown strategy: %v", err)
 	}
 }

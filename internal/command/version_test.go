@@ -30,15 +30,22 @@ import (
 )
 
 // versionIn runs `version args`.
-func versionIn(t *testing.T, args ...string) (out string, g *fakeGo, err error) {
+func versionIn(t *testing.T, args ...string) (string, *fakeGo, error) {
 	t.Helper()
 
 	var buf bytes.Buffer
 
-	g = &fakeGo{}
-	c := &command.Context{Stdout: &buf, Stderr: &bytes.Buffer{}, Program: "gotoolx", Version: "v9.9.9", WorkDir: t.TempDir(), Go: g}
+	g := &fakeGo{}
+	c := &command.Context{
+		Stdout:  &buf,
+		Stderr:  &bytes.Buffer{},
+		Program: "gotoolx",
+		Version: "v9.9.9",
+		WorkDir: t.TempDir(),
+		Go:      g,
+	}
 
-	err = run(command.NewVersion(), c, args...)
+	err := run(command.NewVersion(), c, args...)
 
 	return buf.String(), g, err
 }
@@ -87,7 +94,9 @@ func TestVersion(t *testing.T) {
 func TestVersionRefusesConflictingFormats(t *testing.T) {
 	for _, args := range [][]string{{"--json", "--text"}, {"--json", "--format=text"}, {"--text", "--format=json"}} {
 		out, _, err := versionIn(t, args...)
-		if ierrors.CodeOf(err) != ierrors.Usage || out != "" || !strings.Contains(err.Error(), "Conflicting output formats") || !strings.Contains(err.Error(), "Usage: version [options]") {
+		if ierrors.CodeOf(err) != ierrors.Usage || out != "" ||
+			!strings.Contains(err.Error(), "Conflicting output formats") ||
+			!strings.Contains(err.Error(), "Usage: version [options]") {
 			t.Errorf("version %v: out=%q err=%v", args, out, err)
 		}
 	}

@@ -90,7 +90,12 @@ func TestAfterRunsOnlyWhenRunSucceeded(t *testing.T) {
 func TestMissingStepsAreSkipped(t *testing.T) {
 	ran := false
 
-	uc := Spec{Name: "demo", Run: func(context.Context, *urfave.Command) error { ran = true; return nil }}.Build(&Context{})
+	uc := Spec{
+		Name: "demo",
+		Run:  func(context.Context, *urfave.Command) error { ran = true; return nil },
+	}.Build(
+		&Context{},
+	)
 	if err := runDemo(uc); err != nil || !ran {
 		t.Fatalf("err=%v ran=%v", err, ran)
 	}
@@ -144,10 +149,15 @@ func TestUsageErrorMapsParseFailuresToExitTwo(t *testing.T) {
 func TestAFlagValidatorFailureIsAUsageError(t *testing.T) {
 	var got []string
 
-	uc := demo(&got, nil, &urfave.StringFlag{Name: "level", Validator: func(string) error { return errors.New("too loud") }})
+	uc := demo(
+		&got,
+		nil,
+		&urfave.StringFlag{Name: "level", Validator: func(string) error { return errors.New("too loud") }},
+	)
 
 	err := runDemo(uc, "--level=11")
-	if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "too loud") || !strings.Contains(err.Error(), "-level") {
+	if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "too loud") ||
+		!strings.Contains(err.Error(), "-level") {
 		t.Fatalf("err = %v", err)
 	}
 
@@ -157,14 +167,20 @@ func TestAFlagValidatorFailureIsAUsageError(t *testing.T) {
 }
 
 func TestNoExtraArgs(t *testing.T) {
-	uc := Spec{Name: "demo", Before: func(_ context.Context, cmd *urfave.Command) error { return noExtraArgs(cmd) }}.Build(&Context{Program: "gotools"})
+	uc := Spec{
+		Name:   "demo",
+		Before: func(_ context.Context, cmd *urfave.Command) error { return noExtraArgs(cmd) },
+	}.Build(
+		&Context{Program: "gotools"},
+	)
 
 	if err := runDemo(uc); err != nil {
 		t.Fatalf("no args: %v", err)
 	}
 
 	err := runDemo(uc, "extra")
-	if ierrors.CodeOf(err) != ierrors.Usage || !strings.HasPrefix(err.Error(), "Unknown argument: extra\n   Usage: demo") {
+	if ierrors.CodeOf(err) != ierrors.Usage ||
+		!strings.HasPrefix(err.Error(), "Unknown argument: extra\n   Usage: demo") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -177,7 +193,10 @@ func TestUsageLine(t *testing.T) {
 		{Spec{Name: "list"}, "demo"},
 		{Spec{Name: "x", Flags: []urfave.Flag{&urfave.BoolFlag{Name: "f"}}}, "demo [options]"},
 		{Spec{Name: "x", ArgsUsage: "[name] <pkg>"}, "demo [name] <pkg>"},
-		{Spec{Name: "x", ArgsUsage: "<tool>", Flags: []urfave.Flag{&urfave.BoolFlag{Name: "f"}}}, "demo [options] <tool>"},
+		{
+			Spec{Name: "x", ArgsUsage: "<tool>", Flags: []urfave.Flag{&urfave.BoolFlag{Name: "f"}}},
+			"demo [options] <tool>",
+		},
 	}
 
 	for _, c := range cases {
@@ -207,7 +226,8 @@ func TestSpecBuildCarriesEveryDeclaration(t *testing.T) {
 		Flags: []urfave.Flag{flag}, Args: []urfave.Argument{arg},
 	}.Build(&Context{Program: "gx"})
 
-	if uc.Name != "demo" || !slices.Equal(uc.Aliases, []string{"d"}) || uc.Usage != "Demo." || uc.ArgsUsage != "<spec>" {
+	if uc.Name != "demo" || !slices.Equal(uc.Aliases, []string{"d"}) || uc.Usage != "Demo." ||
+		uc.ArgsUsage != "<spec>" {
 		t.Fatalf("names: %+v", uc)
 	}
 

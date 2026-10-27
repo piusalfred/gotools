@@ -261,7 +261,12 @@ func TestAddInstallsAndRecordsInEveryStrategy(t *testing.T) {
 		getArgs  string
 		toolArgs string
 	}{
-		{strategy.Split, "x.mod", "get -tool -modfile=x.mod example.com/a/x@v1.0.0", "tool -n -modfile=%s/tools/x.mod x"},
+		{
+			strategy.Split,
+			"x.mod",
+			"get -tool -modfile=x.mod example.com/a/x@v1.0.0",
+			"tool -n -modfile=%s/tools/x.mod x",
+		},
 		{strategy.Module, "x/go.mod", "get -tool example.com/a/x@v1.0.0", "tool -n x"},
 		{strategy.Unified, "go.mod", "get -tool example.com/a/x@v1.0.0", "tool -n x"},
 	}
@@ -301,7 +306,10 @@ func TestAddInstallsAndRecordsInEveryStrategy(t *testing.T) {
 func TestAddCreatesTheModfileFromTheLayout(t *testing.T) {
 	f := newFixture(t, strategy.Split)
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/a/x@v1.0.0"}); err != nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/a/x@v1.0.0"},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -311,7 +319,10 @@ func TestAddCreatesTheModfileFromTheLayout(t *testing.T) {
 
 	f = newFixture(t, strategy.Unified)
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/a/x@v1.0.0"}); err != nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/a/x@v1.0.0"},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -338,7 +349,10 @@ func TestAddAtLatestResolvesAndHintsToPin(t *testing.T) {
 func TestAddQuietAndNoFlush(t *testing.T) {
 	f := newFixture(t, strategy.Split)
 
-	tool, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/a/x@latest", Quiet: true, NoFlush: true})
+	tool, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/a/x@latest", Quiet: true, NoFlush: true},
+	)
 	if err != nil || tool.Name != "x" {
 		t.Fatalf("tool=%+v err=%v", tool, err)
 	}
@@ -355,11 +369,15 @@ func TestAddQuietAndNoFlush(t *testing.T) {
 func TestAddAdvisoryWarningsGoToTheErrorStream(t *testing.T) {
 	f := newFixture(t, strategy.Split)
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/a/x@v1.0.0", Quiet: true}); err != nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/a/x@v1.0.0", Quiet: true},
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	if !slices.Equal(f.adv.modules, []string{"example.com/a/x"}) || !strings.Contains(f.errb.String(), "GOPRIVATE covers example.com/a/x") {
+	if !slices.Equal(f.adv.modules, []string{"example.com/a/x"}) ||
+		!strings.Contains(f.errb.String(), "GOPRIVATE covers example.com/a/x") {
 		t.Fatalf("modules=%v stderr=%q", f.adv.modules, f.errb)
 	}
 }
@@ -382,7 +400,12 @@ func TestAddRejectsABadPackageBeforeAnyWork(t *testing.T) {
 func TestAddRejectsUnsafeNames(t *testing.T) {
 	f := newFixture(t, strategy.Split)
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "../x", Pkg: "example.com/a/x"}); ierrors.CodeOf(err) != ierrors.Usage {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "../x", Pkg: "example.com/a/x"},
+	); ierrors.CodeOf(
+		err,
+	) != ierrors.Usage {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -394,7 +417,12 @@ func TestAddVersionResolutionFailureStopsEarly(t *testing.T) {
 		Versions: versions{err: ierrors.New(ierrors.Environment, "no go version")},
 	})
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/a/x"}); ierrors.CodeOf(err) != ierrors.Environment {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/a/x"},
+	); ierrors.CodeOf(
+		err,
+	) != ierrors.Environment {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -415,7 +443,12 @@ func TestAddFailureRollsBackFilesAndManifest(t *testing.T) {
 		{"other", func(gocmd.Call) (gocmd.Result, error) {
 			return gocmd.Result{Code: 1, Stderr: []byte("boom")}, nil
 		}, ierrors.Generic, "boom"},
-		{"go missing", func(gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound }, ierrors.Environment, "go is not installed"},
+		{
+			"go missing",
+			func(gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound },
+			ierrors.Environment,
+			"go is not installed",
+		},
 		{"timeout", func(gocmd.Call) (gocmd.Result, error) {
 			return gocmd.Result{}, &gocmd.TimeoutError{After: 2 * time.Second}
 		}, ierrors.Network, "GOTOOLS_OPERATION_TIMEOUT"},
@@ -471,7 +504,10 @@ func TestAddFailedReinstallRestoresTheOriginalModfile(t *testing.T) {
 		return gocmd.Result{}, nil
 	}})
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/other/x@v1.5.0"}); err == nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/other/x@v1.5.0"},
+	); err == nil {
 		t.Fatal("install succeeded")
 	}
 
@@ -482,9 +518,15 @@ func TestAddFailedReinstallRestoresTheOriginalModfile(t *testing.T) {
 
 func TestAddReplacesTheStaleDirectiveOfAForcedReinstall(t *testing.T) {
 	f := newFixture(t, strategy.Split, toolX)
-	f.write("x.mod", "module example.com/proj/tools/x\n\ngo 1.24\n\ntool example.com/old/x\n\nrequire example.com/old/x v0.1.0\n")
+	f.write(
+		"x.mod",
+		"module example.com/proj/tools/x\n\ngo 1.24\n\ntool example.com/old/x\n\nrequire example.com/old/x v0.1.0\n",
+	)
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/new/x@v1.5.0"}); err != nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/new/x@v1.5.0"},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -495,10 +537,21 @@ func TestAddReplacesTheStaleDirectiveOfAForcedReinstall(t *testing.T) {
 }
 
 func TestAddUnifiedKeepsDirectivesOtherToolsUse(t *testing.T) {
-	f := newFixture(t, strategy.Unified, toolX, manifest.Tool{Name: "alias", Source: "go", Package: toolX.Package, Version: "v1.0.0"})
-	f.write("go.mod", "module example.com/proj/tools\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a/x v1.0.0\n")
+	f := newFixture(
+		t,
+		strategy.Unified,
+		toolX,
+		manifest.Tool{Name: "alias", Source: "go", Package: toolX.Package, Version: "v1.0.0"},
+	)
+	f.write(
+		"go.mod",
+		"module example.com/proj/tools\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a/x v1.0.0\n",
+	)
 
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "x", Pkg: "example.com/new/x@v1.5.0"}); err != nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "x", Pkg: "example.com/new/x@v1.5.0"},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -510,7 +563,10 @@ func TestAddUnifiedKeepsDirectivesOtherToolsUse(t *testing.T) {
 func TestAddRejectTwin(t *testing.T) {
 	f := newFixture(t, strategy.Split, toolX)
 
-	_, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "fmt", Pkg: "example.com/a/x@v1.0.0", RejectTwin: true})
+	_, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "fmt", Pkg: "example.com/a/x@v1.0.0", RejectTwin: true},
+	)
 	if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "gotools rename x fmt") {
 		t.Fatalf("err = %v", err)
 	}
@@ -520,12 +576,18 @@ func TestAddRejectTwin(t *testing.T) {
 	}
 
 	// A different version in split is a different tool.
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "fmt", Pkg: "example.com/a/x@v1.5.0", RejectTwin: true}); err != nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "fmt", Pkg: "example.com/a/x@v1.5.0", RejectTwin: true},
+	); err != nil {
 		t.Fatalf("different version refused: %v", err)
 	}
 
 	// Without the option a twin is accepted: sync must restore such manifests.
-	if _, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "again", Pkg: "example.com/a/x@v1.0.0"}); err != nil {
+	if _, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "again", Pkg: "example.com/a/x@v1.0.0"},
+	); err != nil {
 		t.Fatalf("twin refused without RejectTwin: %v", err)
 	}
 }
@@ -533,7 +595,10 @@ func TestAddRejectTwin(t *testing.T) {
 func TestAddRejectTwinUnifiedIgnoresTheVersion(t *testing.T) {
 	f := newFixture(t, strategy.Unified, toolX)
 
-	_, err := f.mgr.Add(context.Background(), tools.AddOptions{Name: "fmt", Pkg: "example.com/a/x@v1.5.0", RejectTwin: true})
+	_, err := f.mgr.Add(
+		context.Background(),
+		tools.AddOptions{Name: "fmt", Pkg: "example.com/a/x@v1.5.0", RejectTwin: true},
+	)
 	if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "one version of each module") {
 		t.Fatalf("err = %v", err)
 	}
@@ -623,7 +688,11 @@ func TestRestoreSerialAndParallel(t *testing.T) {
 func TestRestoreUnifiedStaysSerialAndSaysSo(t *testing.T) {
 	f := newFixture(t, strategy.Unified)
 
-	if err := f.mgr.Restore(context.Background(), []manifest.Tool{toolX, toolY}, tools.RestoreOptions{Jobs: 4}); err != nil {
+	if err := f.mgr.Restore(
+		context.Background(),
+		[]manifest.Tool{toolX, toolY},
+		tools.RestoreOptions{Jobs: 4},
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -655,7 +724,12 @@ func TestRestoreParallelFailureWritesNoManifest(t *testing.T) {
 func TestRestoreNothingIsFine(t *testing.T) {
 	f := newFixture(t, strategy.Split)
 
-	if err := f.mgr.Restore(context.Background(), nil, tools.RestoreOptions{Jobs: 4}); err != nil || len(f.goes.calls) != 0 {
+	if err := f.mgr.Restore(
+		context.Background(),
+		nil,
+		tools.RestoreOptions{Jobs: 4},
+	); err != nil ||
+		len(f.goes.calls) != 0 {
 		t.Fatalf("err=%v calls=%v", err, f.goes.calls)
 	}
 }
@@ -800,7 +874,8 @@ func TestRemoveUnifiedMissingFileOrDirective(t *testing.T) {
 	f.write("go.mod", "module m\n\ngo 1.24\n")
 
 	res, err := f.mgr.Remove(context.Background(), "ghost")
-	if err != nil || res != (tools.RemoveResult{}) || len(f.goes.calls) != 0 || !strings.Contains(f.out.String(), "Tool ghost not found in tools/go.mod") {
+	if err != nil || res != (tools.RemoveResult{}) || len(f.goes.calls) != 0 ||
+		!strings.Contains(f.out.String(), "Tool ghost not found in tools/go.mod") {
 		t.Fatalf("res=%+v err=%v calls=%v out=%q", res, err, f.goes.calls, f.out)
 	}
 }
@@ -813,7 +888,8 @@ func TestRemoveUnifiedGoFailure(t *testing.T) {
 	}})
 
 	_, err := f.mgr.Remove(context.Background(), "x")
-	if err == nil || !strings.Contains(err.Error(), "go mod edit -droptool failed (exit 1)") || len(f.persisted()) != 1 {
+	if err == nil || !strings.Contains(err.Error(), "go mod edit -droptool failed (exit 1)") ||
+		len(f.persisted()) != 1 {
 		t.Fatalf("err = %v, persisted %v", err, f.persisted())
 	}
 }
@@ -852,7 +928,8 @@ func TestRenameModuleStrategyMovesTheDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if f.onDisk("x") || !f.onDisk("fmt/go.mod") || !strings.Contains(f.read("fmt/go.mod"), "module example.com/proj/tools/fmt") {
+	if f.onDisk("x") || !f.onDisk("fmt/go.mod") ||
+		!strings.Contains(f.read("fmt/go.mod"), "module example.com/proj/tools/fmt") {
 		t.Fatal("directory not moved")
 	}
 }
@@ -864,7 +941,8 @@ func TestRenameWithoutAModfileChangesTheManifestOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := f.persisted(); !slices.Equal(got, []string{"fmt"}) || f.rec.n != 0 || !strings.Contains(f.out.String(), "renaming in the manifest only") {
+	if got := f.persisted(); !slices.Equal(got, []string{"fmt"}) || f.rec.n != 0 ||
+		!strings.Contains(f.out.String(), "renaming in the manifest only") {
 		t.Fatalf("persisted=%v recorded=%d out=%q", got, f.rec.n, f.out)
 	}
 }
@@ -885,7 +963,14 @@ func TestRenameDryRunChecksButChangesNothing(t *testing.T) {
 		t.Fatalf("output %q", f.out)
 	}
 
-	if err := f.mgr.Rename(context.Background(), "x", "x", tools.RenameOptions{DryRun: true}); ierrors.CodeOf(err) != ierrors.Usage {
+	if err := f.mgr.Rename(
+		context.Background(),
+		"x",
+		"x",
+		tools.RenameOptions{DryRun: true},
+	); ierrors.CodeOf(
+		err,
+	) != ierrors.Usage {
 		t.Fatalf("identical names accepted in a dry run: %v", err)
 	}
 }

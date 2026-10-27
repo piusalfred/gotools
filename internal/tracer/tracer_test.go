@@ -127,7 +127,8 @@ func TestLogRecordsAFinishedInvocation(t *testing.T) {
 		t.Errorf("ts = %q: the timestamp must carry its zone", rec.TS)
 	}
 
-	if rec.Level != tracer.LevelInfo || rec.Tool != "fmt" || rec.Binary != "gofumpt" || rec.Stdin != tracer.StdinPipe || rec.Strategy != "split" {
+	if rec.Level != tracer.LevelInfo || rec.Tool != "fmt" || rec.Binary != "gofumpt" || rec.Stdin != tracer.StdinPipe ||
+		rec.Strategy != "split" {
 		t.Errorf("record = %+v", rec)
 	}
 
@@ -165,7 +166,11 @@ func TestFatalRecord(t *testing.T) {
 	var rec tracer.Record
 
 	b, _ := os.ReadFile(path)
-	if err := json.Unmarshal(b, &rec); err != nil || rec.Level != tracer.LevelFatal || rec.Error != `boom "quoted"` || rec.ExitCode != nil {
+	if err := json.Unmarshal(
+		b,
+		&rec,
+	); err != nil || rec.Level != tracer.LevelFatal || rec.Error != `boom "quoted"` ||
+		rec.ExitCode != nil {
 		t.Fatalf("%+v %v", rec, err)
 	}
 }

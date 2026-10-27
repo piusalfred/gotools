@@ -81,7 +81,8 @@ func TestBinaryReportsAnUnknownCommand(t *testing.T) {
 	cmd.Stdin = devnull
 
 	out, err := cmd.CombinedOutput()
-	if _, ok := err.(*exec.ExitError); !ok {
+	exitError := &exec.ExitError{}
+	if !errors.As(err, &exitError) {
 		t.Fatalf("an unknown command must fail, err = %v", err)
 	}
 
@@ -98,7 +99,8 @@ func runIn(t *testing.T, bin, dir string, args ...string) (string, int) {
 	cmd.Dir = dir
 
 	out, err := cmd.CombinedOutput()
-	if ee, ok := err.(*exec.ExitError); ok {
+	ee := &exec.ExitError{}
+	if errors.As(err, &ee) {
 		return string(out), ee.ExitCode()
 	}
 
@@ -113,7 +115,11 @@ func project(t *testing.T) string {
 	t.Helper()
 
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/t\n\ngo 1.24\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "go.mod"),
+		[]byte("module example.com/t\n\ngo 1.24\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -125,12 +131,14 @@ func TestInitWritesTheManifestAndSyncs(t *testing.T) {
 	bin, dir := build(t), project(t)
 
 	out, code := runIn(t, bin, dir, "init", "--strategy", "module")
-	if code != 0 || !strings.Contains(out, "Initialized .gotools.json (strategy=module, dir=tools)") || !strings.Contains(out, "Sync complete") {
+	if code != 0 || !strings.Contains(out, "Initialized .gotools.json (strategy=module, dir=tools)") ||
+		!strings.Contains(out, "Sync complete") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
 	b, err := os.ReadFile(filepath.Join(dir, ".gotools.json"))
-	if err != nil || !strings.Contains(string(b), `"strategy": "module"`) || !strings.Contains(string(b), `"module_prefix": "example.com/t"`) {
+	if err != nil || !strings.Contains(string(b), `"strategy": "module"`) ||
+		!strings.Contains(string(b), `"module_prefix": "example.com/t"`) {
 		t.Fatalf("manifest %q: %v", b, err)
 	}
 }
@@ -139,7 +147,8 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	bin, dir := build(t), project(t)
 
 	out, code := runIn(t, bin, dir, "init", "--dry-run", "--strategy=unified")
-	if code != 0 || !strings.Contains(out, "[dry-run] Would write .gotools.json (strategy=unified, dir=tools)") || !strings.Contains(out, "Would sync (strategy=unified") {
+	if code != 0 || !strings.Contains(out, "[dry-run] Would write .gotools.json (strategy=unified, dir=tools)") ||
+		!strings.Contains(out, "Would sync (strategy=unified") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -176,12 +185,17 @@ func TestSyncAutoMigratesAndMigrateRuns(t *testing.T) {
 		t.Fatalf("init: code=%d out=%q", code, out)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "tools", "x.mod"), []byte("module tools/x\n\ngo 1.24\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "tools", "x.mod"),
+		[]byte("module tools/x\n\ngo 1.24\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
 	out, code := runIn(t, bin, dir, "sync")
-	if code != 0 || !strings.Contains(out, "Auto-migrating to 'module'") || !strings.Contains(out, "Migration from 'split' to 'module' complete") {
+	if code != 0 || !strings.Contains(out, "Auto-migrating to 'module'") ||
+		!strings.Contains(out, "Migration from 'split' to 'module' complete") {
 		t.Fatalf("sync: code=%d out=%q", code, out)
 	}
 
@@ -190,7 +204,14 @@ func TestSyncAutoMigratesAndMigrateRuns(t *testing.T) {
 		t.Fatalf("migrate --dry-run: code=%d out=%q", code, out)
 	}
 
-	if out, code := runIn(t, bin, dir, "migrate", "flat"); code != 2 || !strings.Contains(out, "Invalid strategy: flat") {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"migrate",
+		"flat",
+	); code != 2 ||
+		!strings.Contains(out, "Invalid strategy: flat") {
 		t.Fatalf("migrate flat: code=%d out=%q", code, out)
 	}
 }
@@ -211,7 +232,15 @@ func TestVersionAndItsFlags(t *testing.T) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
-	if out, code := runIn(t, bin, t.TempDir(), "version", "--json", "--text"); code != 2 || !strings.Contains(out, "Conflicting output formats") {
+	if out, code := runIn(
+		t,
+		bin,
+		t.TempDir(),
+		"version",
+		"--json",
+		"--text",
+	); code != 2 ||
+		!strings.Contains(out, "Conflicting output formats") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }
@@ -234,11 +263,20 @@ func TestInfoShowsAToolAndItsExitCode(t *testing.T) {
 	}
 
 	out, code := runIn(t, bin, dir, "info", "goimports")
-	if code != 0 || !strings.Contains(out, "  Version:    v0.30.0\n") || !strings.Contains(out, "  Strategy:   split\n") {
+	if code != 0 || !strings.Contains(out, "  Version:    v0.30.0\n") ||
+		!strings.Contains(out, "  Strategy:   split\n") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
-	if out, code := runIn(t, bin, dir, "info", "nope", "--json"); code != 5 || !strings.Contains(out, `"error":"tool not found: nope"`) {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"info",
+		"nope",
+		"--json",
+	); code != 5 ||
+		!strings.Contains(out, `"error":"tool not found: nope"`) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -255,7 +293,11 @@ func TestCheckExitsFiveForAToolThatCannotRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dir, "tools", "ghost.mod"), []byte("module tools/ghost\n\ngo 1.24\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "tools", "ghost.mod"),
+		[]byte("module tools/ghost\n\ngo 1.24\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -265,7 +307,8 @@ func TestCheckExitsFiveForAToolThatCannotRun(t *testing.T) {
 	}
 
 	out, code := runIn(t, bin, dir, "check")
-	if code != 5 || !strings.Contains(out, "❌ ghost (example.com/ghost@v1.0.0) — not runnable") || !strings.Contains(out, "0 passed, 1 failed") {
+	if code != 5 || !strings.Contains(out, "❌ ghost (example.com/ghost@v1.0.0) — not runnable") ||
+		!strings.Contains(out, "0 passed, 1 failed") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }
@@ -274,7 +317,14 @@ func TestCheckExitsFiveForAToolThatCannotRun(t *testing.T) {
 func TestConfigCreatesReadsAndSets(t *testing.T) {
 	bin, dir := build(t), project(t)
 
-	if out, code := runIn(t, bin, dir, "config", "GOTOOLS_JOBS=4"); code != 0 || !strings.Contains(out, "Created .gotools.json with GOTOOLS_JOBS=4") {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"config",
+		"GOTOOLS_JOBS=4",
+	); code != 0 ||
+		!strings.Contains(out, "Created .gotools.json with GOTOOLS_JOBS=4") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -297,7 +347,14 @@ func TestRemoveRenameAndUpgradeUsageExitTwo(t *testing.T) {
 		}
 	}
 
-	if out, code := runIn(t, bin, dir, "remove", "ghost"); code != 5 || !strings.Contains(out, "Tool not found: ghost") {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"remove",
+		"ghost",
+	); code != 5 ||
+		!strings.Contains(out, "Tool not found: ghost") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }
@@ -306,11 +363,22 @@ func TestRemoveRenameAndUpgradeUsageExitTwo(t *testing.T) {
 func TestListShowsTheManifestAndRejectsABadFormat(t *testing.T) {
 	bin, dir := build(t), project(t)
 
-	if err := os.WriteFile(filepath.Join(dir, ".gotools.json"), []byte(`{"strategy":"split","tools":{"a":{"source":"go","package":"p/a","version":"v1"}}}`), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, ".gotools.json"),
+		[]byte(`{"strategy":"split","tools":{"a":{"source":"go","package":"p/a","version":"v1"}}}`),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
-	if out, code := runIn(t, bin, dir, "list", "--json"); code != 0 || !strings.HasPrefix(out, `{"schema_version":1,"strategy":"split"`) || !strings.Contains(out, `"name":"a"`) {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"list",
+		"--json",
+	); code != 0 || !strings.HasPrefix(out, `{"schema_version":1,"strategy":"split"`) ||
+		!strings.Contains(out, `"name":"a"`) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -337,7 +405,14 @@ func TestExecPassesFlagsToTheToolAndReportsAMissingOne(t *testing.T) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
-	if out, code := runIn(t, bin, dir, "exec", "--help"); code != 0 || !strings.Contains(out, "Run a managed tool with the given arguments") {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"exec",
+		"--help",
+	); code != 0 ||
+		!strings.Contains(out, "Run a managed tool with the given arguments") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }
@@ -392,7 +467,15 @@ func TestDoctorReportsAndNeverFailsTheShell(t *testing.T) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
-	if out, code := runIn(t, bin, dir, "doctor", "--json", "--offline"); code != 0 || !strings.Contains(out, `"healthy":false`) {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"doctor",
+		"--json",
+		"--offline",
+	); code != 0 ||
+		!strings.Contains(out, `"healthy":false`) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -410,7 +493,14 @@ func TestDoctorReportsAndNeverFailsTheShell(t *testing.T) {
 func TestSelfUpdateRefusesOfflineAndBadArguments(t *testing.T) {
 	bin := build(t)
 
-	if out, code := runIn(t, bin, t.TempDir(), "self-update", "--offline"); code != 6 || !strings.Contains(out, "Offline mode: cannot check for updates without network.") {
+	if out, code := runIn(
+		t,
+		bin,
+		t.TempDir(),
+		"self-update",
+		"--offline",
+	); code != 6 ||
+		!strings.Contains(out, "Offline mode: cannot check for updates without network.") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -424,7 +514,11 @@ func TestSelfUpdateRefusesOfflineAndBadArguments(t *testing.T) {
 func TestCompletionAsksTheProgramForWords(t *testing.T) {
 	bin, dir := build(t), project(t)
 
-	if err := os.WriteFile(filepath.Join(dir, ".gotools.json"), []byte(`{"strategy":"split","tools":{"aa":{"source":"go","package":"p/a","version":"v1"}}}`), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, ".gotools.json"),
+		[]byte(`{"strategy":"split","tools":{"aa":{"source":"go","package":"p/a","version":"v1"}}}`),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -432,11 +526,24 @@ func TestCompletionAsksTheProgramForWords(t *testing.T) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
-	if out, code := runIn(t, bin, dir, "--generate-shell-completion"); code != 0 || !strings.Contains(out, "completion:") || !strings.Contains(out, "doctor:") {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"--generate-shell-completion",
+	); code != 0 || !strings.Contains(out, "completion:") ||
+		!strings.Contains(out, "doctor:") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
-	if out, code := runIn(t, bin, dir, "completion", "bash"); code != 0 || !strings.Contains(out, "--generate-shell-completion") {
+	if out, code := runIn(
+		t,
+		bin,
+		dir,
+		"completion",
+		"bash",
+	); code != 0 ||
+		!strings.Contains(out, "--generate-shell-completion") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -466,7 +573,8 @@ func TestBinaryExitCodes(t *testing.T) {
 		code := 0
 
 		if err := cmd.Run(); err != nil {
-			ee, ok := err.(*exec.ExitError)
+			ee := &exec.ExitError{}
+			ok := errors.As(err, &ee)
 			if !ok {
 				t.Fatal(err)
 			}
@@ -484,7 +592,15 @@ func TestBinaryExitCodes(t *testing.T) {
 func TestSelfUpdateYesStillRefusesOffline(t *testing.T) {
 	bin := build(t)
 
-	if out, code := runIn(t, bin, t.TempDir(), "self-update", "--yes", "--offline"); code != 6 || strings.Contains(out, "(y/N)") {
+	if out, code := runIn(
+		t,
+		bin,
+		t.TempDir(),
+		"self-update",
+		"--yes",
+		"--offline",
+	); code != 6 ||
+		strings.Contains(out, "(y/N)") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 }

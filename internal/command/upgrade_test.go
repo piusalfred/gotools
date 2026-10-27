@@ -39,7 +39,7 @@ func toolVersion(t *testing.T, dir, name string) string {
 	return tl.Version
 }
 
-func upgradeIn(t *testing.T, g *fakeGo, dir string, environ []string, args ...string) (out, errs string, err error) {
+func upgradeIn(t *testing.T, g *fakeGo, dir string, environ []string, args ...string) (string, string, error) {
 	t.Helper()
 
 	return runCommand(t, command.NewUpgrade(), dir, g, environ, args...)
@@ -117,7 +117,8 @@ func TestUpgradeDryRunWritesNothing(t *testing.T) {
 	g := installGo(installOpts{})
 
 	out, _, err := upgradeIn(t, g, dir, nil, "all", "--dry-run")
-	if err != nil || !strings.Contains(out, "[dry-run] Would upgrade x ("+pkgX+") to @latest") || !strings.Contains(out, "Would upgrade 2 tool(s)") {
+	if err != nil || !strings.Contains(out, "[dry-run] Would upgrade x ("+pkgX+") to @latest") ||
+		!strings.Contains(out, "Would upgrade 2 tool(s)") {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 

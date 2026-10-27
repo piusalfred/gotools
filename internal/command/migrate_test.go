@@ -33,6 +33,7 @@ import (
 	"github.com/piusalfred/gotools/internal/command"
 	"github.com/piusalfred/gotools/internal/config"
 	ierrors "github.com/piusalfred/gotools/internal/errors"
+	"github.com/piusalfred/gotools/internal/fingerprint"
 	"github.com/piusalfred/gotools/internal/gocmd"
 )
 
@@ -237,6 +238,83 @@ func TestMigrateEveryPair(t *testing.T) {
 	}
 }
 
+// The migration stashes the old fingerprint and installs the tools again, so
+// it has to record the new one: otherwise the next offline sync, which takes
+// only the fingerprint fast path, refuses a project that is in sync.
+func TestMigrateRecordsTheFingerprint(t *testing.T) {
+	all := []string{"split", "module", "unified"}
+
+	for _, from := range all {
+		for _, to := range all {
+			if from == to {
+				continue
+			}
+
+			t.Run(from+"_to_"+to, func(t *testing.T) {
+				dir := installedProject(t, from)
+
+				migrateIn(t, installGo(installOpts{}), dir, installOpts{}, to).ok(t)
+
+				fp := readFile(t, filepath.Join(dir, "tools", fingerprint.FileName))
+				if !strings.Contains(fp, "|"+to+"|") {
+					t.Fatalf("fingerprint = %q, want it to record strategy %q", fp, to)
+				}
+
+				r := syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--offline")
+				r.ok(t)
+
+				if !strings.Contains(r.out, "fingerprint match") {
+					t.Fatalf("offline sync after migrate: %q", r.out)
+				}
+			})
+		}
+	}
+}
+
+// Sync migrates on its own when the manifest names another strategy than the
+// disk shows, and that path must leave a fingerprint too.
+func TestSyncAutoMigrationRecordsTheFingerprint(t *testing.T) {
+	dir := installedProject(t, "split")
+
+	m := readManifest(t, dir)
+	m.Strategy = "module"
+
+	if err := m.Flush(filepath.Join(dir, config.ManifestFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	r := syncIn(t, installGo(installOpts{}), dir, installOpts{})
+	r.ok(t)
+
+	if !strings.Contains(r.out, "Auto-migrating to 'module'") {
+		t.Fatalf("sync did not migrate: %q", r.out)
+	}
+
+	r = syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--offline")
+	r.ok(t)
+
+	if !strings.Contains(r.out, "fingerprint match") {
+		t.Fatalf("offline sync after the auto-migration: %q", r.out)
+	}
+}
+
+// A failed migration puts the old layout back, and with it the old fingerprint.
+func TestMigrateFailureKeepsTheOldFingerprint(t *testing.T) {
+	dir := installedProject(t, "split")
+	syncIn(t, installGo(installOpts{}), dir, installOpts{}).ok(t)
+
+	path := filepath.Join(dir, "tools", fingerprint.FileName)
+	before := readFile(t, path)
+
+	if r := migrateIn(t, failingOn(pkgY), dir, installOpts{}, "module"); r.runErr == nil {
+		t.Fatal("migrate succeeded although a tool failed to install")
+	}
+
+	if got := readFile(t, path); got != before {
+		t.Fatalf("fingerprint changed by a failed migration:\nbefore %q\nafter  %q", before, got)
+	}
+}
+
 func TestMigrateDryRunWritesNothing(t *testing.T) {
 	for _, args := range [][]string{{"module", "--dry-run"}, {"--dry-run", "module"}} {
 		dir := installedProject(t, "split")
@@ -246,7 +324,8 @@ func TestMigrateDryRunWritesNothing(t *testing.T) {
 		r := migrateIn(t, g, dir, installOpts{}, args...)
 		r.ok(t)
 
-		if !strings.Contains(r.out, "[dry-run] Would migrate tools/ from 'split' to 'module'") || !strings.Contains(r.out, "x "+pkgX+"@v1.0.0") {
+		if !strings.Contains(r.out, "[dry-run] Would migrate tools/ from 'split' to 'module'") ||
+			!strings.Contains(r.out, "x "+pkgX+"@v1.0.0") {
 			t.Fatalf("%v: out=%q", args, r.out)
 		}
 
@@ -324,8 +403,16 @@ func TestMigrateAdoptingTheDiskStrategyHonoursDryRun(t *testing.T) {
 func TestMigrateConsolidatesHybridDirectory(t *testing.T) {
 	dir := newProject(t, "unified")
 
-	writeFile(t, filepath.Join(dir, "tools/go.mod"), "module tools\n\ngo 1.24\n\ntool "+pkgY+"\n\nrequire example.com/b v1.2.0\n")
-	writeFile(t, filepath.Join(dir, "tools/x.mod"), "module tools/x\n\ngo 1.24\n\ntool "+pkgX+"\n\nrequire example.com/a v1.0.0\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/go.mod"),
+		"module tools\n\ngo 1.24\n\ntool "+pkgY+"\n\nrequire example.com/b v1.2.0\n",
+	)
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/x.mod"),
+		"module tools/x\n\ngo 1.24\n\ntool "+pkgX+"\n\nrequire example.com/a v1.0.0\n",
+	)
 
 	migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "unified").ok(t)
 
@@ -349,7 +436,11 @@ func TestMigrateKeepsManifestOnlyTools(t *testing.T) {
 
 	migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "module").ok(t)
 
-	if mod := readFile(t, filepath.Join(dir, "tools/z/go.mod")); !strings.Contains(mod, "tool example.com/c/z") || !strings.Contains(mod, "v1.5.0") {
+	if mod := readFile(
+		t,
+		filepath.Join(dir, "tools/z/go.mod"),
+	); !strings.Contains(mod, "tool example.com/c/z") ||
+		!strings.Contains(mod, "v1.5.0") {
 		t.Fatalf("tools/z/go.mod:\n%s", mod)
 	}
 
@@ -405,7 +496,8 @@ func TestMigratePreservesUnrelatedFiles(t *testing.T) {
 	migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "unified").ok(t)
 
 	got := tree(t, dir)
-	if got["tools/README.md"] != "keep me\n" || got["tools/.gitignore"] != "*.log\n" || got["tools/.hidden.mod"] != "module hidden\n" {
+	if got["tools/README.md"] != "keep me\n" || got["tools/.gitignore"] != "*.log\n" ||
+		got["tools/.hidden.mod"] != "module hidden\n" {
 		t.Fatalf("unrelated files lost: %v", keys(got))
 	}
 
@@ -552,7 +644,13 @@ func TestMigrateLockHeld(t *testing.T) {
 	before := tree(t, dir)
 	o := installOpts{environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}}
 
-	holder := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: installGo(installOpts{})}
+	holder := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      installGo(installOpts{}),
+	}
 	if err := holder.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}

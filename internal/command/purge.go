@@ -164,7 +164,12 @@ func (p *Purge) dry(ctx context.Context) error {
 func (p *Purge) confirmed() bool {
 	c := p.c
 
-	_, _ = fmt.Fprintf(c.Stdout, "⚠️  WARNING: This will delete the tools directory ('%s') and '%s'.\n", c.Config.Dir, config.ManifestFile)
+	_, _ = fmt.Fprintf(
+		c.Stdout,
+		"⚠️  WARNING: This will delete the tools directory ('%s') and '%s'.\n",
+		c.Config.Dir,
+		config.ManifestFile,
+	)
 
 	if p.restore {
 		_, _ = fmt.Fprintln(c.Stdout, "  It will also add the managed tools back to your go.mod.")
@@ -252,7 +257,12 @@ func (c *Context) RestoreToRoot(ctx context.Context, p RestoreToRootParams) erro
 
 	for _, t := range c.Manifest.SortedTools() {
 		if t.Source != "" && t.Source != "go" {
-			_, _ = fmt.Fprintf(c.Stdout, "  ⚠ %s: source '%s' — skipping (only go tools can be restored)\n", t.Name, t.Source)
+			_, _ = fmt.Fprintf(
+				c.Stdout,
+				"  ⚠ %s: source '%s' — skipping (only go tools can be restored)\n",
+				t.Name,
+				t.Source,
+			)
 
 			continue
 		}

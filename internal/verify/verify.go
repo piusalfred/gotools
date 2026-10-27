@@ -100,7 +100,10 @@ func (a Advisor) Warnings(ctx context.Context, dir, modPath string) []string {
 	// module, or every user with a corporate GOPRIVATE would be warned on
 	// every public tool install.
 	if MatchesAny(nosumdb, modPath) {
-		out = append(out, "GOPRIVATE/GONOSUMDB covers "+modPath+" — this module is exempt from the Go checksum database.")
+		out = append(
+			out,
+			"GOPRIVATE/GONOSUMDB covers "+modPath+" — this module is exempt from the Go checksum database.",
+		)
 	}
 
 	if MatchesAny(insecure, modPath) {

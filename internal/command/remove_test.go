@@ -37,13 +37,28 @@ import (
 
 // runCommand runs cmd in dir with g and the environment, returning stdout,
 // stderr and the error.
-func runCommand(t *testing.T, cmd command.Command, dir string, g *fakeGo, environ []string, args ...string) (out, errs string, err error) {
+func runCommand(
+	t *testing.T,
+	cmd command.Command,
+	dir string,
+	g *fakeGo,
+	environ []string,
+	args ...string,
+) (string, string, error) {
 	t.Helper()
 
 	var o, e bytes.Buffer
 
-	c := &command.Context{Stdin: strings.NewReader(""), Stdout: &o, Stderr: &e, Environ: environ, Program: "gotools", WorkDir: dir, Go: g}
-	err = run(cmd, c, args...)
+	c := &command.Context{
+		Stdin:   strings.NewReader(""),
+		Stdout:  &o,
+		Stderr:  &e,
+		Environ: environ,
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      g,
+	}
+	err := run(cmd, c, args...)
 
 	return o.String(), e.String(), err
 }
@@ -55,11 +70,13 @@ func TestRemoveSplitAndModule(t *testing.T) {
 			writeFile(t, filepath.Join(dir, "tools", "goimports.sum"), "x\n")
 
 			out, _, err := runCommand(t, command.NewRemove(), dir, &fakeGo{}, nil, "goimports")
-			if err != nil || !strings.Contains(out, "🗑️  Removing goimports...") || !strings.Contains(out, "✅ Removed") {
+			if err != nil || !strings.Contains(out, "🗑️  Removing goimports...") ||
+				!strings.Contains(out, "✅ Removed") {
 				t.Fatalf("err=%v out=%s", err, out)
 			}
 
-			if exists(filepath.Join(dir, path)) || (st == "split" && exists(filepath.Join(dir, "tools", "goimports.sum"))) {
+			if exists(filepath.Join(dir, path)) ||
+				(st == "split" && exists(filepath.Join(dir, "tools", "goimports.sum"))) {
 				t.Fatal("files remain")
 			}
 
@@ -189,7 +206,13 @@ func TestRemoveNeedsANameAndTheLock(t *testing.T) {
 		t.Fatalf("no args: %v", err)
 	}
 
-	holder := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: &fakeGo{}}
+	holder := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      &fakeGo{},
+	}
 	if err := holder.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +221,9 @@ func TestRemoveNeedsANameAndTheLock(t *testing.T) {
 		start := time.Now()
 
 		_, _, err := runCommand(t, command.NewRemove(), dir, &fakeGo{}, []string{"GOTOOLS_LOCK_TIMEOUT=0"}, "goimports")
-		if ierrors.CodeOf(err) != ierrors.Lock || !strings.Contains(err.Error(), "Another gotools process is running") || time.Since(start) > 5*time.Second {
+		if ierrors.CodeOf(err) != ierrors.Lock ||
+			!strings.Contains(err.Error(), "Another gotools process is running") ||
+			time.Since(start) > 5*time.Second {
 			t.Errorf("err = %v", err)
 		}
 
@@ -212,7 +237,14 @@ func TestRemoveNeedsANameAndTheLock(t *testing.T) {
 		t.Fatal("removed while another process held the lock")
 	}
 
-	if _, _, err := runCommand(t, command.NewRemove(), dir, &fakeGo{}, []string{"GOTOOLS_NO_LOCK=1"}, "goimports"); err != nil {
+	if _, _, err := runCommand(
+		t,
+		command.NewRemove(),
+		dir,
+		&fakeGo{},
+		[]string{"GOTOOLS_NO_LOCK=1"},
+		"goimports",
+	); err != nil {
 		t.Fatalf("GOTOOLS_NO_LOCK: %v", err)
 	}
 }

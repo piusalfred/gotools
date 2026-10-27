@@ -22,6 +22,7 @@ package integration
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -55,7 +56,13 @@ func gateRepo(t *testing.T, baseFiles, headFiles map[string]string) string {
 
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		cmd.Env = append(
+			os.Environ(),
+			"GIT_AUTHOR_NAME=t",
+			"GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t",
+			"GIT_COMMITTER_EMAIL=t@t",
+		)
 
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -110,7 +117,8 @@ func gate(t *testing.T, dir string) (int, string) {
 	code := 0
 
 	if err := cmd.Run(); err != nil {
-		ee, ok := err.(*exec.ExitError)
+		ee := &exec.ExitError{}
+		ok := errors.As(err, &ee)
 		if !ok {
 			t.Fatal(err)
 		}
@@ -130,16 +138,70 @@ func TestVersionGate(t *testing.T) {
 		fails      bool
 		want       string
 	}{
-		{"a bump passes", map[string]string{"version.txt": "v0.6.7\n"}, map[string]string{"version.txt": "v0.7.0\n"}, false, "v0.6.7 → v0.7.0"},
-		{"a patch bump passes", map[string]string{"version.txt": "v0.6.7\n"}, map[string]string{"version.txt": "v0.6.8\n"}, false, "v0.6.7 → v0.6.8"},
+		{
+			"a bump passes",
+			map[string]string{"version.txt": "v0.6.7\n"},
+			map[string]string{"version.txt": "v0.7.0\n"},
+			false,
+			"v0.6.7 → v0.7.0",
+		},
+		{
+			"a patch bump passes",
+			map[string]string{"version.txt": "v0.6.7\n"},
+			map[string]string{"version.txt": "v0.6.8\n"},
+			false,
+			"v0.6.7 → v0.6.8",
+		},
 		{"the same version fails", map[string]string{"version.txt": "v0.6.7\n"}, nil, true, "was not incremented"},
-		{"a downgrade fails", map[string]string{"version.txt": "v0.7.0\n"}, map[string]string{"version.txt": "v0.6.9\n"}, true, "Version downgrade"},
-		{"10 is above 9", map[string]string{"version.txt": "v0.9.0\n"}, map[string]string{"version.txt": "v0.10.0\n"}, false, "v0.9.0 → v0.10.0"},
-		{"not a version fails", map[string]string{"version.txt": "v0.6.7\n"}, map[string]string{"version.txt": "0.7\n"}, true, "must hold a version like v1.2.3"},
-		{"an empty file fails", map[string]string{"version.txt": "v0.6.7\n"}, map[string]string{"version.txt": "\n"}, true, "must hold a version like v1.2.3"},
-		{"a base that kept it in lib/config.go", map[string]string{"lib/config.go": legacy}, map[string]string{"version.txt": "v0.7.0\n"}, false, "v0.6.7 → v0.7.0"},
-		{"a legacy base with the same version fails", map[string]string{"lib/config.go": legacy}, map[string]string{"version.txt": "v0.6.7\n"}, true, "was not incremented"},
-		{"a base with no version is the first release", nil, map[string]string{"version.txt": "v0.1.0\n"}, false, "No previous version to compare"},
+		{
+			"a downgrade fails",
+			map[string]string{"version.txt": "v0.7.0\n"},
+			map[string]string{"version.txt": "v0.6.9\n"},
+			true,
+			"Version downgrade",
+		},
+		{
+			"10 is above 9",
+			map[string]string{"version.txt": "v0.9.0\n"},
+			map[string]string{"version.txt": "v0.10.0\n"},
+			false,
+			"v0.9.0 → v0.10.0",
+		},
+		{
+			"not a version fails",
+			map[string]string{"version.txt": "v0.6.7\n"},
+			map[string]string{"version.txt": "0.7\n"},
+			true,
+			"must hold a version like v1.2.3",
+		},
+		{
+			"an empty file fails",
+			map[string]string{"version.txt": "v0.6.7\n"},
+			map[string]string{"version.txt": "\n"},
+			true,
+			"must hold a version like v1.2.3",
+		},
+		{
+			"a base that kept it in lib/config.go",
+			map[string]string{"lib/config.go": legacy},
+			map[string]string{"version.txt": "v0.7.0\n"},
+			false,
+			"v0.6.7 → v0.7.0",
+		},
+		{
+			"a legacy base with the same version fails",
+			map[string]string{"lib/config.go": legacy},
+			map[string]string{"version.txt": "v0.6.7\n"},
+			true,
+			"was not incremented",
+		},
+		{
+			"a base with no version is the first release",
+			nil,
+			map[string]string{"version.txt": "v0.1.0\n"},
+			false,
+			"No previous version to compare",
+		},
 	}
 
 	for _, c := range cases {

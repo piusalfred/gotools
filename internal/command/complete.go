@@ -30,12 +30,12 @@ import (
 
 // completeArguments is the shell completion of a command whose positional
 // arguments are drawn from a list: it prints the words, one per line, as
-// urfave/cli's completion scripts expect. At most max arguments complete (-1 is
+// urfave/cli's completion scripts expect. At most maxArgs arguments complete (-1 is
 // any number), so `info <tool>` stops offering names once there is one. While a
 // flag is being completed, urfave/cli's own completion of the flags runs.
 //
 // Completion never fails: a project that cannot be loaded offers nothing.
-func (c *Context) completeArguments(max int, words func(context.Context) []string) urfave.ShellCompleteFunc {
+func (c *Context) completeArguments(maxArgs int, words func(context.Context) []string) urfave.ShellCompleteFunc {
 	return func(ctx context.Context, cmd *urfave.Command) {
 		typed := cmd.Args().Slice()
 
@@ -45,7 +45,7 @@ func (c *Context) completeArguments(max int, words func(context.Context) []strin
 			return
 		}
 
-		if max >= 0 && len(typed) >= max {
+		if maxArgs >= 0 && len(typed) >= maxArgs {
 			return
 		}
 

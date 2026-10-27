@@ -24,15 +24,16 @@ package lock
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"syscall"
 )
 
-// tryLock takes an exclusive non-blocking flock; ok is false when another
-// open file description holds it.
-func tryLock(f *os.File) (ok bool, err error) {
+// tryLock takes an exclusive non-blocking flock; the bool is false when
+// another open file description holds it.
+func tryLock(f *os.File) (bool, error) {
 	for {
-		err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 
 		switch {
 		case err == nil:
@@ -43,7 +44,7 @@ func tryLock(f *os.File) (ok bool, err error) {
 			return false, nil
 		}
 
-		return false, err
+		return false, fmt.Errorf("flock: %w", err)
 	}
 }
 

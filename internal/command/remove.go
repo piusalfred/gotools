@@ -79,11 +79,13 @@ func (base *Remove) Build(c *Context) *urfave.Command {
 		ArgsUsage:   argsUsageRemove,
 		Description: descriptionRemove,
 		Examples:    []string{"remove goimports", "remove staticcheck goimports --dry-run"},
-		Flags:       []urfave.Flag{&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be removed without making changes"}},
-		Args:        []urfave.Argument{&urfave.StringArgs{Name: argNames, Min: 1, Max: -1}},
-		Complete:    r.c.completeArguments(-1, r.c.toolNames),
-		Before:      r.before,
-		Run:         r.run,
+		Flags: []urfave.Flag{
+			&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be removed without making changes"},
+		},
+		Args:     []urfave.Argument{&urfave.StringArgs{Name: argNames, Min: 1, Max: -1}},
+		Complete: r.c.completeArguments(-1, r.c.toolNames),
+		Before:   r.before,
+		Run:      r.run,
 	}.Build(c)
 }
 

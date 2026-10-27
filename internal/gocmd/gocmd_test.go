@@ -94,7 +94,14 @@ func TestExecRunnerCapturesOutputAndExitCode(t *testing.T) {
 
 	r := gocmd.ExecRunner{Bin: "sh", Verbose: &verbose}
 
-	res, err := r.Run(context.Background(), gocmd.Call{Dir: dir, Args: []string{"-c", "pwd; echo out; echo err >&2; echo $GOCMD_TEST; exit 3"}, Env: []string{"GOCMD_TEST=yes"}})
+	res, err := r.Run(
+		context.Background(),
+		gocmd.Call{
+			Dir:  dir,
+			Args: []string{"-c", "pwd; echo out; echo err >&2; echo $GOCMD_TEST; exit 3"},
+			Env:  []string{"GOCMD_TEST=yes"},
+		},
+	)
 	if err != nil || res.Code != 3 {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
@@ -130,7 +137,12 @@ func TestExecRunnerStopsTheWholeProcessGroupOnCancel(t *testing.T) {
 
 	start := time.Now()
 
-	_, err := gocmd.ExecRunner{Bin: "sh"}.Run(ctx, gocmd.Call{Args: []string{"-c", "(sleep 1; touch " + marker + ") & wait"}})
+	_, err := gocmd.ExecRunner{
+		Bin: "sh",
+	}.Run(
+		ctx,
+		gocmd.Call{Args: []string{"-c", "(sleep 1; touch " + marker + ") & wait"}},
+	)
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 3*time.Second {
 		t.Fatalf("err=%v after %s", err, time.Since(start))
 	}
@@ -147,7 +159,8 @@ func TestExecRunnerStopsTheWholeProcessGroupOnCancel(t *testing.T) {
 func ExampleWithTimeout() {
 	var r gocmd.Runner = slow{time.Minute}
 
-	_, err := gocmd.WithTimeout(r, 10*time.Millisecond).Run(context.Background(), gocmd.Call{Args: []string{"get", "-tool", "example.com/x"}})
+	_, err := gocmd.WithTimeout(r, 10*time.Millisecond).
+		Run(context.Background(), gocmd.Call{Args: []string{"get", "-tool", "example.com/x"}})
 
 	fmt.Println(err)
 
@@ -169,7 +182,14 @@ func TestWithTimeoutReportsACallerDeadlineAsItself(t *testing.T) {
 func TestExecRunnerEnvIsAddedToEveryCallAndACallsOwnEnvWins(t *testing.T) {
 	r := gocmd.ExecRunner{Env: []string{"GOPROXY=runner", "GOFLAGS=-mod=mod"}}
 
-	res, err := r.Run(context.Background(), gocmd.Call{Dir: t.TempDir(), Env: []string{"GOFLAGS=-mod=readonly"}, Args: []string{"env", "GOPROXY", "GOFLAGS"}})
+	res, err := r.Run(
+		context.Background(),
+		gocmd.Call{
+			Dir:  t.TempDir(),
+			Env:  []string{"GOFLAGS=-mod=readonly"},
+			Args: []string{"env", "GOPROXY", "GOFLAGS"},
+		},
+	)
 	if err != nil {
 		t.Skipf("go is not available: %v", err)
 	}

@@ -110,7 +110,12 @@ func (s *SelfUpdate) run(ctx context.Context, cmd *urfave.Command) error {
 
 		return nil
 	case selfupdate.Newer:
-		_, _ = fmt.Fprintf(c.Stdout, "✅ You are on %s, newer than the latest release (%s). Nothing to do.\n", c.Version, tag)
+		_, _ = fmt.Fprintf(
+			c.Stdout,
+			"✅ You are on %s, newer than the latest release (%s). Nothing to do.\n",
+			c.Version,
+			tag,
+		)
 
 		return nil
 	}
@@ -118,7 +123,12 @@ func (s *SelfUpdate) run(ctx context.Context, cmd *urfave.Command) error {
 	_, _ = fmt.Fprintf(c.Stdout, "🚀 New version found: %s (Current: %s)\n", tag, c.Version)
 
 	if cmd.Bool(FlagDryRun) {
-		_, _ = fmt.Fprintf(c.Stdout, "🔍 [dry-run] Would download %s, verify it against %s, and replace this executable.\n", src.AssetURL(tag, src.Asset()), selfupdate.Checksums)
+		_, _ = fmt.Fprintf(
+			c.Stdout,
+			"🔍 [dry-run] Would download %s, verify it against %s, and replace this executable.\n",
+			src.AssetURL(tag, src.Asset()),
+			selfupdate.Checksums,
+		)
 
 		return nil
 	}

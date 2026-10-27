@@ -31,6 +31,7 @@ package integration
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -130,7 +131,7 @@ func (p *project) run(stdin string, args ...string) (string, string, int) {
 	code := 0
 
 	if err := cmd.Run(); err != nil {
-		ee, ok := err.(*exec.ExitError)
+		ee, ok := errors.AsType[*exec.ExitError](err)
 		if !ok {
 			p.t.Fatalf("gotools %v: %v", args, err)
 		}
@@ -502,7 +503,7 @@ func TestSignalToGotoolsReachesTheTool(t *testing.T) {
 
 			select {
 			case err := <-done:
-				ee, ok := err.(*exec.ExitError)
+				ee, ok := errors.AsType[*exec.ExitError](err)
 				if !ok || ee.ExitCode() != want {
 					t.Fatalf("exit = %v, want %d", err, want)
 				}
@@ -560,7 +561,11 @@ func TestExecRunsInTheInvocationDirectory(t *testing.T) {
 				t.Fatalf("exec from the package scanned %q, want only sub_probe.go", got)
 			}
 
-			if err := os.WriteFile(filepath.Join(sub, "gen.go"), []byte("//go:generate "+binary+" exec goimports -l .\npackage sub\n"), 0o600); err != nil {
+			if err := os.WriteFile(
+				filepath.Join(sub, "gen.go"),
+				[]byte("//go:generate "+binary+" exec goimports -l .\npackage sub\n"),
+				0o600,
+			); err != nil {
 				t.Fatal(err)
 			}
 

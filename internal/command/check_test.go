@@ -32,13 +32,20 @@ import (
 	"github.com/piusalfred/gotools/internal/gocmd"
 )
 
-func checkIn(t *testing.T, dir string, g *fakeGo, environ []string, args ...string) (out string, err error) {
+func checkIn(t *testing.T, dir string, g *fakeGo, environ []string, args ...string) (string, error) {
 	t.Helper()
 
 	var o bytes.Buffer
 
-	c := &command.Context{Stdout: &o, Stderr: &bytes.Buffer{}, Environ: environ, Program: "gotools", WorkDir: dir, Go: g}
-	err = run(command.NewCheck(), c, args...)
+	c := &command.Context{
+		Stdout:  &o,
+		Stderr:  &bytes.Buffer{},
+		Environ: environ,
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      g,
+	}
+	err := run(command.NewCheck(), c, args...)
 
 	return o.String(), err
 }
@@ -125,19 +132,35 @@ func TestCheckOfflineProbesWithTheProxyOff(t *testing.T) {
 func TestCheckRequiresGo(t *testing.T) {
 	dir := infoFixture(t, "split")
 
-	missing := &fakeGo{intercept: func(gocmd.Call) (gocmd.Result, error, bool) { return gocmd.Result{}, gocmd.ErrNotFound, true }}
-	if _, err := checkIn(t, dir, missing, nil); ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "Go is not installed") {
+	missing := &fakeGo{
+		intercept: func(gocmd.Call) (gocmd.Result, error, bool) { return gocmd.Result{}, gocmd.ErrNotFound, true },
+	}
+	if _, err := checkIn(
+		t,
+		dir,
+		missing,
+		nil,
+	); ierrors.CodeOf(err) != ierrors.Environment ||
+		!strings.Contains(err.Error(), "Go is not installed") {
 		t.Fatalf("missing: %v", err)
 	}
 
 	old := &fakeGo{intercept: func(gocmd.Call) (gocmd.Result, error, bool) {
 		return gocmd.Result{Stdout: []byte("go1.23.4")}, nil, true
 	}}
-	if _, err := checkIn(t, dir, old, nil); ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "too old") {
+	if _, err := checkIn(
+		t,
+		dir,
+		old,
+		nil,
+	); ierrors.CodeOf(err) != ierrors.Environment ||
+		!strings.Contains(err.Error(), "too old") {
 		t.Fatalf("old: %v", err)
 	}
 
-	broken := &fakeGo{intercept: func(gocmd.Call) (gocmd.Result, error, bool) { return gocmd.Result{}, errors.New("x"), true }}
+	broken := &fakeGo{
+		intercept: func(gocmd.Call) (gocmd.Result, error, bool) { return gocmd.Result{}, errors.New("x"), true },
+	}
 	if _, err := checkIn(t, dir, broken, nil); ierrors.CodeOf(err) != ierrors.Environment {
 		t.Fatalf("broken: %v", err)
 	}
@@ -147,7 +170,9 @@ func TestCheckTakesNoArguments(t *testing.T) {
 	g := &fakeGo{}
 
 	out, err := checkIn(t, infoFixture(t, "split"), g, nil, "goimports")
-	if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "Unknown argument: goimports") || out != "" || len(g.calls) != 0 {
+	if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "Unknown argument: goimports") ||
+		out != "" ||
+		len(g.calls) != 0 {
 		t.Fatalf("err=%v out=%q calls=%v", err, out, g.calls)
 	}
 }

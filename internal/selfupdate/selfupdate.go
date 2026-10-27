@@ -38,6 +38,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,6 +68,20 @@ const (
 	maxMetadata = 1 << 20   // release JSON and checksum manifest
 	maxBinary   = 256 << 20 // a release binary
 )
+
+const (
+	metadataTimeout  = 30 * time.Second // release JSON and checksum manifest
+	binaryTimeout    = 10 * time.Minute // a release binary
+	selfCheckTimeout = 15 * time.Second // one run of the binary's version command
+)
+
+// errUnexpectedOutput is why a binary that ran did not pass the self-check.
+var errUnexpectedOutput = errors.New("unexpected output")
+
+// statusError is a reply other than 200 OK.
+type statusError struct{ url, status string }
+
+func (e *statusError) Error() string { return e.url + ": " + e.status }
 
 // Doer sends an HTTP request. *http.Client is one.
 type Doer interface {
@@ -112,11 +127,11 @@ func (s Source) AssetURL(tag, asset string) string { return s.DownloadBase + "/"
 type Relation int
 
 const (
-	// Older: the release is newer, so there is an update.
+	// Older means the release is newer, so there is an update.
 	Older Relation = iota
-	// Same: the running version is the latest release.
+	// Same means the running version is the latest release.
 	Same
-	// Newer: the running version is newer than the latest release, or is a
+	// Newer means the running version is newer than the latest release, or is a
 	// pre-release build.
 	Newer
 )
@@ -140,7 +155,7 @@ func Compare(current, latest string) Relation {
 // Latest asks for the latest release and checks the tag before it is used to
 // build URLs: whatever the API says ends up in them.
 func (s Source) Latest(ctx context.Context) (string, error) {
-	body, err := s.get(ctx, s.APIURL, 30*time.Second, "Accept", "application/vnd.github+json")
+	body, err := s.get(ctx, s.APIURL, metadataTimeout, "Accept", "application/vnd.github+json")
 	if err != nil {
 		return "", ierrors.New(ierrors.Network, "Could not fetch latest version from GitHub: %v", err)
 	}
@@ -171,7 +186,7 @@ func (s Source) get(ctx context.Context, url string, timeout time.Duration, head
 	if err != nil {
 		cancel()
 
-		return nil, err
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 
 	req.Header.Set("User-Agent", s.UserAgent)
@@ -192,7 +207,7 @@ func (s Source) get(ctx context.Context, url string, timeout time.Duration, head
 
 		cancel()
 
-		return nil, fmt.Errorf("%s: %s", url, resp.Status)
+		return nil, &statusError{url: url, status: resp.Status}
 	}
 
 	return &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}, nil
@@ -207,12 +222,16 @@ func (c *cancelOnClose) Close() error {
 	err := c.ReadCloser.Close()
 	c.cancel()
 
-	return err
+	if err != nil {
+		return fmt.Errorf("close response body: %w", err)
+	}
+
+	return nil
 }
 
 // Checksum finds asset in the release's checksum manifest.
 func (s Source) Checksum(ctx context.Context, tag, asset string) (string, error) {
-	body, err := s.get(ctx, s.AssetURL(tag, Checksums), 30*time.Second)
+	body, err := s.get(ctx, s.AssetURL(tag, Checksums), metadataTimeout)
 	if err != nil {
 		return "", ierrors.New(ierrors.Network, "Failed to download the checksums file: %v", err)
 	}
@@ -238,12 +257,21 @@ func (s Source) Checksum(ctx context.Context, tag, asset string) (string, error)
 		}
 	}
 
-	return "", ierrors.New(ierrors.Generic, "Release %s has no checksum for %s, so there is no verified binary for %s/%s.\n   Install with: go install github.com/%s/cmd/gotools@%s", tag, asset, s.GOOS, s.GOARCH, Repo, tag)
+	return "", ierrors.New(
+		ierrors.Generic,
+		"Release %s has no checksum for %s, so there is no verified binary for %s/%s.\n   Install with: go install github.com/%s/cmd/gotools@%s",
+		tag,
+		asset,
+		s.GOOS,
+		s.GOARCH,
+		Repo,
+		tag,
+	)
 }
 
 // Download streams the asset into w and returns its SHA-256.
 func (s Source) Download(ctx context.Context, tag, asset string, w io.Writer) (string, error) {
-	body, err := s.get(ctx, s.AssetURL(tag, asset), 10*time.Minute)
+	body, err := s.get(ctx, s.AssetURL(tag, asset), binaryTimeout)
 	if err != nil {
 		return "", ierrors.New(ierrors.Network, "Update download failed: %v", err)
 	}
@@ -258,7 +286,11 @@ func (s Source) Download(ctx context.Context, tag, asset string, w io.Writer) (s
 	case err != nil:
 		return "", ierrors.New(ierrors.Network, "Update download failed: %v", err)
 	case n > maxBinary:
-		return "", ierrors.New(ierrors.Generic, "Update download is larger than %d bytes — refusing it.", int64(maxBinary))
+		return "", ierrors.New(
+			ierrors.Generic,
+			"Update download is larger than %d bytes — refusing it.",
+			int64(maxBinary),
+		)
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
@@ -291,7 +323,14 @@ func (u *Updater) Install(ctx context.Context, tag, target string) error {
 
 	tmp, err := os.CreateTemp(filepath.Dir(target), ".gotools-update-*")
 	if err != nil {
-		return ierrors.New(ierrors.Environment, "Cannot write to %s: %v\n   Reinstall instead: go install github.com/%s/cmd/gotools@%s", filepath.Dir(target), err, Repo, tag)
+		return ierrors.New(
+			ierrors.Environment,
+			"Cannot write to %s: %v\n   Reinstall instead: go install github.com/%s/cmd/gotools@%s",
+			filepath.Dir(target),
+			err,
+			Repo,
+			tag,
+		)
 	}
 
 	candidate := tmp.Name()
@@ -317,7 +356,13 @@ func (u *Updater) Install(ctx context.Context, tag, target string) error {
 	}
 
 	if actual != expected {
-		return ierrors.New(ierrors.Generic, "Checksum verification FAILED.\n   Expected: %s\n   Got:      %s\n   The downloaded file has been tampered with and was deleted. Report this at:\n   https://github.com/%s/issues", expected, actual, Repo)
+		return ierrors.New(
+			ierrors.Generic,
+			"Checksum verification FAILED.\n   Expected: %s\n   Got:      %s\n   The downloaded file has been tampered with and was deleted. Report this at:\n   https://github.com/%s/issues",
+			expected,
+			actual,
+			Repo,
+		)
 	}
 
 	_, _ = fmt.Fprintf(u.Out, "  🔐 Checksum verified: %s...\n", expected[:16])
@@ -351,7 +396,7 @@ func (u *Updater) check(ctx context.Context, bin string) error {
 // RunVersion runs `<bin> version`: a binary that cannot even do that must not
 // replace a working one. It runs only after the checksum matched.
 func RunVersion(ctx context.Context, bin string) error {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, selfCheckTimeout)
 	defer cancel()
 
 	var out bytes.Buffer
@@ -360,11 +405,11 @@ func RunVersion(ctx context.Context, bin string) error {
 	cmd.Stdout = &out
 
 	if err := cmd.Run(); err != nil {
-		return err
+		return fmt.Errorf("run %s version: %w", bin, err)
 	}
 
 	if !strings.HasPrefix(out.String(), Name) {
-		return fmt.Errorf("unexpected output %q", strings.TrimSpace(out.String()))
+		return fmt.Errorf("%w %q", errUnexpectedOutput, strings.TrimSpace(out.String()))
 	}
 
 	return nil
@@ -388,7 +433,14 @@ func (u *Updater) swap(ctx context.Context, candidate, target string) error {
 
 	if err := u.check(ctx, target); err != nil {
 		if rerr := os.Rename(backup, target); rerr != nil {
-			return ierrors.New(ierrors.Generic, "The new binary failed its self-check (%v) and the previous version could not be restored from %s: %v\n   Reinstall: go install github.com/%s/cmd/gotools@latest", err, backup, rerr, Repo)
+			return ierrors.New(
+				ierrors.Generic,
+				"The new binary failed its self-check (%v) and the previous version could not be restored from %s: %v\n   Reinstall: go install github.com/%s/cmd/gotools@latest",
+				err,
+				backup,
+				rerr,
+				Repo,
+			)
 		}
 
 		_, _ = fmt.Fprintln(u.Err, "  ↩️  Restored the previous version.")
@@ -405,32 +457,32 @@ func (u *Updater) swap(ctx context.Context, candidate, target string) error {
 func copyFile(src, dst string) error {
 	fi, err := os.Stat(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("read file mode: %w", err)
 	}
 
 	r, err := os.Open(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("open source: %w", err)
 	}
 
 	defer r.Close()
 
 	w, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode().Perm())
 	if err != nil {
-		return err
+		return fmt.Errorf("create destination: %w", err)
 	}
 
 	if _, err := io.Copy(w, r); err != nil {
 		_ = w.Close()
 		_ = os.Remove(dst)
 
-		return err
+		return fmt.Errorf("copy contents: %w", err)
 	}
 
 	if err := w.Close(); err != nil {
 		_ = os.Remove(dst)
 
-		return err
+		return fmt.Errorf("close destination: %w", err)
 	}
 
 	return nil

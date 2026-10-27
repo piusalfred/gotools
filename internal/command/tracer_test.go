@@ -50,7 +50,15 @@ func traceContext(t *testing.T, environ ...string) tracedProject {
 	g := &fakeGo{}
 	tp := tracedProject{out: &bytes.Buffer{}, errb: &bytes.Buffer{}, dir: dir, goes: g}
 
-	tp.c = &command.Context{Stdin: strings.NewReader(""), Stdout: tp.out, Stderr: tp.errb, Environ: environ, Program: "gotools", WorkDir: dir, Go: g}
+	tp.c = &command.Context{
+		Stdin:   strings.NewReader(""),
+		Stdout:  tp.out,
+		Stderr:  tp.errb,
+		Environ: environ,
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      g,
+	}
 	if err := tp.c.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +109,8 @@ func TestTracerIsOffByDefaultAndCostsNothing(t *testing.T) {
 func TestTracerEchoesToStderrByDefaultWhenOn(t *testing.T) {
 	tp := traceContext(t, "GOTOOLS_TRACE=true")
 
-	tp.c.Tracer(context.Background()).Log(tracer.Entry{Tool: "fmt", Binary: "gofumpt", Args: []string{"-w", "a b"}, Code: new(0)})
+	tp.c.Tracer(context.Background()).
+		Log(tracer.Entry{Tool: "fmt", Binary: "gofumpt", Args: []string{"-w", "a b"}, Code: new(0)})
 
 	recs := tp.traceRecord()
 	if len(recs) != 1 {
@@ -139,7 +148,8 @@ func TestTracerCanEchoToStdout(t *testing.T) {
 
 	tp.c.Tracer(context.Background()).Fatal(tracer.Entry{Tool: "nope", Message: "not installed"})
 
-	if tp.errb.Len() != 0 || !strings.Contains(tp.out.String(), `"level":"fatal"`) || !strings.Contains(tp.out.String(), `"error":"not installed"`) {
+	if tp.errb.Len() != 0 || !strings.Contains(tp.out.String(), `"level":"fatal"`) ||
+		!strings.Contains(tp.out.String(), `"error":"not installed"`) {
 		t.Fatalf("out=%q err=%q", tp.out.String(), tp.errb.String())
 	}
 
@@ -201,7 +211,8 @@ func TestTracerReportsAnUnwritableLogAndCarriesOn(t *testing.T) {
 
 	tp.c.Tracer(context.Background()).Log(tracer.Entry{Tool: "t", Code: new(0)})
 
-	if !strings.Contains(tp.errb.String(), "trace: could not write") || !strings.Contains(tp.errb.String(), `"tool":"t"`) {
+	if !strings.Contains(tp.errb.String(), "trace: could not write") ||
+		!strings.Contains(tp.errb.String(), `"tool":"t"`) {
 		t.Fatalf("err = %q", tp.errb.String())
 	}
 }

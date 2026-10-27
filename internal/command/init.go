@@ -92,10 +92,29 @@ func (base *Init) Build(c *Context) *urfave.Command {
 			"init --go=1.24 --prefix=github.com/me/repo",
 		},
 		Flags: []urfave.Flag{
-			&urfave.StringFlag{Name: FlagStrategy, Usage: "Isolation strategy: unified, split or module", Value: string(config.DefaultStrategy), Validator: validStrategy},
-			&urfave.StringFlag{Name: FlagDir, Usage: "Tools directory", Value: config.DefaultDir, Validator: config.ValidateDir},
-			&urfave.StringFlag{Name: FlagGo, Usage: "Go version for tools, or inherit", Value: config.DefaultGoVersion, Validator: validGoVersion},
-			&urfave.StringFlag{Name: FlagPrefix, Usage: "Module path prefix (default: auto from go.mod)", Validator: validPrefix},
+			&urfave.StringFlag{
+				Name:      FlagStrategy,
+				Usage:     "Isolation strategy: unified, split or module",
+				Value:     string(config.DefaultStrategy),
+				Validator: validStrategy,
+			},
+			&urfave.StringFlag{
+				Name:      FlagDir,
+				Usage:     "Tools directory",
+				Value:     config.DefaultDir,
+				Validator: config.ValidateDir,
+			},
+			&urfave.StringFlag{
+				Name:      FlagGo,
+				Usage:     "Go version for tools, or inherit",
+				Value:     config.DefaultGoVersion,
+				Validator: validGoVersion,
+			},
+			&urfave.StringFlag{
+				Name:      FlagPrefix,
+				Usage:     "Module path prefix (default: auto from go.mod)",
+				Validator: validPrefix,
+			},
 			&urfave.BoolFlag{Name: FlagNoMigrate, Usage: "Leave the root go.mod untouched"},
 			&urfave.BoolFlag{Name: FlagDryRun, Usage: "Print the plan without writing anything"},
 		},
@@ -199,7 +218,7 @@ func (i *Init) before(ctx context.Context, cmd *urfave.Command) error {
 		_, _ = fmt.Fprintf(c.Stderr, "  ⚠️  %s\n", w)
 	}
 
-	if err := i.apply(); err != nil {
+	if err = i.apply(); err != nil {
 		return err
 	}
 
@@ -210,7 +229,11 @@ func (i *Init) before(ctx context.Context, cmd *urfave.Command) error {
 
 	// Adopting needs the proxy. Say so before anything is written.
 	if pending := c.Unmanaged(i.adopt); len(pending) > 0 && c.Config.Settings.Offline && !a.dryRun {
-		return ierrors.New(ierrors.Offline, "Offline mode: cannot adopt %d tool(s) from go.mod without network.", len(pending))
+		return ierrors.New(
+			ierrors.Offline,
+			"Offline mode: cannot adopt %d tool(s) from go.mod without network.",
+			len(pending),
+		)
 	}
 
 	return nil
@@ -240,7 +263,13 @@ func (i *Init) run(ctx context.Context, _ *urfave.Command) error {
 	c := i.c
 
 	if i.args.dryRun {
-		_, _ = fmt.Fprintf(c.Stdout, "🔍 [dry-run] Would write %s (strategy=%s, dir=%s)\n", config.ManifestFile, c.Config.Strategy, c.Config.Dir)
+		_, _ = fmt.Fprintf(
+			c.Stdout,
+			"🔍 [dry-run] Would write %s (strategy=%s, dir=%s)\n",
+			config.ManifestFile,
+			c.Config.Strategy,
+			c.Config.Dir,
+		)
 
 		if i.args.noMigrate {
 			return nil
@@ -254,7 +283,13 @@ func (i *Init) run(ctx context.Context, _ *urfave.Command) error {
 			return ierrors.Wrap(ierrors.Generic, "Could not write "+config.ManifestFile, err)
 		}
 
-		_, _ = fmt.Fprintf(c.Stdout, "✅ Initialized %s (strategy=%s, dir=%s)\n", config.ManifestFile, c.Config.Strategy, c.Config.Dir)
+		_, _ = fmt.Fprintf(
+			c.Stdout,
+			"✅ Initialized %s (strategy=%s, dir=%s)\n",
+			config.ManifestFile,
+			c.Config.Strategy,
+			c.Config.Dir,
+		)
 
 		if i.args.noMigrate {
 			return nil

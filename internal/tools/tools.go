@@ -146,9 +146,13 @@ func (m *GoManager) flush() error {
 }
 
 var (
-	networkFailure = regexp.MustCompile(`(?i)dial tcp|i/o timeout|connection timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded`)
-	usageFailure   = regexp.MustCompile(`(?i)invalid module version syntax|malformed module path|invalid package path|can.t request version`)
-	notATool       = regexp.MustCompile(`(?im)^(go: )?(no such tool|unknown command|tool not found)`)
+	networkFailure = regexp.MustCompile(
+		`(?i)dial tcp|i/o timeout|connection timed out|no such host|connection refused|network is unreachable|could not resolve host|fetch failed|timeout exceeded`,
+	)
+	usageFailure = regexp.MustCompile(
+		`(?i)invalid module version syntax|malformed module path|invalid package path|can.t request version`,
+	)
+	notATool = regexp.MustCompile(`(?im)^(go: )?(no such tool|unknown command|tool not found)`)
 )
 
 // FailureCode classifies go's output: network problems are Network errors so
@@ -186,7 +190,13 @@ func CheckPackageSpec(spec string) error {
 // operation; other errors pass through unchanged.
 func timeoutToExit(err error, what string) error {
 	if te, ok := errors.AsType[*gocmd.TimeoutError](err); ok {
-		return ierrors.New(ierrors.Network, "%s timed out after %s. Check your network or raise %s.", what, te.After, config.EnvVarOperationTimeout)
+		return ierrors.New(
+			ierrors.Network,
+			"%s timed out after %s. Check your network or raise %s.",
+			what,
+			te.After,
+			config.EnvVarOperationTimeout,
+		)
 	}
 
 	return err

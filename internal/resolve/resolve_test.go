@@ -76,7 +76,12 @@ type manifestStub map[string]manifest.Tool
 func (m manifestStub) Tool(name string) (manifest.Tool, bool) { t, ok := m[name]; return t, ok }
 
 func resolver(root string, st strategy.Strategy, m resolve.Manifest) *resolve.Resolver {
-	return &resolve.Resolver{Root: root, Layout: strategy.Layout{Strategy: st, Dir: "tools"}, ModFiles: modparser.XParser{}, Manifest: m}
+	return &resolve.Resolver{
+		Root:     root,
+		Layout:   strategy.Layout{Strategy: st, Dir: "tools"},
+		ModFiles: modparser.XParser{},
+		Manifest: m,
+	}
 }
 
 func TestResolveEachStrategy(t *testing.T) {
@@ -99,7 +104,8 @@ func TestResolveEachStrategy(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			if ref.Package != impPkg || ref.Binary != "goimports" || ref.ModFileRel != tc.file || ref.ModFile != filepath.Join(root, tc.file) {
+			if ref.Package != impPkg || ref.Binary != "goimports" || ref.ModFileRel != tc.file ||
+				ref.ModFile != filepath.Join(root, tc.file) {
 				t.Fatalf("ref = %+v", ref)
 			}
 		})
@@ -160,7 +166,12 @@ func TestResolveRefusesAnUnsafeNameAndABrokenModfile(t *testing.T) {
 
 	write(t, filepath.Join(root, "tools/bad.mod"), "this is not a modfile\n")
 
-	if _, err := resolver(root, strategy.Split, nil).Resolve("bad"); err == nil || !strings.Contains(err.Error(), "parse tools/bad.mod") {
+	if _, err := resolver(
+		root,
+		strategy.Split,
+		nil,
+	).Resolve("bad"); err == nil ||
+		!strings.Contains(err.Error(), "parse tools/bad.mod") {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -175,8 +186,18 @@ func TestCallPerStrategy(t *testing.T) {
 		args []string
 	}{
 		{strategy.Unified, "tools/go.mod", filepath.Join(root, "tools"), []string{"tool", "goimports", "-w"}},
-		{strategy.Split, "tools/goimports.mod", root, []string{"tool", "-modfile=" + filepath.Join(root, "tools/goimports.mod"), "goimports", "-w"}},
-		{strategy.Module, "tools/goimports/go.mod", filepath.Join(root, "tools/goimports"), []string{"tool", "goimports", "-w"}},
+		{
+			strategy.Split,
+			"tools/goimports.mod",
+			root,
+			[]string{"tool", "-modfile=" + filepath.Join(root, "tools/goimports.mod"), "goimports", "-w"},
+		},
+		{
+			strategy.Module,
+			"tools/goimports/go.mod",
+			filepath.Join(root, "tools/goimports"),
+			[]string{"tool", "goimports", "-w"},
+		},
 	}
 
 	for _, tc := range cases {
@@ -222,8 +243,16 @@ func TestProbe(t *testing.T) {
 		{"runs", &fakeGo{}, ""},
 		{"go level failure", fail(1, "noise\ngo: no such tool \"x\"\n"), `go: no such tool "x"`},
 		{"the tool itself exits non-zero", fail(2, "usage: goimports [flags]\n"), ""},
-		{"go missing", &fakeGo{fn: func(gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound }}, "go not installed"},
-		{"cannot start", &fakeGo{fn: func(gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, errors.New("boom") }}, "boom"},
+		{
+			"go missing",
+			&fakeGo{fn: func(gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound }},
+			"go not installed",
+		},
+		{
+			"cannot start",
+			&fakeGo{fn: func(gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, errors.New("boom") }},
+			"boom",
+		},
 	}
 
 	for _, tc := range cases {

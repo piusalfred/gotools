@@ -148,5 +148,10 @@ func (l *lockedWriter) Write(b []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	return l.w.Write(b)
+	n, err := l.w.Write(b)
+	if err != nil {
+		return n, fmt.Errorf("write install output: %w", err)
+	}
+
+	return n, nil
 }

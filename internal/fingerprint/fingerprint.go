@@ -112,7 +112,7 @@ func New(params Params) Fingerprint {
 func FileDigest(path string) (string, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", ierrors.Wrap(ierrors.Generic, "digest file", err)
 	}
 
 	sum := sha256.Sum256(b)
@@ -140,10 +140,13 @@ func (f Fingerprint) String() string {
 	return f.Digest + "|" + f.Strategy + "|" + f.GoVersion + "|" + f.ModulePrefix
 }
 
+// recordFields is the number of |-separated fields in the recorded form.
+const recordFields = 4
+
 // Parse reads the form String writes.
 func Parse(s string) (Fingerprint, error) {
-	parts := strings.SplitN(strings.TrimSpace(s), "|", 4)
-	if len(parts) != 4 || parts[0] == "" {
+	parts := strings.SplitN(strings.TrimSpace(s), "|", recordFields)
+	if len(parts) != recordFields || parts[0] == "" {
 		return Fingerprint{}, ierrors.New(ierrors.Environment, "malformed fingerprint %q", s)
 	}
 
@@ -193,7 +196,7 @@ func (f FileFingerprinter) Read() (Fingerprint, error) {
 	}
 
 	if err != nil {
-		return Fingerprint{}, err
+		return Fingerprint{}, ierrors.Wrap(ierrors.Generic, "read fingerprint", err)
 	}
 
 	return Parse(string(b))
@@ -204,7 +207,7 @@ func (f FileFingerprinter) Read() (Fingerprint, error) {
 func (f FileFingerprinter) Write(fp Fingerprint) error {
 	tmp, err := os.CreateTemp(filepath.Dir(f.path), filepath.Base(f.path)+".tmp.*")
 	if err != nil {
-		return err
+		return ierrors.Wrap(ierrors.Generic, "create temporary fingerprint", err)
 	}
 
 	name := tmp.Name()
@@ -224,7 +227,9 @@ func (f FileFingerprinter) Write(fp Fingerprint) error {
 
 	if err != nil {
 		_ = os.Remove(name)
+
+		return ierrors.Wrap(ierrors.Generic, "write fingerprint", err)
 	}
 
-	return err
+	return nil
 }

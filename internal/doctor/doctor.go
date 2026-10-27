@@ -99,6 +99,10 @@ func (r Report) Healthy() bool { return r.Issues() == 0 }
 // DefaultProxyTimeout bounds the reachability probe.
 const DefaultProxyTimeout = 5 * time.Second
 
+// errUnknownStrategy is why a layout with a strategy gotools does not know
+// cannot be verified.
+var errUnknownStrategy = errors.New("unknown strategy")
+
 // Doctor runs the checks for one project. Everything it touches is a field, so
 // a test supplies a fake go runner and a directory of files.
 type Doctor struct {
@@ -289,7 +293,8 @@ func (d *Doctor) checkProxy(ctx context.Context) {
 	// the proxy, which -mod=vendor in GOFLAGS forbids for a project that
 	// vendors, so the probe sets -mod=mod for itself.
 	env := append(d.probeEnv(), "GOFLAGS=-mod=mod")
-	out, err := gocmd.WithTimeout(d.Go, timeout).Run(ctx, gocmd.Call{Dir: d.Scratch, Env: env, Args: []string{"list", "-m", probe + "@latest"}})
+	out, err := gocmd.WithTimeout(d.Go, timeout).
+		Run(ctx, gocmd.Call{Dir: d.Scratch, Env: env, Args: []string{"list", "-m", probe + "@latest"}})
 
 	_, timedOut := errors.AsType[*gocmd.TimeoutError](err)
 
@@ -308,7 +313,9 @@ func (d *Doctor) checkProxy(ctx context.Context) {
 // probeModule is the module root of the first go tool that a proxy serves, plus
 // how many tool modules were passed over as private. The module root comes from
 // the tool's modfile, so no network is used.
-func (d *Doctor) probeModule(noproxy string) (module string, private int) {
+func (d *Doctor) probeModule(noproxy string) (string, int) {
+	private := 0
+
 	for _, t := range d.Manifest.SortedTools() {
 		if t.Source != "" && t.Source != "go" || t.Package == "" {
 			continue
@@ -348,7 +355,11 @@ func (d *Doctor) checkConfig() {
 	case !d.HasManifest:
 		d.add("config", Fail, fmt.Sprintf("no %s — run '%s init'", config.ManifestFile, d.Program))
 	default:
-		d.add("config", Pass, fmt.Sprintf("%s exists and is valid (schema v%d)", config.ManifestFile, manifest.SchemaVersion))
+		d.add(
+			"config",
+			Pass,
+			fmt.Sprintf("%s exists and is valid (schema v%d)", config.ManifestFile, manifest.SchemaVersion),
+		)
 	}
 }
 
@@ -368,9 +379,24 @@ func (d *Doctor) checkStrategy() {
 	case det.Strategy == "":
 		d.add(name, Warn, fmt.Sprintf("tools not synced — run '%s sync'", d.Program))
 	case det.Strategy != want:
-		d.add(name, Warn, fmt.Sprintf("Strategy: %s — disk looks like %s (run '%s sync' to migrate)", want, det.Strategy, d.Program))
+		d.add(
+			name,
+			Warn,
+			fmt.Sprintf("Strategy: %s — disk looks like %s (run '%s sync' to migrate)", want, det.Strategy, d.Program),
+		)
 	case det.Hybrid():
-		d.add(name, Warn, fmt.Sprintf("Strategy: %s — %s holds more than one layout (%s); run '%s migrate %s' to clean up", want, d.dirName(), joinStrategies(det.Found), d.Program, want))
+		d.add(
+			name,
+			Warn,
+			fmt.Sprintf(
+				"Strategy: %s — %s holds more than one layout (%s); run '%s migrate %s' to clean up",
+				want,
+				d.dirName(),
+				joinStrategies(det.Found),
+				d.Program,
+				want,
+			),
+		)
 	default:
 		d.add(name, Pass, fmt.Sprintf("Strategy: %s — matches disk", want))
 	}
@@ -379,9 +405,10 @@ func (d *Doctor) checkStrategy() {
 // checkTwins reports one tool listed under several names. It adds a row only
 // when there is something to say.
 func (d *Doctor) checkTwins() {
-	var msgs []string
+	twins := d.Manifest.Twins(d.Layout.Strategy == strategy.Unified)
+	msgs := make([]string, 0, len(twins))
 
-	for _, group := range d.Manifest.Twins(d.Layout.Strategy == strategy.Unified) {
+	for _, group := range twins {
 		names := make([]string, len(group))
 		for i, t := range group {
 			names[i] = t.Name
@@ -455,7 +482,14 @@ func (d *Doctor) checkLock() {
 	default:
 		legacy := filepath.Join(d.toolsDir(), ".gotools.lock")
 		if fi, lerr := os.Lstat(legacy); lerr == nil && fi.IsDir() {
-			d.add("lock", Warn, fmt.Sprintf("legacy lock directory %s/.gotools.lock found (left by an older gotools) — remove it if no gotools process is running", d.dirName()))
+			d.add(
+				"lock",
+				Warn,
+				fmt.Sprintf(
+					"legacy lock directory %s/.gotools.lock found (left by an older gotools) — remove it if no gotools process is running",
+					d.dirName(),
+				),
+			)
 
 			return
 		}
@@ -488,7 +522,7 @@ func (d *Doctor) verifyTargets() ([]verifyTarget, error) {
 		return d.moduleTargets(dir, rel)
 	}
 
-	return nil, fmt.Errorf("unknown strategy: %s", d.Layout.Strategy)
+	return nil, fmt.Errorf("%w: %s", errUnknownStrategy, d.Layout.Strategy)
 }
 
 func (d *Doctor) splitTargets(dir, rel string) ([]verifyTarget, error) {
@@ -498,14 +532,15 @@ func (d *Doctor) splitTargets(dir, rel string) ([]verifyTarget, error) {
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read tool modfiles in %s: %w", rel, err)
 	}
 
 	var out []verifyTarget
 
 	for _, e := range entries {
 		n := e.Name()
-		if n == "go.mod" || strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".mod") || !isRegularFile(filepath.Join(dir, n)) {
+		if n == "go.mod" || strings.HasPrefix(n, ".") || !strings.HasSuffix(n, ".mod") ||
+			!isRegularFile(filepath.Join(dir, n)) {
 			continue
 		}
 
@@ -527,7 +562,7 @@ func (d *Doctor) moduleTargets(dir, rel string) ([]verifyTarget, error) {
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("read tool modules in %s: %w", rel, err)
 	}
 
 	var out []verifyTarget
@@ -568,7 +603,15 @@ func (d *Doctor) checkIntegrity(ctx context.Context) {
 
 	for _, t := range targets {
 		if !isRegularFile(t.sum) {
-			d.add("integrity", Fail, fmt.Sprintf("missing %s — run '%s sync'", filepath.ToSlash(strings.TrimPrefix(t.sum, d.Root+string(filepath.Separator))), d.Program))
+			d.add(
+				"integrity",
+				Fail,
+				fmt.Sprintf(
+					"missing %s — run '%s sync'",
+					filepath.ToSlash(strings.TrimPrefix(t.sum, d.Root+string(filepath.Separator))),
+					d.Program,
+				),
+			)
 
 			return
 		}
@@ -599,7 +642,8 @@ func (d *Doctor) verify(ctx context.Context, t verifyTarget) string {
 
 	// An older go may not know -modfile on `mod verify`; GOFLAGS reaches every
 	// go command.
-	if res.Code != 0 && t.flag != "" && strings.Contains(string(res.Stderr)+string(res.Stdout), "flag provided but not defined") {
+	if res.Code != 0 && t.flag != "" &&
+		strings.Contains(string(res.Stderr)+string(res.Stdout), "flag provided but not defined") {
 		call.Args = args
 		call.Env = append(d.probeEnv(), "GOFLAGS=-modfile="+t.flag)
 
@@ -634,7 +678,7 @@ func (d *Doctor) checkDisk() {
 		if e.Type().IsRegular() {
 			info, ierr := e.Info()
 			if ierr != nil {
-				return ierr
+				return fmt.Errorf("size of %s: %w", e.Name(), ierr)
 			}
 
 			total += info.Size()

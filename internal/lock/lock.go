@@ -92,7 +92,7 @@ type Locker interface {
 	// Lock takes the lock, waiting for another holder as the implementation
 	// is configured to. It returns an error matching ErrHeld when a holder
 	// was still there at the deadline, ErrUnavailable when the lock could not
-	// be set up, and ctx.Err() when ctx is done.
+	// be set up, and an error matching ctx.Err() when ctx is done.
 	Lock(ctx context.Context) (*Lock, error)
 	// Holder reports whether another process holds the lock, without taking
 	// it or creating anything.
@@ -184,7 +184,7 @@ func (l FileLocker) Lock(ctx context.Context) (*Lock, error) {
 	}
 
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("lock %s: %w", l.dir, err)
 	}
 
 	if err := os.MkdirAll(l.dir, 0o755); err != nil {
@@ -223,7 +223,7 @@ func (l FileLocker) Lock(ctx context.Context) (*Lock, error) {
 		case <-ctx.Done():
 			_ = f.Close()
 
-			return nil, ctx.Err()
+			return nil, fmt.Errorf("wait for the lock in %s: %w", l.dir, ctx.Err())
 		case <-time.After(min(wait, poll)):
 		}
 	}
@@ -250,7 +250,7 @@ func (l FileLocker) Holder() (Holder, error) {
 	}
 
 	if err != nil {
-		return Holder{}, err
+		return Holder{}, fmt.Errorf("inspect lock: %w", err)
 	}
 
 	defer f.Close()

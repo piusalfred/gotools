@@ -72,8 +72,13 @@ func (base *Doctor) Build(c *Context) *urfave.Command {
 		Usage:       usageDoctor,
 		Description: descriptionDoctor,
 		Examples:    []string{"doctor", "doctor --json", "doctor --offline"},
-		Flags: append(formatFlags(),
-			&urfave.BoolFlag{Name: FlagOffline, Usage: "Skip the proxy reachability check; probes fail fast instead of touching the network"}),
+		Flags: append(
+			formatFlags(),
+			&urfave.BoolFlag{
+				Name:  FlagOffline,
+				Usage: "Skip the proxy reachability check; probes fail fast instead of touching the network",
+			},
+		),
 		Run: d.run,
 	}.Build(c)
 }
@@ -122,6 +127,8 @@ type doctorDocument struct {
 }
 
 // doctorHeadings title the groups of the text report.
+//
+//nolint:gochecknoglobals // read-only table, never modified
 var doctorHeadings = map[string]string{
 	"go": "Go installation", "proxy": "Module proxy", "config": "Configuration",
 	"tools": "Managed tools", "lock": "Lock file", "integrity": "Module integrity", "disk": "Disk usage",

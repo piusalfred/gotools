@@ -121,7 +121,7 @@ func installing(c gocmd.Call) (gocmd.Result, error) {
 
 	b, err := os.ReadFile(modfile)
 	if err != nil {
-		return gocmd.Result{Code: 1, Stderr: []byte(err.Error())}, nil
+		return gocmd.Result{Code: 1, Stderr: []byte(err.Error())}, nil //nolint:nilerr // failure is an exit code
 	}
 
 	// A real go replaces the version of a module it already requires.
@@ -291,7 +291,12 @@ func TestInitFreshEachStrategy(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			dir := t.TempDir()
 
-			r := initIn(t, dir, opts{}, map[string]any{"strategy": st, "dir": ".tools", "go": "1.24", "prefix": "example.com/p"})
+			r := initIn(
+				t,
+				dir,
+				opts{},
+				map[string]any{"strategy": st, "dir": ".tools", "go": "1.24", "prefix": "example.com/p"},
+			)
 			r.ok(t)
 
 			for _, want := range []string{"Initialized .gotools.json (strategy=" + st + ", dir=.tools)", "No go.mod in project root"} {
@@ -340,7 +345,8 @@ func TestInitAdoptsRootGoMod(t *testing.T) {
 			}
 
 			mod := readFile(t, filepath.Join(dir, "go.mod"))
-			if strings.Contains(mod, "tool ") || strings.Contains(mod, "\ttool") || !strings.Contains(mod, "// keep this comment") ||
+			if strings.Contains(mod, "tool ") || strings.Contains(mod, "\ttool") ||
+				!strings.Contains(mod, "// keep this comment") ||
 				!strings.Contains(mod, "github.com/google/addlicense v1.1.1") {
 				t.Fatalf("root go.mod after strip:\n%s", mod)
 			}
@@ -421,7 +427,8 @@ func TestInitRefusesAnInvalidToolInRootGoMod(t *testing.T) {
 				t.Fatalf("err = %v", r.runErr)
 			}
 
-			if readFile(t, filepath.Join(dir, "go.mod")) != bad || r.goes.count("get", "-tool") != 0 || exists(filepath.Join(dir, config.ManifestFile)) {
+			if readFile(t, filepath.Join(dir, "go.mod")) != bad || r.goes.count("get", "-tool") != 0 ||
+				exists(filepath.Join(dir, config.ManifestFile)) {
 				t.Fatal("init acted on a go.mod it should have refused")
 			}
 		})
@@ -445,7 +452,11 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 		}
 	}
 
-	if got := files(t, dir); !slices.Equal(got, []string{"go.mod"}) || readFile(t, filepath.Join(dir, "go.mod")) != rootGoMod {
+	if got := files(
+		t,
+		dir,
+	); !slices.Equal(got, []string{"go.mod"}) ||
+		readFile(t, filepath.Join(dir, "go.mod")) != rootGoMod {
 		t.Fatalf("dry run wrote files: %v", got)
 	}
 
@@ -562,13 +573,19 @@ require (
 		t.Fatalf("err = %v", r.runErr)
 	}
 
-	if readFile(t, filepath.Join(dir, "go.mod")) != twin || exists(filepath.Join(dir, config.ManifestFile)) || r.goes.count("get") != 0 {
+	if readFile(t, filepath.Join(dir, "go.mod")) != twin || exists(filepath.Join(dir, config.ManifestFile)) ||
+		r.goes.count("get") != 0 {
 		t.Fatal("something was written")
 	}
 
 	// The same clash with an already managed tool.
 	dir = t.TempDir()
-	writeFile(t, filepath.Join(dir, "go.mod"), twin[:strings.Index(twin, "tool (")]+"tool example.com/b/foo\n\nrequire example.com/b v1.0.0\n")
+	beforeTools, _, _ := strings.Cut(twin, "tool (")
+	writeFile(
+		t,
+		filepath.Join(dir, "go.mod"),
+		beforeTools+"tool example.com/b/foo\n\nrequire example.com/b v1.0.0\n",
+	)
 
 	m := manifest.New()
 	m.Strategy, m.ModulePrefix = "split", "tools"
@@ -612,7 +629,8 @@ func TestInitUsageErrors(t *testing.T) {
 func TestInitPositionalArgumentShowsTheUsage(t *testing.T) {
 	r := initIn(t, t.TempDir(), opts{args: []string{"split"}}, nil)
 
-	if want := "Unknown argument: split\n   Usage: "; r.runErr == nil || !strings.HasPrefix(r.runErr.Error(), want) || !strings.HasSuffix(r.runErr.Error(), "init [options]") {
+	if want := "Unknown argument: split\n   Usage: "; r.runErr == nil || !strings.HasPrefix(r.runErr.Error(), want) ||
+		!strings.HasSuffix(r.runErr.Error(), "init [options]") {
 		t.Fatalf("err = %v, want %q...", r.runErr, want)
 	}
 }
@@ -655,7 +673,12 @@ func TestInitAcceptsAutoPrefixAndInheritGo(t *testing.T) {
 func TestInitDoesNotPersistEnvironment(t *testing.T) {
 	dir := t.TempDir()
 
-	r := initIn(t, dir, opts{environ: []string{"GOTOOLS_STRATEGY=module", "GOTOOLS_DIR=envdir"}}, map[string]any{"dir": ".t"})
+	r := initIn(
+		t,
+		dir,
+		opts{environ: []string{"GOTOOLS_STRATEGY=module", "GOTOOLS_DIR=envdir"}},
+		map[string]any{"dir": ".t"},
+	)
 	r.ok(t)
 
 	m := readManifest(t, dir)
@@ -686,7 +709,9 @@ func TestInitNeedsGo(t *testing.T) {
 	g := &fakeGo{fail: func(gocmd.Call) string { return "" }}
 	dir := t.TempDir()
 
-	missing := runnerFunc(func(context.Context, gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound })
+	missing := runnerFunc(
+		func(context.Context, gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound },
+	)
 
 	var errb bytes.Buffer
 
@@ -728,7 +753,11 @@ func TestInitSyncFailureIsReported(t *testing.T) {
 
 func TestInitWarnsAboutSkippedManifestEntries(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, config.ManifestFile), `{"strategy":"split","tools":{"../evil":{"source":"go","package":"p","version":"v1"}}}`)
+	writeFile(
+		t,
+		filepath.Join(dir, config.ManifestFile),
+		`{"strategy":"split","tools":{"../evil":{"source":"go","package":"p","version":"v1"}}}`,
+	)
 
 	r := initIn(t, dir, opts{}, nil)
 	r.ok(t)
@@ -761,7 +790,8 @@ func TestInitFindsTheProjectRootFromASubdirectory(t *testing.T) {
 	r := initIn(t, sub, opts{}, nil)
 	r.ok(t)
 
-	if r.ctx.Root != root || readManifest(t, root).Strategy != "module" || exists(filepath.Join(sub, config.ManifestFile)) {
+	if r.ctx.Root != root || readManifest(t, root).Strategy != "module" ||
+		exists(filepath.Join(sub, config.ManifestFile)) {
 		t.Fatalf("root = %q", r.ctx.Root)
 	}
 }
@@ -782,7 +812,13 @@ func TestInitAutoPrefixIsUsedForAdoptedTools(t *testing.T) {
 
 	initIn(t, dir, opts{}, map[string]any{"prefix": "auto"}).ok(t)
 
-	if got := readFile(t, filepath.Join(dir, "tools", "addlicense.mod")); !strings.HasPrefix(got, "module example.com/test/tools/addlicense\n") {
+	if got := readFile(
+		t,
+		filepath.Join(dir, "tools", "addlicense.mod"),
+	); !strings.HasPrefix(
+		got,
+		"module example.com/test/tools/addlicense\n",
+	) {
 		t.Fatalf("modfile:\n%s", got)
 	}
 
@@ -810,7 +846,13 @@ func TestInitWaitsForNoOneWhenTheLockIsHeld(t *testing.T) {
 	release := make(chan struct{})
 
 	go func() {
-		c := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: &fakeGo{}}
+		c := &command.Context{
+			Stdout:  &bytes.Buffer{},
+			Stderr:  &bytes.Buffer{},
+			Program: "gotools",
+			WorkDir: dir,
+			Go:      &fakeGo{},
+		}
 		if err := c.Load(context.Background(), config.WithOverrides(config.Overrides{})); err != nil {
 			t.Error(err)
 
@@ -858,7 +900,8 @@ func TestBuildingTwiceDoesNotShareARunsState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !exists(filepath.Join(dirA, config.ManifestFile)) || exists(filepath.Join(dirB, config.ManifestFile)) || outB.Len() != 0 {
+	if !exists(filepath.Join(dirA, config.ManifestFile)) || exists(filepath.Join(dirB, config.ManifestFile)) ||
+		outB.Len() != 0 {
 		t.Fatalf("the run used the wrong Context: A=%v B=%v out=%q", files(t, dirA), files(t, dirB), outB.String())
 	}
 }

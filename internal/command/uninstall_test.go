@@ -31,7 +31,7 @@ import (
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 )
 
-func uninstallIn(t *testing.T, exe, stdin string, args ...string) (out string, err error) {
+func uninstallIn(t *testing.T, exe, stdin string, args ...string) (string, error) {
 	t.Helper()
 
 	var o bytes.Buffer
@@ -40,7 +40,7 @@ func uninstallIn(t *testing.T, exe, stdin string, args ...string) (out string, e
 		Stdin: strings.NewReader(stdin), Stdout: &o, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: t.TempDir(),
 		Exe: func() (string, error) { return exe, nil },
 	}
-	err = run(command.NewUninstall(), c, args...)
+	err := run(command.NewUninstall(), c, args...)
 
 	return o.String(), err
 }
@@ -79,7 +79,12 @@ func TestUninstallCancelled(t *testing.T) {
 func TestUninstallWithNoStdinIsACancel(t *testing.T) {
 	exe := fakeExe(t)
 
-	c := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", Exe: func() (string, error) { return exe, nil }}
+	c := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		Exe:     func() (string, error) { return exe, nil },
+	}
 	if err := run(command.NewUninstall(), c); err != nil || !exists(exe) {
 		t.Fatalf("err=%v exists=%v", err, exists(exe))
 	}
@@ -95,7 +100,8 @@ func TestUninstallDryRunAndUsage(t *testing.T) {
 	}
 
 	out, err := uninstallIn(t, exe, "y\n", "--dry-run")
-	if err != nil || !strings.Contains(out, "[dry-run] Would remove "+resolved) || strings.Contains(out, "(y/N)") || !exists(exe) {
+	if err != nil || !strings.Contains(out, "[dry-run] Would remove "+resolved) || strings.Contains(out, "(y/N)") ||
+		!exists(exe) {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 
@@ -170,7 +176,13 @@ func TestUninstallWhenTheBinaryIsAlreadyGone(t *testing.T) {
 }
 
 func TestUninstallCannotLocateItself(t *testing.T) {
-	c := &command.Context{Stdin: strings.NewReader("y\n"), Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", Exe: func() (string, error) { return "", os.ErrNotExist }}
+	c := &command.Context{
+		Stdin:   strings.NewReader("y\n"),
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		Exe:     func() (string, error) { return "", os.ErrNotExist },
+	}
 
 	if err := run(command.NewUninstall(), c); ierrors.CodeOf(err) != ierrors.Environment {
 		t.Fatalf("err = %v", err)

@@ -41,6 +41,10 @@ import (
 // ErrNotFound reports that the go command is not installed.
 var ErrNotFound = errors.New("go not installed")
 
+// killDelay is how long a child that was signalled to stop gets before it is
+// killed outright.
+const killDelay = 3 * time.Second
+
 // Call is one invocation of the go command. The process working directory is
 // never changed; Dir is applied to the child only.
 type Call struct {
@@ -104,7 +108,7 @@ func (g ExecRunner) Run(ctx context.Context, c Call) (Result, error) {
 	res := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
 
 	if ctx.Err() != nil {
-		return res, ctx.Err()
+		return res, fmt.Errorf("run %s: %w", bin, ctx.Err())
 	}
 
 	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
@@ -113,7 +117,11 @@ func (g ExecRunner) Run(ctx context.Context, c Call) (Result, error) {
 		return res, nil
 	}
 
-	return res, err
+	if err != nil {
+		return res, fmt.Errorf("run %s: %w", bin, err)
+	}
+
+	return res, nil
 }
 
 // TimeoutError reports that a bounded run exceeded its limit.

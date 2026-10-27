@@ -44,12 +44,12 @@ func isTerminal(r io.Reader) bool {
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
 
-// readPiped returns what was piped into stdin. ok is false when there is
+// readPiped returns what was piped into stdin, and false when there is
 // nothing to read: no stdin, a terminal, /dev/null, or an empty stream. Whether
 // stdin is a terminal is decided by its mode and never by waiting for input. A
 // real pipe is read until its writer closes it, as `cat` does, and Ctrl-C (ctx)
 // ends the wait.
-func readPiped(ctx context.Context, r io.Reader) (data []byte, ok bool, err error) {
+func readPiped(ctx context.Context, r io.Reader) ([]byte, bool, error) {
 	if r == nil {
 		return nil, false, nil
 	}
@@ -57,6 +57,7 @@ func readPiped(ctx context.Context, r io.Reader) (data []byte, ok bool, err erro
 	if f, isFile := r.(*os.File); isFile {
 		fi, serr := f.Stat()
 		if serr != nil || fi.Mode()&os.ModeCharDevice != 0 {
+			//nolint:nilerr // a stdin that cannot be inspected is treated like a terminal: nothing was piped
 			return nil, false, nil
 		}
 	}
@@ -75,13 +76,17 @@ func readPiped(ctx context.Context, r io.Reader) (data []byte, ok bool, err erro
 
 	select {
 	case <-ctx.Done():
-		return nil, false, ctx.Err()
+		return nil, false, ierrors.Wrap(ierrors.Generic, "Reading stdin was interrupted", ctx.Err())
 	case res := <-done:
 		switch {
 		case res.err != nil:
 			return nil, false, ierrors.Wrap(ierrors.Generic, "Could not read stdin", res.err)
 		case len(res.data) > maxStdin:
-			return nil, false, ierrors.New(ierrors.Usage, "Stdin is larger than %d bytes; pipe a list of tools, one per line.", maxStdin)
+			return nil, false, ierrors.New(
+				ierrors.Usage,
+				"Stdin is larger than %d bytes; pipe a list of tools, one per line.",
+				maxStdin,
+			)
 		}
 
 		return res.data, len(res.data) > 0, nil
