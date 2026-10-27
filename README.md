@@ -68,6 +68,7 @@ The [documentation index](docs/README.md) says which page to read for what. All 
 |:---------------------------------------| :--- |
 | [USAGE](docs/USAGE.md)                 | Command reference, examples, risks, doctor, JSON output, shell completions, cleanup, exit codes |
 | [INSTALLATION](docs/INSTALLATION.md)   | All installation methods: `go install`, pre-built binaries, curl installer, self-update, version pinning |
+| [DOCKER](docs/DOCKER.md)               | The `ghcr.io/piusalfred/gotools` image: running it, the cache volume, dev containers, CI |
 | [STRATEGIES](docs/STRATEGIES.md)       | The three isolation strategies compared |
 | [MIGRATION](docs/MIGRATION.md)         | Moving between strategies |
 | [CONFIGURATION](docs/CONFIGURATION.md) | The `.gotools.json` manifest, schema versioning, module prefix |

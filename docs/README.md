@@ -11,6 +11,7 @@ start; these pages are the detail.
 | Read | When |
 | :--- | :--- |
 | [Installation](INSTALLATION.md) | Getting the binary: `go install`, a pre-built release, the curl installer, updating and removing it. |
+| [Docker](DOCKER.md) | The container image: running it on a project, the cache volume, dev containers and CI jobs. |
 | [Usage](USAGE.md) | Every command and flag with examples, JSON output, shell completion, cleanup and the exit codes. |
 | [Strategies](STRATEGIES.md) | Choosing between `split`, `module` and `unified`, and how each keeps tool dependencies out of your module. |
 | [Migration](MIGRATION.md) | Moving a project from one strategy to another, or adopting tools from a `go.mod`. |

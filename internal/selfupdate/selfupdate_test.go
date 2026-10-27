@@ -517,4 +517,20 @@ func TestAssetNamesAgreeWithTheReleaseWorkflowAndInstallScript(t *testing.T) {
 	if got := (selfupdate.Source{GOOS: "linux", GOARCH: "arm64"}).Asset(); got != "gotools-linux-arm64" {
 		t.Errorf("Asset = %q", got)
 	}
+
+	// The image copies the release's linux binaries by these names; a rename
+	// would build an image without a binary.
+	if !strings.Contains(read("Dockerfile"), "dist/gotools-linux-${TARGETARCH}") {
+		t.Error("the Dockerfile does not copy dist/gotools-linux-${TARGETARCH}")
+	}
+
+	for _, arch := range []string{"amd64", "arm64"} {
+		if !strings.Contains(workflow, "goarch: "+arch) {
+			t.Errorf("release.yml does not build linux/%s, which the image needs", arch)
+		}
+	}
+
+	if !strings.Contains(workflow, "ghcr.io/${{ github.repository }}") {
+		t.Error("release.yml does not publish the image to ghcr.io")
+	}
 }

@@ -129,6 +129,15 @@ A checksum proves the download matches the published release; it does not
 prove who published it. See [SECURITY.md](SECURITY.md) for the trust model
 and for the checksum-database-verified alternative (`go install`).
 
+## 4. Docker image
+
+```bash
+docker pull ghcr.io/piusalfred/gotools:vX.Y.Z
+```
+
+A Go toolchain with `gotools` on `PATH`, for CI and containerized development.
+See [DOCKER.md](DOCKER.md) for how to mount a project and keep the caches.
+
 ## Updating and removing
 
 ```bash

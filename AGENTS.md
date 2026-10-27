@@ -53,8 +53,10 @@ test/                # integration tests (build tag integration) + install.sh te
 tools/               # the tools this repo builds with (split strategy, committed)
 .gotools.json        # manifest for those tools
 install.sh           # standalone curl-to-install script (the only shell left)
-Makefile             # build, fmt, lint, test, version targets
-docs/                # USAGE, INSTALLATION, STRATEGIES, MIGRATION, CONFIGURATION,
+Dockerfile           # the image: golang + the release's linux binary (docs/DOCKER.md)
+.dockerignore        # the build context is just dist/gotools-linux-{amd64,arm64}
+Makefile             # build, fmt, lint, test, docker-build, version targets
+docs/                # USAGE, INSTALLATION, DOCKER, STRATEGIES, MIGRATION, CONFIGURATION,
                      # CI, SECURITY, DEVELOPMENT (README.md is a slim landing page)
 ```
 
@@ -134,6 +136,7 @@ make test-unit          # go test -race ./...   (offline, fake go, fast)
 make test-integration   # real go + network: go test -tags integration ./test/...
 make lint               # vet, staticcheck, license, imports, gofumpt, rumdl, shellcheck
 make fmt                # addlicense, gci, gofumpt, go mod tidy, rumdl
+make docker-build       # the image for this machine -> gotools:dev (needs docker)
 make check              # lint + test-unit (what CI's static-analysis job runs)
 pre-commit run --all-files
 make set-version VER=vX.Y.Z   # write version.txt
@@ -330,7 +333,11 @@ a key. The exit-code table is checked against `docs/USAGE.md`, and the release a
    `gotools-<os>-<arch>` for linux and
    darwin on amd64 and arm64, smoke-runs one, attaches `install.sh` stamped
    with the release's version (`DEFAULT_VERSION`), writes `checksums-sha256.txt`
-   (the binaries and `install.sh`) and creates the GitHub release.
+   (the binaries and `install.sh`) and creates the GitHub release. Before the
+   release, the `docker` job builds the multi-arch image from the linux
+   binaries, smoke-tests it and pushes it to `ghcr.io/piusalfred/gotools`
+   (`vX.Y.Z`, plus `latest` for non-pre-releases); the release job needs it, so
+   a failed push publishes nothing and a re-run retries both.
 
 `install.sh` and `self-update` refuse a binary whose hash is not in
 `checksums-sha256.txt`, so keep every shipped binary listed there when changing

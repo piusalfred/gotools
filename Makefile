@@ -51,7 +51,7 @@ VERSION_GREP := grep -E '^var Version = ' | cut -d'"' -f2
         fmt fix-go fmt-license fmt-imports fmt-go fmt-mod fmt-md \
         test go-build test-unit test-integration cover \
         lint lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt \
-        govulncheck check version-check get-version set-version sync-main
+        govulncheck check docker-build version-check get-version set-version sync-main
 
 all: build
 
@@ -65,6 +65,7 @@ help:
 	@echo "lint              vet, staticcheck, license, imports, gofumpt, markdown, shellcheck"
 	@echo "fmt               go fix, license headers, imports, gofumpt, go mod tidy, markdown"
 	@echo "check             lint + test-unit (what CI's static-analysis job runs)"
+	@echo "docker-build      build the image for this machine: gotools:dev (needs docker)"
 	@echo "get-version / set-version VER=vX.Y.Z / version-check"
 
 # Rebuilt whenever a non-test Go source changes.
@@ -173,6 +174,14 @@ lint-go-fmt: $(BIN)
 
 check: lint test-unit
 	@echo "✅ All checks passed"
+
+# The image copies the linux binaries the release workflow builds, so both
+# architectures are cross-compiled here and docker picks the one it needs.
+docker-build:
+	@for arch in amd64 arm64; do \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags="-s -w" -o dist/gotools-linux-$$arch ./cmd/gotools || exit 1; \
+	done
+	docker build --build-arg GO_VERSION=$$(awk '/^go /{print $$2; exit}' go.mod) -t gotools:dev .
 
 get-version:
 	@tr -d '[:space:]' < $(VERSION_FILE)

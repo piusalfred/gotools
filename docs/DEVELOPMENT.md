@@ -142,6 +142,11 @@ See `.github/workflows/test.yml`.
    one, attaches `install.sh` with the release's version stamped in as its
    default, writes `checksums-sha256.txt` (the binaries and `install.sh`) and
    publishes the GitHub release.
+   The `docker` job first builds the image from the linux binaries, smoke-tests
+   it and pushes `ghcr.io/piusalfred/gotools:<tag>` and `latest` (pre-releases
+   get no `latest`); the release job waits for it, so a failed push means no
+   release and a re-run retries both. The package is private until its
+   visibility is set to public once in the GitHub package settings.
    `install.sh` and `gotools self-update` verify downloads against that
    manifest, so every binary must be listed in it.
 

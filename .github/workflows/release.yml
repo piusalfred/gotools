@@ -141,10 +141,92 @@ jobs:
                   retention-days: 1
 
     # ------------------------------------------------------------------
-    # 3. Create the GitHub release with all binaries and their checksums
+    # 3. Publish the container image to GHCR from the binaries built above.
+    #    It runs before the release on purpose: if the push fails the run
+    #    fails with no release published, and a re-run retries everything.
+    #    After the release, a re-run would find the version already
+    #    released, skip, and never push the image.
+    # ------------------------------------------------------------------
+    docker:
+        needs: [meta, build]
+        if: needs.meta.outputs.release == 'true'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  ref: ${{ github.event.workflow_run.head_sha }}
+
+            - name: Download the linux binaries
+              uses: actions/download-artifact@v4
+              with:
+                  pattern: gotools-linux-*
+                  path: dist
+                  merge-multiple: true
+
+            - name: Read the Go version from go.mod
+              id: go
+              run: echo "version=$(awk '/^go /{print $2; exit}' go.mod)" >> "$GITHUB_OUTPUT"
+
+            - uses: docker/setup-qemu-action@v3
+
+            - uses: docker/setup-buildx-action@v3
+
+            - name: Build the image for the runner
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  load: true
+                  platforms: linux/amd64
+                  tags: gotools:smoke
+                  build-args: GO_VERSION=${{ steps.go.outputs.version }}
+
+            - name: Smoke-test the image
+              run: |
+                  docker run --rm gotools:smoke version
+                  docker run --rm --entrypoint go gotools:smoke version
+                  # A caller's uid has no passwd entry; the caches and the project must still work.
+                  docker run --rm --user 12345:12345 -v "$PWD":/work --entrypoint sh gotools:smoke \
+                      -c 'touch /cache/go-build/.w && gotools list'
+
+            - name: Log in to GHCR
+              uses: docker/login-action@v3
+              with:
+                  registry: ghcr.io
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Image tags and labels
+              id: meta
+              uses: docker/metadata-action@v5
+              with:
+                  images: ghcr.io/${{ github.repository }}
+                  flavor: latest=false
+                  tags: |
+                      type=raw,value=${{ needs.meta.outputs.tag }}
+                      type=raw,value=latest,enable=${{ !contains(needs.meta.outputs.tag, '-') }}
+                  # Under workflow_run github.sha is the default branch head, not the tested commit.
+                  labels: |
+                      org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
+                      org.opencontainers.image.version=${{ needs.meta.outputs.tag }}
+
+            - name: Push the multi-arch image
+              uses: docker/build-push-action@v6
+              with:
+                  context: .
+                  push: true
+                  platforms: linux/amd64,linux/arm64
+                  tags: ${{ steps.meta.outputs.tags }}
+                  labels: ${{ steps.meta.outputs.labels }}
+                  build-args: GO_VERSION=${{ steps.go.outputs.version }}
+
+    # ------------------------------------------------------------------
+    # 4. Create the GitHub release with all binaries and their checksums
     # ------------------------------------------------------------------
     release:
-        needs: [meta, build]
+        needs: [meta, build, docker]
         if: needs.meta.outputs.release == 'true'
         runs-on: ubuntu-latest
         permissions:
@@ -201,6 +283,11 @@ jobs:
                       **With Go** (verified by the Go checksum database):
                       ```
                       go install github.com/piusalfred/gotools/cmd/gotools@${{ needs.meta.outputs.tag }}
+                      ```
+
+                      **Docker** (Go toolchain included, linux/amd64 and linux/arm64):
+                      ```
+                      docker pull ghcr.io/${{ github.repository }}:${{ needs.meta.outputs.tag }}
                       ```
 
                       **Upgrade an existing install:**

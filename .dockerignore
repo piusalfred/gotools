@@ -1,0 +1,4 @@
+# The build context is only the two prebuilt binaries the Dockerfile copies.
+*
+!dist/gotools-linux-amd64
+!dist/gotools-linux-arm64
