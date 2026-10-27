@@ -100,6 +100,14 @@ release workflow smoke-tests the image, pushes it to GHCR, and only then
 publishes the GitHub release, so a failed push fails the run before any release
 exists and a re-run retries both.
 
+The image carries the OCI annotations GHCR shows on the package page:
+`org.opencontainers.image.source` links the package to this repository,
+`description` sits under the name and `licenses` fills the Details sidebar. They
+are set as labels in the `Dockerfile` (for local builds) and again by the
+release workflow, as labels and as annotations on the multi-arch index, because
+the page reads a multi-arch image's description from the index. Change the text
+in both places.
+
 To build one locally:
 
 ```bash

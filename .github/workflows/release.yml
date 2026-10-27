@@ -201,6 +201,11 @@ jobs:
             - name: Image tags and labels
               id: meta
               uses: docker/metadata-action@v5
+              env:
+                  # A multi-arch image is an index over per-arch manifests, and the GHCR
+                  # package page reads its description from the index annotations, not
+                  # from the labels. Emit the metadata at both levels.
+                  DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
               with:
                   images: ghcr.io/${{ github.repository }}
                   flavor: latest=false
@@ -208,7 +213,15 @@ jobs:
                       type=raw,value=${{ needs.meta.outputs.tag }}
                       type=raw,value=latest,enable=${{ !contains(needs.meta.outputs.tag, '-') }}
                   # Under workflow_run github.sha is the default branch head, not the tested commit.
+                  # title, description, source, documentation and licenses are set here
+                  # because the action would otherwise take the description from the
+                  # repository settings; keep the text in step with the Dockerfile's LABEL.
                   labels: |
+                      org.opencontainers.image.title=gotools
+                      org.opencontainers.image.description=Go toolchain with the gotools binary: manage Go build tools with go get -tool, isolated from your module graph, with deterministic sync and managed execution.
+                      org.opencontainers.image.source=https://github.com/${{ github.repository }}
+                      org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/docs/DOCKER.md
+                      org.opencontainers.image.licenses=MIT
                       org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
                       org.opencontainers.image.version=${{ needs.meta.outputs.tag }}
 
@@ -220,6 +233,7 @@ jobs:
                   platforms: linux/amd64,linux/arm64
                   tags: ${{ steps.meta.outputs.tags }}
                   labels: ${{ steps.meta.outputs.labels }}
+                  annotations: ${{ steps.meta.outputs.annotations }}
                   build-args: GO_VERSION=${{ steps.go.outputs.version }}
 
     # ------------------------------------------------------------------

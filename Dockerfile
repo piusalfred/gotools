@@ -31,6 +31,17 @@
 ARG GO_VERSION=1.27
 FROM golang:${GO_VERSION}
 
+# GHCR reads these three for the package page: source links the package to the
+# repository (and lets the release workflow's GITHUB_TOKEN keep pushing to it),
+# description sits under the name, licenses fills the Details sidebar. The
+# release workflow sets the same keys as labels and as annotations on the
+# multi-arch index, which is where the page looks for a multi-arch image.
+LABEL org.opencontainers.image.title="gotools" \
+    org.opencontainers.image.description="Go toolchain with the gotools binary: manage Go build tools with go get -tool, isolated from your module graph, with deterministic sync and managed execution." \
+    org.opencontainers.image.source="https://github.com/piusalfred/gotools" \
+    org.opencontainers.image.documentation="https://github.com/piusalfred/gotools/blob/main/docs/DOCKER.md" \
+    org.opencontainers.image.licenses="MIT"
+
 ARG TARGETARCH
 COPY --chmod=0755 dist/gotools-linux-${TARGETARCH} /usr/local/bin/gotools
 
