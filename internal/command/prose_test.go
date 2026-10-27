@@ -39,7 +39,12 @@ func TestReflow(t *testing.T) {
 		{"collapses runs of spaces", "a   b", "a b", 20},
 		{"trims the ends", "\n\naaa bbb \n\n", "aaa bbb", 20},
 		{"empty", "", "", 20},
-		{"an indented paragraph is kept as written", "intro words\n\n  echo one | tool\n  echo two | tool\n\nafter", "intro words\n\n  echo one | tool\n  echo two | tool\n\nafter", 20},
+		{
+			"an indented paragraph is kept as written",
+			"intro words\n\n  echo one | tool\n  echo two | tool\n\nafter",
+			"intro words\n\n  echo one | tool\n  echo two | tool\n\nafter",
+			20,
+		},
 		{"a tab-indented paragraph is kept", "\tcmd --flag value", "\tcmd --flag value", 5},
 	}
 

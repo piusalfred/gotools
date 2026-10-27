@@ -25,11 +25,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	urfave "github.com/urfave/cli/v3"
 
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 	"github.com/piusalfred/gotools/internal/format"
+	"github.com/piusalfred/gotools/internal/manifest"
 	"github.com/piusalfred/gotools/internal/resolve"
 	"github.com/piusalfred/gotools/internal/strategy"
 )
@@ -93,7 +95,7 @@ func (i *Info) run(ctx context.Context, cmd *urfave.Command) error {
 
 	c := i.c
 
-	if err := c.Load(ctx); err != nil {
+	if err = c.Load(ctx); err != nil {
 		return err
 	}
 
@@ -113,11 +115,29 @@ func (i *Info) run(ctx context.Context, cmd *urfave.Command) error {
 
 	onDisk := err == nil
 	managed, inManifest := c.Manifest.Tool(name)
-	layout := c.Layout()
+
+	if err = i.rejectMissing(f, name, ref, onDisk, inManifest); err != nil {
+		return err
+	}
+
+	doc := i.describe(name, ref, onDisk, managed, inManifest)
+
+	if f.Kind() == format.JSON {
+		doc.Runnable = onDisk && c.Prober().Probe(ctx, name) == ""
+	}
+
+	return f.Write(c.Stdout, doc)
+}
+
+// rejectMissing is the not-found error for a tool that info cannot show, or nil
+// when there is something to show. JSON also reports the miss on stdout, so a
+// script reads the same document either way.
+func (i *Info) rejectMissing(f format.Formatter, name string, ref resolve.Ref, onDisk, inManifest bool) error {
+	layout := i.c.Layout()
 
 	switch {
 	case f.Kind() == format.JSON && !onDisk && !inManifest:
-		if err := f.Write(c.Stdout, notFoundDocument{Error: "tool not found: " + name}); err != nil {
+		if err := f.Write(i.c.Stdout, notFoundDocument{Error: "tool not found: " + name}); err != nil {
 			return err
 		}
 
@@ -132,13 +152,32 @@ func (i *Info) run(ctx context.Context, cmd *urfave.Command) error {
 		return ierrors.New(ierrors.ToolNotFound, "Tool '%s' not found in %s.", name, ref.ModFileRel)
 	}
 
-	doc := infoDocument{Name: name, Source: "go", Strategy: string(layout.Strategy), Go: "?", ModFile: ref.ModFileRel}
+	return nil
+}
+
+// describe is the document for a tool: the modfile on disk when it can be read,
+// and the manifest for whatever the modfile lacks.
+func (i *Info) describe(
+	name string,
+	ref resolve.Ref,
+	onDisk bool,
+	managed manifest.Tool,
+	inManifest bool,
+) infoDocument {
+	doc := infoDocument{
+		Name:     name,
+		Source:   "go",
+		Strategy: string(i.c.Layout().Strategy),
+		Go:       "?",
+		ModFile:  ref.ModFileRel,
+	}
+
 	if inManifest && managed.Source != "" {
 		doc.Source = managed.Source
 	}
 
 	if onDisk {
-		if mod, err := c.ModFiles.Read(ref.ModFile); err == nil {
+		if mod, err := i.c.ModFiles.Read(ref.ModFile); err == nil {
 			if mod.Go != "" {
 				doc.Go = mod.Go
 			}
@@ -152,11 +191,7 @@ func (i *Info) run(ctx context.Context, cmd *urfave.Command) error {
 		doc.Package, doc.Version = managed.Package, managed.Version
 	}
 
-	if f.Kind() == format.JSON {
-		doc.Runnable = onDisk && c.Prober().Probe(ctx, name) == ""
-	}
-
-	return f.Write(c.Stdout, doc)
+	return doc
 }
 
 // infoDocument is what info reports. ModFile is shown in text only.
@@ -175,7 +210,7 @@ type infoDocument struct {
 func (d infoDocument) WriteText(w io.Writer) error {
 	or := func(v string) string {
 		if v == "" || v == "?" {
-			return "unknown"
+			return unknownValue
 		}
 
 		return v
@@ -191,19 +226,21 @@ func (d infoDocument) WriteText(w io.Writer) error {
 		{"Modfile:", d.ModFile},
 	}
 
-	if _, err := io.WriteString(w, "\n"); err != nil {
-		return err
-	}
+	var text strings.Builder
+
+	text.WriteString("\n")
 
 	for _, r := range rows {
-		if _, err := fmt.Fprintf(w, "  %-11s %s\n", r[0], r[1]); err != nil {
-			return err
-		}
+		fmt.Fprintf(&text, "  %-11s %s\n", r[0], r[1])
 	}
 
-	_, err := io.WriteString(w, "\n")
+	text.WriteString("\n")
 
-	return err
+	if _, err := io.WriteString(w, text.String()); err != nil {
+		return ierrors.Wrap(ierrors.Generic, "Could not write the tool information", err)
+	}
+
+	return nil
 }
 
 // notFoundDocument is what info prints as JSON for a tool that does not exist.
@@ -213,7 +250,9 @@ type notFoundDocument struct {
 
 // WriteText implements format.Document.
 func (d notFoundDocument) WriteText(w io.Writer) error {
-	_, err := fmt.Fprintln(w, d.Error)
+	if _, err := fmt.Fprintln(w, d.Error); err != nil {
+		return ierrors.Wrap(ierrors.Generic, "Could not write the error", err)
+	}
 
-	return err
+	return nil
 }

@@ -69,12 +69,14 @@ func TestSelect(t *testing.T) {
 
 func TestSelectNamesTheProblem(t *testing.T) {
 	_, err := format.Select("yaml", false, false)
-	if err == nil || !strings.Contains(err.Error(), "Unknown output format: yaml") || !strings.Contains(err.Error(), "Supported formats: json, text") {
+	if err == nil || !strings.Contains(err.Error(), "Unknown output format: yaml") ||
+		!strings.Contains(err.Error(), "Supported formats: json, text") {
 		t.Fatalf("unknown format: %v", err)
 	}
 
 	_, err = format.Select("", true, true)
-	if !errors.Is(err, format.ErrConflict) || !strings.Contains(err.Error(), "Conflicting output formats: use one of --format, --json or --text") {
+	if !errors.Is(err, format.ErrConflict) ||
+		!strings.Contains(err.Error(), "Conflicting output formats: use one of --format, --json or --text") {
 		t.Fatalf("conflict: %v", err)
 	}
 }
@@ -94,7 +96,11 @@ func TestFor(t *testing.T) {
 func TestTextFormatterUsesTheDocument(t *testing.T) {
 	var out bytes.Buffer
 
-	if err := (format.TextFormatter{}).Write(&out, version{Name: "gotools", Version: "v1"}); err != nil || out.String() != "gotools v1\n" {
+	if err := (format.TextFormatter{}).Write(
+		&out,
+		version{Name: "gotools", Version: "v1"},
+	); err != nil ||
+		out.String() != "gotools v1\n" {
 		t.Fatalf("%q %v", out.String(), err)
 	}
 }
@@ -170,7 +176,8 @@ func TestFailure(t *testing.T) {
 	_ = format.TextFormatter{}.Write(&text, format.Failure{Message: "tool not found: gci"})
 	_ = format.JSONFormatter{}.Write(&js, format.Failure{Message: "tool not found: gci"})
 
-	if text.String() != "tool not found: gci\n" || js.String() != `{"schema_version":1,"error":"tool not found: gci"}`+"\n" {
+	if text.String() != "tool not found: gci\n" ||
+		js.String() != `{"schema_version":1,"error":"tool not found: gci"}`+"\n" {
 		t.Fatalf("%q %q", text.String(), js.String())
 	}
 }

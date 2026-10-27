@@ -28,6 +28,7 @@ import (
 
 	urfave "github.com/urfave/cli/v3"
 
+	ierrors "github.com/piusalfred/gotools/internal/errors"
 	"github.com/piusalfred/gotools/internal/format"
 )
 
@@ -119,7 +120,9 @@ type versionDocument struct {
 
 // WriteText implements format.Document.
 func (d versionDocument) WriteText(w io.Writer) error {
-	_, err := fmt.Fprintf(w, "%s %s\n", d.Name, d.Version)
+	if _, err := fmt.Fprintf(w, "%s %s\n", d.Name, d.Version); err != nil {
+		return ierrors.Wrap(ierrors.Generic, "Could not write the version", err)
+	}
 
-	return err
+	return nil
 }

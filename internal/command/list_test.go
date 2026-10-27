@@ -105,7 +105,15 @@ func TestListUsageErrors(t *testing.T) {
 	dir := t.TempDir()
 
 	for _, args := range [][]string{{"--bogus"}, {"--format=xml"}, {"--json", "--text"}, {"extra"}} {
-		if _, _, err := runCommand(t, command.NewList(), dir, &fakeGo{}, nil, args...); ierrors.CodeOf(err) != ierrors.Usage {
+		if _, _, err := runCommand(
+			t,
+			command.NewList(),
+			dir,
+			&fakeGo{},
+			nil,
+			args...); ierrors.CodeOf(
+			err,
+		) != ierrors.Usage {
 			t.Errorf("%v: err=%v", args, err)
 		}
 	}
@@ -125,10 +133,15 @@ func TestListIgnoresAStrayGoMod(t *testing.T) {
 // A tool that is on disk but not in the manifest is listed, with the source go.
 func TestListShowsAToolThatIsOnlyOnDisk(t *testing.T) {
 	dir := newProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools", "lint.mod"), "module tools/lint\n\ngo 1.25\n\ntool example.com/lint/cmd/lint\n\nrequire example.com/lint v1.0.0\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools", "lint.mod"),
+		"module tools/lint\n\ngo 1.25\n\ntool example.com/lint/cmd/lint\n\nrequire example.com/lint v1.0.0\n",
+	)
 
 	out, _, err := runCommand(t, command.NewList(), dir, &fakeGo{}, nil)
-	if err != nil || !strings.Contains(out, "lint") || !strings.Contains(out, "go     split      1.25") || !strings.Contains(out, "example.com/lint/cmd/lint@v1.0.0") {
+	if err != nil || !strings.Contains(out, "lint") || !strings.Contains(out, "go     split      1.25") ||
+		!strings.Contains(out, "example.com/lint/cmd/lint@v1.0.0") {
 		t.Fatalf("err=%v out=\n%s", err, out)
 	}
 }
@@ -162,7 +175,8 @@ func TestListShowsWhatTheModfileDoesNotPin(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "tools", "bare.mod"), "module tools/bare\n\ntool example.com/bare/cmd/bare\n")
 
 	out, _, err := runCommand(t, command.NewList(), dir, &fakeGo{}, nil)
-	if err != nil || !strings.Contains(out, "example.com/bare/cmd/bare@unknown") || !strings.Contains(out, "bare               go     split      ?") {
+	if err != nil || !strings.Contains(out, "example.com/bare/cmd/bare@unknown") ||
+		!strings.Contains(out, "bare               go     split      ?") {
 		t.Fatalf("err=%v out=\n%s", err, out)
 	}
 }

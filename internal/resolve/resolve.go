@@ -101,7 +101,7 @@ func (r *Resolver) Resolve(name string) (Ref, error) {
 	}
 
 	if err != nil {
-		return ref, err
+		return ref, fmt.Errorf("read %s: %w", rel, err)
 	}
 
 	mod, err := r.ModFiles.Parse(data)
@@ -168,6 +168,8 @@ func (r *Resolver) Call(ref Ref, args ...string) gocmd.Call {
 }
 
 // probeArgs are tried in order by Runs; one exit 0 is enough.
+//
+//nolint:gochecknoglobals // read-only list of probe arguments, never modified after init
 var probeArgs = []string{"--version", "--help", "version"}
 
 // goLevelFailure matches go-command errors, as opposed to the tool itself
@@ -198,7 +200,7 @@ func (p *Prober) Runs(ctx context.Context, name string) bool {
 			call.Env = append(call.Env, "GOPROXY=off")
 		}
 
-		if res, err := p.Go.Run(ctx, call); err == nil && res.Code == 0 {
+		if res, runErr := p.Go.Run(ctx, call); runErr == nil && res.Code == 0 {
 			return true
 		}
 	}

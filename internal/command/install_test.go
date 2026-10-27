@@ -142,7 +142,11 @@ func newProject(t *testing.T, strategy string) string {
 	return dir
 }
 
-func manifestTools(t *testing.T, dir string) []string { return readManifest(t, dir).ToolNames() }
+func manifestTools(t *testing.T, dir string) []string {
+	t.Helper()
+
+	return readManifest(t, dir).ToolNames()
+}
 
 func TestInstallEachStrategy(t *testing.T) {
 	for st, path := range map[string]string{
@@ -179,7 +183,8 @@ func TestInstallAliasAndLatestHint(t *testing.T) {
 	r := installIn(t, installGo(installOpts{}), dir, installOpts{}, "gi", imports+"@latest")
 	r.ok(t)
 
-	if !strings.Contains(r.out, "Installed at @latest (resolved: v1.2.3)") || !strings.Contains(r.out, "gotools install gi "+imports+"@v1.2.3") {
+	if !strings.Contains(r.out, "Installed at @latest (resolved: v1.2.3)") ||
+		!strings.Contains(r.out, "gotools install gi "+imports+"@v1.2.3") {
 		t.Fatalf("out=%q", r.out)
 	}
 
@@ -296,7 +301,8 @@ func TestInstallSamePackageChoices(t *testing.T) {
 		r := installIn(t, g, dir, installOpts{}, "gi", imports+"@v0.2.0")
 		r.ok(t)
 
-		if !strings.Contains(r.out, "already installed as 'goimports'") || !strings.Contains(r.out, "gotools rename goimports gi") {
+		if !strings.Contains(r.out, "already installed as 'goimports'") ||
+			!strings.Contains(r.out, "gotools rename goimports gi") {
 			t.Fatalf("out=%q", r.out)
 		}
 
@@ -358,7 +364,11 @@ func TestInstallRefusesASecondNameAtTheSameVersion(t *testing.T) {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
-	if got := manifestTools(t, dir); !slices.Equal(got, []string{"goimports"}) || exists(filepath.Join(dir, "tools/gi.mod")) {
+	if got := manifestTools(
+		t,
+		dir,
+	); !slices.Equal(got, []string{"goimports"}) ||
+		exists(filepath.Join(dir, "tools/gi.mod")) {
 		t.Fatalf("the refused twin left something behind: %v", got)
 	}
 }
@@ -398,7 +408,14 @@ func TestInstallFailedForceRestoresModfile(t *testing.T) {
 
 	before := readFile(t, filepath.Join(dir, "tools/goimports.mod"))
 
-	r := installIn(t, installGo(installOpts{getFail: "boom", touchBad: true}), dir, installOpts{}, "--force", imports+"@v0.9.0")
+	r := installIn(
+		t,
+		installGo(installOpts{getFail: "boom", touchBad: true}),
+		dir,
+		installOpts{},
+		"--force",
+		imports+"@v0.9.0",
+	)
 	if r.code() != ierrors.Generic {
 		t.Fatalf("err = %v", r.runErr)
 	}
@@ -479,13 +496,25 @@ func TestInstallRejectsASymlinkedModfile(t *testing.T) {
 func TestInstallLockHeld(t *testing.T) {
 	dir := newProject(t, "split")
 
-	holder := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: installGo(installOpts{})}
+	holder := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      installGo(installOpts{}),
+	}
 	if err := holder.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
 	err := holder.WithLock(context.Background(), func(context.Context) error {
-		r := installIn(t, installGo(installOpts{}), dir, installOpts{environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}}, imports)
+		r := installIn(
+			t,
+			installGo(installOpts{}),
+			dir,
+			installOpts{environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}},
+			imports,
+		)
 		if r.code() != ierrors.Lock {
 			t.Errorf("err = %v", r.runErr)
 		}
@@ -513,7 +542,11 @@ func TestInstallWarnsWhenVerificationIsWeakened(t *testing.T) {
 func TestInstallLoadsTheManifestWarnings(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.24\n")
-	writeFile(t, filepath.Join(dir, config.ManifestFile), `{"strategy":"split","tools":{"../evil":{"source":"go","package":"p","version":"v1"}}}`)
+	writeFile(
+		t,
+		filepath.Join(dir, config.ManifestFile),
+		`{"strategy":"split","tools":{"../evil":{"source":"go","package":"p","version":"v1"}}}`,
+	)
 
 	r := installIn(t, installGo(installOpts{}), dir, installOpts{}, imports)
 	r.ok(t)
@@ -536,9 +569,17 @@ func TestInstallRejectsAMalformedManifest(t *testing.T) {
 func TestInstallNeedsGo(t *testing.T) {
 	dir := newProject(t, "split")
 
-	missing := runnerFunc(func(context.Context, gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound })
+	missing := runnerFunc(
+		func(context.Context, gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound },
+	)
 
-	c := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: missing}
+	c := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      missing,
+	}
 
 	err := run(command.NewInstall(), c, imports)
 	if ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "Go is not installed") {
@@ -670,13 +711,19 @@ func TestContextInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := manifestTools(t, dir); !slices.Equal(got, []string{"a", "b"}) || !strings.Contains(out.String(), "Installed b") {
+	if got := manifestTools(
+		t,
+		dir,
+	); !slices.Equal(got, []string{"a", "b"}) ||
+		!strings.Contains(out.String(), "Installed b") {
 		t.Fatalf("tools = %v, out = %q", got, out)
 	}
 
 	// Without Force a tool that is managed already is refused; with it, it is
 	// installed over.
-	again := command.InstallParams{Specs: []tools.AddOptions{{Name: "a", Pkg: "example.com/a/a@v1.1.0", RejectTwin: true}}}
+	again := command.InstallParams{
+		Specs: []tools.AddOptions{{Name: "a", Pkg: "example.com/a/a@v1.1.0", RejectTwin: true}},
+	}
 
 	if err := c.Install(context.Background(), again); ierrors.CodeOf(err) != ierrors.Usage {
 		t.Fatalf("err = %v", err)
@@ -715,7 +762,8 @@ func TestSplitNeedsARootGoMod(t *testing.T) {
 	g := installGo(installOpts{})
 
 	r := installIn(t, g, dir, installOpts{}, imports)
-	if r.code() != ierrors.Environment || !strings.Contains(r.runErr.Error(), "The split strategy needs a go.mod in the project root") ||
+	if r.code() != ierrors.Environment ||
+		!strings.Contains(r.runErr.Error(), "The split strategy needs a go.mod in the project root") ||
 		!strings.Contains(r.runErr.Error(), "gotools migrate module") {
 		t.Fatalf("err = %v", r.runErr)
 	}
@@ -737,7 +785,13 @@ func TestSplitNeedsARootGoMod(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if r := syncIn(t, installGo(installOpts{}), dir, installOpts{}); r.code() != ierrors.Environment || !strings.Contains(r.runErr.Error(), "split strategy needs a go.mod") {
+	if r := syncIn(
+		t,
+		installGo(installOpts{}),
+		dir,
+		installOpts{},
+	); r.code() != ierrors.Environment ||
+		!strings.Contains(r.runErr.Error(), "split strategy needs a go.mod") {
 		t.Fatalf("sync with tools: %v", r.runErr)
 	}
 }

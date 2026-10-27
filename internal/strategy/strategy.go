@@ -88,7 +88,11 @@ func ValidateName(name string) error {
 
 	for _, r := range name {
 		if unicode.IsSpace(r) || unicode.IsControl(r) {
-			return ierrors.New(ierrors.Usage, "invalid tool name (must not contain whitespace or control characters): %s", name)
+			return ierrors.New(
+				ierrors.Usage,
+				"invalid tool name (must not contain whitespace or control characters): %s",
+				name,
+			)
 		}
 	}
 

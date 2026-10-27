@@ -97,7 +97,7 @@ type Manifest struct {
 // FindRoot walks up from start looking for the manifest file. It returns the
 // directory that holds it, or start when there is none. It never changes the
 // process working directory.
-func FindRoot(start string) (root string, found bool) {
+func FindRoot(start string) (string, bool) {
 	dir := filepath.Clean(start)
 
 	for {
@@ -199,7 +199,7 @@ func (t *traceDoc) UnmarshalJSON(b []byte) error {
 
 	if len(b) > 0 && b[0] == '"' {
 		if err := json.Unmarshal(b, &s); err != nil {
-			return err
+			return ierrors.Wrap(ierrors.Environment, "trace", err)
 		}
 	} else {
 		s = string(b)
@@ -213,7 +213,7 @@ func (t *traceDoc) UnmarshalJSON(b []byte) error {
 	case "false", "0", "":
 		*t = traceDoc(config.TraceOff)
 	default:
-		return fmt.Errorf("trace must be true, false or stdout, not %q", s)
+		return ierrors.New(ierrors.Environment, "trace must be true, false or stdout, not %q", s)
 	}
 
 	return nil
@@ -231,20 +231,27 @@ type toolsDoc []Tool
 
 func (t toolsDoc) MarshalJSONTo(enc *jsontext.Encoder) error {
 	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
-		return err
+		return ierrors.Wrap(ierrors.Generic, "write tools", err)
 	}
 
 	for _, tool := range sorted(t) {
 		if err := enc.WriteToken(jsontext.String(tool.Name)); err != nil {
-			return err
+			return ierrors.Wrap(ierrors.Generic, "write tool name "+strconv.Quote(tool.Name), err)
 		}
 
-		if err := json.MarshalEncode(enc, toolEntry{Source: tool.Source, Package: tool.Package, Version: tool.Version}); err != nil {
-			return err
+		if err := json.MarshalEncode(
+			enc,
+			toolEntry{Source: tool.Source, Package: tool.Package, Version: tool.Version},
+		); err != nil {
+			return ierrors.Wrap(ierrors.Generic, "write tool "+strconv.Quote(tool.Name), err)
 		}
 	}
 
-	return enc.WriteToken(jsontext.EndObject)
+	if err := enc.WriteToken(jsontext.EndObject); err != nil {
+		return ierrors.Wrap(ierrors.Generic, "write tools", err)
+	}
+
+	return nil
 }
 
 // rawManifest is what Parse reads. Unknown keys are accepted and dropped.
@@ -281,7 +288,7 @@ func Parse(data []byte, name string) (ParseResponse, error) {
 
 	raw := rawManifest{Settings: defaultSettingsDoc()}
 	if err := json.Unmarshal(data, &raw, jsontext.AllowDuplicateNames(true)); err != nil {
-		return ParseResponse{}, ierrors.Wrap(ierrors.Environment, name, fmt.Errorf("%w: %v", ErrMalformed, err))
+		return ParseResponse{}, ierrors.Wrap(ierrors.Environment, name, fmt.Errorf("%w: %w", ErrMalformed, err))
 	}
 
 	m := &Manifest{
@@ -294,7 +301,13 @@ func Parse(data []byte, name string) (ParseResponse, error) {
 	}
 
 	if m.Schema > SchemaVersion {
-		return ParseResponse{Manifest: m}, ierrors.Wrap(ierrors.Environment, "", &NewerSchemaError{File: name, Found: m.Schema, Supported: SchemaVersion})
+		return ParseResponse{
+			Manifest: m,
+		}, ierrors.Wrap(
+			ierrors.Environment,
+			"",
+			&NewerSchemaError{File: name, Found: m.Schema, Supported: SchemaVersion},
+		)
 	}
 
 	var warnings []string
@@ -394,9 +407,14 @@ func (m *Manifest) Render() ([]byte, error) {
 		Tools:        m.Tools,
 	}
 
-	b, err := json.Marshal(doc, jsontext.WithIndent("  "), jsontext.EscapeForHTML(false), jsontext.AllowInvalidUTF8(true))
+	b, err := json.Marshal(
+		doc,
+		jsontext.WithIndent("  "),
+		jsontext.EscapeForHTML(false),
+		jsontext.AllowInvalidUTF8(true),
+	)
 	if err != nil {
-		return nil, err
+		return nil, ierrors.Wrap(ierrors.Generic, "render manifest", err)
 	}
 
 	return append(b, '\n'), nil

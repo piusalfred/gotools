@@ -43,9 +43,11 @@ import (
 	"github.com/piusalfred/gotools/internal/gocmd"
 )
 
+//nolint:gochecknoinits // urfave/cli's version printer and help template are package-level; see AGENTS.md
 func init() {
 	// --version and -v are urfave/cli's own flag; only what it prints is ours,
 	// so that it reads like the version command: "gotools v1.2.3".
+	//nolint:reassign // the only hook urfave/cli offers for what --version prints
 	urfave.VersionPrinter = func(cmd *urfave.Command) {
 		_, _ = fmt.Fprintf(cmd.Root().Writer, "%s %s\n", command.ProductName, cmd.Root().Version)
 	}
@@ -53,6 +55,7 @@ func init() {
 	// The only command with subcommands is completion. urfave/cli prints such a
 	// command's --help with this template and ignores the command's own, so it
 	// is set here to read like every other command's help.
+	//nolint:reassign // urfave/cli reads this template from the package, not from the command
 	urfave.SubcommandHelpTemplate = command.HelpTemplate
 }
 
@@ -103,7 +106,7 @@ func (a *App) Run(ctx context.Context, args []string) error {
 
 	root := a.root(a.context(), &unknown)
 
-	if err := root.Run(ctx, append([]string{a.Program}, args...)); err != nil {
+	if err := command.RunRoot(ctx, root, append([]string{a.Program}, args...)); err != nil {
 		return err
 	}
 
@@ -180,9 +183,10 @@ func (a *App) root(c *command.Context, unknown *string) *urfave.Command {
 
 // urfaveCommands builds every command, bound to c.
 func (a *App) urfaveCommands(c *command.Context) []*urfave.Command {
-	var out []*urfave.Command
+	commands := a.commands()
+	out := make([]*urfave.Command, 0, len(commands))
 
-	for _, cmd := range a.commands() {
+	for _, cmd := range commands {
 		out = append(out, cmd.Build(c))
 	}
 
@@ -195,7 +199,12 @@ func (a *App) urfaveCommands(c *command.Context) []*urfave.Command {
 func (a *App) noCommand(c *command.Context) urfave.ActionFunc {
 	return func(ctx context.Context, root *urfave.Command) error {
 		if root.Args().Present() {
-			return ierrors.New(ierrors.Usage, "Unknown command: %s\n   Run '%s help' for the commands.", root.Args().First(), a.Program)
+			return ierrors.New(
+				ierrors.Usage,
+				"Unknown command: %s\n   Run '%s help' for the commands.",
+				root.Args().First(),
+				a.Program,
+			)
 		}
 
 		data, ok, err := readPiped(ctx, a.stdin())

@@ -31,7 +31,12 @@ import (
 // Parse reads any valid layout, Render writes the committed one, and Flush
 // replaces the file atomically.
 func Example() {
-	res, err := manifest.Parse([]byte(`{"strategy":"split","tools":{"gofumpt":{"source":"go","package":"mvdan.cc/gofumpt","version":"v0.9.2"}}}`), ".gotools.json")
+	res, err := manifest.Parse(
+		[]byte(
+			`{"strategy":"split","tools":{"gofumpt":{"source":"go","package":"mvdan.cc/gofumpt","version":"v0.9.2"}}}`,
+		),
+		".gotools.json",
+	)
 	fmt.Println(len(res.Warnings), err)
 
 	m := res.Manifest

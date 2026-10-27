@@ -66,73 +66,87 @@ func (m *GoManager) Remove(ctx context.Context, name string) (RemoveResult, erro
 // removeFromDisk deletes the tool's files per strategy and reports whether
 // anything on disk served the tool.
 func (m *GoManager) removeFromDisk(ctx context.Context, name string) (bool, error) {
-	cfg := m.cfg
-	l := cfg.Layout
-	toolsDir := l.ToolsDir(cfg.Root)
+	l := m.cfg.Layout
 
 	switch l.Strategy {
 	case strategy.Unified:
-		return m.removeUnified(ctx, name, toolsDir)
+		return m.removeUnified(ctx, name, l.ToolsDir(m.cfg.Root))
 	case strategy.Split:
-		mod, err := l.ModFile(cfg.Root, name)
-		if err != nil {
-			return false, err
-		}
-
-		sum, err := l.SumFile(cfg.Root, name)
-		if err != nil {
-			return false, err
-		}
-
-		if !fsx.Lexists(mod) {
-			_, _ = fmt.Fprintf(cfg.Out, "  ⚠️  %s.mod not found.\n", name)
-
-			return false, nil
-		}
-
-		for _, f := range []string{mod, sum} {
-			if err := fsx.RejectSymlink(f, "remove "+name); err != nil {
-				return false, err
-			}
-		}
-
-		for _, f := range []string{mod, sum} {
-			if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return false, ierrors.New(ierrors.Generic, "Could not remove %s: %v", f, err)
-			}
-		}
-
-		_, _ = fmt.Fprintf(cfg.Out, "  ✅ Removed %s.mod / %s.sum\n", name, name)
-
-		return true, nil
+		return m.removeSplit(name)
 	case strategy.Module:
-		if err := strategy.ValidateName(name); err != nil {
-			return false, err
-		}
-
-		d := filepath.Join(toolsDir, name)
-		rel := filepath.ToSlash(filepath.Join(l.Dir, name))
-
-		if !fsx.Lexists(d) {
-			_, _ = fmt.Fprintf(cfg.Out, "  ⚠️  %s/ not found.\n", rel)
-
-			return false, nil
-		}
-
-		if err := fsx.RejectSymlink(d, "remove "+name); err != nil {
-			return false, err
-		}
-
-		if err := os.RemoveAll(d); err != nil {
-			return false, ierrors.New(ierrors.Generic, "Could not remove %s: %v", d, err)
-		}
-
-		_, _ = fmt.Fprintf(cfg.Out, "  ✅ Removed %s/\n", rel)
-
-		return true, nil
+		return m.removeModule(name)
 	}
 
 	return false, ierrors.New(ierrors.Environment, "Unknown strategy: %s", l.Strategy)
+}
+
+// removeSplit deletes the tool's modfile and sum.
+func (m *GoManager) removeSplit(name string) (bool, error) {
+	cfg := m.cfg
+
+	mod, err := cfg.Layout.ModFile(cfg.Root, name)
+	if err != nil {
+		return false, err
+	}
+
+	sum, err := cfg.Layout.SumFile(cfg.Root, name)
+	if err != nil {
+		return false, err
+	}
+
+	if !fsx.Lexists(mod) {
+		_, _ = fmt.Fprintf(cfg.Out, "  ⚠️  %s.mod not found.\n", name)
+
+		return false, nil
+	}
+
+	files := []string{mod, sum}
+
+	for _, f := range files {
+		if err = fsx.RejectSymlink(f, "remove "+name); err != nil {
+			return false, err
+		}
+	}
+
+	for _, f := range files {
+		if err = os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return false, ierrors.New(ierrors.Generic, "Could not remove %s: %v", f, err)
+		}
+	}
+
+	_, _ = fmt.Fprintf(cfg.Out, "  ✅ Removed %s.mod / %s.sum\n", name, name)
+
+	return true, nil
+}
+
+// removeModule deletes the tool's module directory.
+func (m *GoManager) removeModule(name string) (bool, error) {
+	cfg := m.cfg
+
+	if err := strategy.ValidateName(name); err != nil {
+		return false, err
+	}
+
+	d := filepath.Join(cfg.Layout.ToolsDir(cfg.Root), name)
+	rel := filepath.ToSlash(filepath.Join(cfg.Layout.Dir, name))
+
+	if !fsx.Lexists(d) {
+		_, _ = fmt.Fprintf(cfg.Out, "  ⚠️  %s/ not found.\n", rel)
+
+		return false, nil
+	}
+
+	if err := fsx.RejectSymlink(d, "remove "+name); err != nil {
+		return false, err
+	}
+
+	if err := os.RemoveAll(d); err != nil {
+		return false, ierrors.New(ierrors.Generic, "Could not remove %s: %v", d, err)
+	}
+
+	_, _ = fmt.Fprintf(cfg.Out, "  ✅ Removed %s/\n", rel)
+
+	return true, nil
 }
 
 // removeUnified drops the tool's directive from the shared go.mod and tidies
@@ -156,7 +170,7 @@ func (m *GoManager) removeUnified(ctx context.Context, name, toolsDir string) (b
 		return false, err
 	}
 
-	if err := fsx.RejectSymlink(modfile, "remove "+name); err != nil {
+	if err = fsx.RejectSymlink(modfile, "remove "+name); err != nil {
 		return false, err
 	}
 

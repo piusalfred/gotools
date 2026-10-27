@@ -92,7 +92,7 @@ type Context struct {
 // Load finds the project root, reads the manifest, resolves the configuration
 // (default < manifest < environment < opts) and builds the seams that depend
 // on it. A seam the caller already set is kept.
-func (c *Context) Load(ctx context.Context, opts ...config.Option) error {
+func (c *Context) Load(_ context.Context, opts ...config.Option) error {
 	dir, err := c.workDir()
 	if err != nil {
 		return err
@@ -197,10 +197,15 @@ func firstLine(s string) string {
 func (c *Context) rejectSymlinkedToolsDir() error {
 	fi, err := os.Lstat(c.ToolsDir())
 	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		//nolint:nilerr // a tools directory that cannot be inspected (usually absent) is not a symlink
 		return nil
 	}
 
-	return ierrors.New(ierrors.Environment, "Tools directory must not be a symlink: %s\n   Remove the symlink and retry.", c.Config.Dir)
+	return ierrors.New(
+		ierrors.Environment,
+		"Tools directory must not be a symlink: %s\n   Remove the symlink and retry.",
+		c.Config.Dir,
+	)
 }
 
 // requireGo checks that go is installed and new enough, from the directory the
@@ -336,8 +341,10 @@ func (c *Context) Record(ctx context.Context) error {
 // fingerprintParams is the state a fingerprint covers, as the manifest and
 // configuration stand now, for the given resolved Go version.
 func (c *Context) fingerprintParams(goVersion string) fingerprint.Params {
-	var list []fingerprint.Tool
-	for _, t := range c.Manifest.SortedTools() {
+	sorted := c.Manifest.SortedTools()
+	list := make([]fingerprint.Tool, 0, len(sorted))
+
+	for _, t := range sorted {
 		list = append(list, fingerprint.Tool{Name: t.Name, Source: t.Source, Package: t.Package, Version: t.Version})
 	}
 
@@ -360,7 +367,8 @@ func (c *Context) toolFiles() []fingerprint.File {
 
 	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // what cannot be read is not covered
+			//nolint:nilerr // what cannot be read is not covered, and must not stop the walk
+			return nil
 		}
 
 		switch {
@@ -378,6 +386,7 @@ func (c *Context) toolFiles() []fingerprint.File {
 
 		digest, derr := fingerprint.FileDigest(path)
 		if derr != nil {
+			//nolint:nilerr // a file that cannot be read is not covered, and must not stop the walk
 			return nil
 		}
 
@@ -417,7 +426,13 @@ func gocmdCall(dir string, args ...string) gocmd.Call { return gocmd.Call{Dir: d
 // was running; other errors pass through.
 func timeoutOr(err error, what string) error {
 	if te, ok := errors.AsType[*gocmd.TimeoutError](err); ok {
-		return ierrors.New(ierrors.Network, "%s timed out after %s. Check your network or raise %s.", what, te.After, config.EnvVarOperationTimeout)
+		return ierrors.New(
+			ierrors.Network,
+			"%s timed out after %s. Check your network or raise %s.",
+			what,
+			te.After,
+			config.EnvVarOperationTimeout,
+		)
 	}
 
 	return err
@@ -454,7 +469,12 @@ func (c *Context) requireRootModule() error {
 		return nil
 	}
 
-	return ierrors.New(ierrors.Environment, "The split strategy needs a go.mod in the project root (%s): go cannot use a tool's modfile outside a module.\n   Run 'go mod init' there, or use the module or unified strategy: '%s migrate module'.", c.Root, c.Program)
+	return ierrors.New(
+		ierrors.Environment,
+		"The split strategy needs a go.mod in the project root (%s): go cannot use a tool's modfile outside a module.\n   Run 'go mod init' there, or use the module or unified strategy: '%s migrate module'.",
+		c.Root,
+		c.Program,
+	)
 }
 
 // InstallParams says what Install installs and how.
@@ -500,13 +520,22 @@ func (c *Context) Install(ctx context.Context, p InstallParams) error {
 // reconcileExisting handles a name or package the manifest already has. done
 // reports that the request was fully handled (rename or skip). Choosing to
 // upgrade installs over the existing entry, which needs no --force.
-func (c *Context) reconcileExisting(ctx context.Context, manager tools.Manager, name, pkg, pkgBase string, force bool) (string, bool, error) {
+func (c *Context) reconcileExisting(
+	ctx context.Context,
+	manager tools.Manager,
+	name, pkg, pkgBase string,
+	force bool,
+) (string, bool, error) {
 	if force {
 		return name, false, nil
 	}
 
 	if _, exists := c.Manifest.Tool(name); exists {
-		return "", false, ierrors.New(ierrors.Usage, "Tool '%s' already exists in manifest. Use --force to overwrite.", name)
+		return "", false, ierrors.New(
+			ierrors.Usage,
+			"Tool '%s' already exists in manifest. Use --force to overwrite.",
+			name,
+		)
 	}
 
 	// The same package managed under a different name: the user may not know
@@ -521,7 +550,14 @@ func (c *Context) reconcileExisting(ctx context.Context, manager tools.Manager, 
 	out, prog := c.Stdout, c.Program
 
 	if !c.Interactive {
-		_, _ = fmt.Fprintf(out, "ℹ️  %s is already installed as '%s' (version=%s). Installing another entry under '%s' (allowed only at a different version).\n", pkgBase, managedAs, managed.Version, name)
+		_, _ = fmt.Fprintf(
+			out,
+			"ℹ️  %s is already installed as '%s' (version=%s). Installing another entry under '%s' (allowed only at a different version).\n",
+			pkgBase,
+			managedAs,
+			managed.Version,
+			name,
+		)
 		_, _ = fmt.Fprintf(out, "   Rename instead:   %s rename %s %s\n", prog, managedAs, name)
 		_, _ = fmt.Fprintf(out, "   Upgrade instead:  %s install --force %s %s\n", prog, managedAs, pkg)
 
@@ -571,13 +607,23 @@ func (c *Context) PlanAdoption(p PlanAdoptionParams) ([]modparser.Spec, error) {
 
 	mod, err := c.ModFiles.Read(rootMod)
 	if err != nil {
-		return nil, ierrors.New(ierrors.Environment, "Could not read %s: %v\n   Fix it, or run init with --no-migrate.", rootMod, err)
+		return nil, ierrors.New(
+			ierrors.Environment,
+			"Could not read %s: %v\n   Fix it, or run init with --no-migrate.",
+			rootMod,
+			err,
+		)
 	}
 
 	// The tool paths are about to reach `go get`; refuse a bad one before
 	// anything is installed.
 	if err := c.ModFiles.Validate(mod); err != nil {
-		return nil, ierrors.New(ierrors.Environment, "Invalid %s: %v\n   Fix it, or run init with --no-migrate.", rootMod, err)
+		return nil, ierrors.New(
+			ierrors.Environment,
+			"Invalid %s: %v\n   Fix it, or run init with --no-migrate.",
+			rootMod,
+			err,
+		)
 	}
 
 	byName := map[string]string{}
@@ -598,8 +644,13 @@ func (c *Context) PlanAdoption(p PlanAdoptionParams) ([]modparser.Spec, error) {
 }
 
 func collision(name, a, b string) error {
-	return ierrors.New(ierrors.Usage,
-		"Two tools would be managed as '%s': %s and %s\n   Install them under distinct names ('install <name> <pkg>'), then run init again.", name, a, b)
+	return ierrors.New(
+		ierrors.Usage,
+		"Two tools would be managed as '%s': %s and %s\n   Install them under distinct names ('install <name> <pkg>'), then run init again.",
+		name,
+		a,
+		b,
+	)
 }
 
 // ManagedAs is the manifest name already serving t: its own name, or the name
@@ -717,7 +768,7 @@ func (c *Context) Adopt(ctx context.Context, p AdoptParams) error {
 func (c *Context) tidyRoot(ctx context.Context) error {
 	_, _ = fmt.Fprintln(c.Stdout, "🧹 Running 'go mod tidy' on the root module...")
 
-	res, err := c.Network().Run(ctx, gocmdCall(c.Root, "mod", "tidy"))
+	res, err := c.Network().Run(ctx, gocmdCall(c.Root, goModCommand, "tidy"))
 	if err != nil {
 		return timeoutOr(err, "go mod tidy")
 	}
@@ -739,8 +790,19 @@ func (c *Context) warnPinConflict(t modparser.Spec, managedAs string) {
 		return
 	}
 
-	_, _ = fmt.Fprintf(c.Stderr, "  ⚠️  %s: go.mod pins %s, the manifest keeps %s. Run '%s upgrade %s' or '%s install --force %s %s@%s' to change it.\n",
-		t.Name, t.Version, managed.Version, c.Program, managedAs, c.Program, managedAs, t.Package, t.Version)
+	_, _ = fmt.Fprintf(
+		c.Stderr,
+		"  ⚠️  %s: go.mod pins %s, the manifest keeps %s. Run '%s upgrade %s' or '%s install --force %s %s@%s' to change it.\n",
+		t.Name,
+		t.Version,
+		managed.Version,
+		c.Program,
+		managedAs,
+		c.Program,
+		managedAs,
+		t.Package,
+		t.Version,
+	)
 }
 
 func (c *Context) stripRootTools() error {
@@ -874,22 +936,22 @@ func (c *Context) Executable() (string, error) {
 }
 
 // ExecutablePaths are the path the program was started through and the resolved
-// file behind it. They differ when it was started through a symlink; an
-// uninstall removes both.
-func (c *Context) ExecutablePaths() (started, resolved string, err error) {
+// file behind it, in that order. They differ when it was started through a
+// symlink; an uninstall removes both.
+func (c *Context) ExecutablePaths() (string, string, error) {
 	locate := c.Exe
 	if locate == nil {
 		locate = os.Executable
 	}
 
-	started, err = locate()
+	started, err := locate()
 	if err != nil {
 		return "", "", ierrors.Wrap(ierrors.Environment, "Could not locate the "+ProductName+" executable", err)
 	}
 
-	resolved = started
-	if r, err := filepath.EvalSymlinks(started); err == nil {
-		resolved = r
+	resolved, err := filepath.EvalSymlinks(started)
+	if err != nil {
+		resolved = started
 	}
 
 	return started, resolved, nil

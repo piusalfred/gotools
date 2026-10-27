@@ -29,8 +29,9 @@
 package gotools
 
 import (
-	_ "embed"
 	"strings"
+
+	_ "embed"
 )
 
 //go:embed version.txt

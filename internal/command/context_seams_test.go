@@ -40,7 +40,13 @@ func TestLoadReadOnlyLeavesStaleTempFiles(t *testing.T) {
 		stale := filepath.Join(dir, ".gotools.json.tmp.123")
 		writeFile(t, stale, "half a manifest")
 
-		c := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, WorkDir: dir, Go: &fakeGo{}, ReadOnly: readOnly}
+		c := &command.Context{
+			Stdout:   &bytes.Buffer{},
+			Stderr:   &bytes.Buffer{},
+			WorkDir:  dir,
+			Go:       &fakeGo{},
+			ReadOnly: readOnly,
+		}
 		if err := c.Load(context.Background()); err != nil {
 			t.Fatal(err)
 		}
@@ -58,24 +64,25 @@ func TestExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	real := filepath.Join(dir, "gotools")
-	writeFile(t, real, "bin")
+	target := filepath.Join(dir, "gotools")
+	writeFile(t, target, "bin")
 
 	link := filepath.Join(dir, "link")
-	if err := os.Symlink(real, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 
 	c := &command.Context{Exe: func() (string, error) { return link, nil }}
 
-	if got, err := c.Executable(); err != nil || got != real {
-		t.Fatalf("Executable = %q, %v; want %q", got, err, real)
+	if got, err := c.Executable(); err != nil || got != target {
+		t.Fatalf("Executable = %q, %v; want %q", got, err, target)
 	}
 
 	// A path that does not resolve is returned as it is.
 	gone := filepath.Join(dir, "gone")
 
-	if got, err := (&command.Context{Exe: func() (string, error) { return gone, nil }}).Executable(); err != nil || got != gone {
+	if got, err := (&command.Context{Exe: func() (string, error) { return gone, nil }}).Executable(); err != nil ||
+		got != gone {
 		t.Fatalf("Executable = %q, %v", got, err)
 	}
 
@@ -88,7 +95,8 @@ func TestExecutableFailureIsAnEnvironmentError(t *testing.T) {
 	c := &command.Context{Exe: func() (string, error) { return "", os.ErrNotExist }}
 
 	_, err := c.Executable()
-	if ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "Could not locate the gotools executable") {
+	if ierrors.CodeOf(err) != ierrors.Environment ||
+		!strings.Contains(err.Error(), "Could not locate the gotools executable") {
 		t.Fatalf("err = %v", err)
 	}
 }

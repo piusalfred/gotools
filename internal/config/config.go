@@ -36,7 +36,6 @@ package config
 
 import (
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -116,7 +115,7 @@ const (
 
 // Config is the resolved configuration, shaped like the manifest.
 type Config struct {
-	Layout   `koanf:",squash"`
+	Layout   `         koanf:",squash"`
 	Settings Settings `koanf:"settings"`
 }
 
@@ -140,6 +139,8 @@ type Settings struct {
 }
 
 // envKeys maps each environment variable to the key it sets.
+//
+//nolint:gochecknoglobals // read-only lookup table, never modified after init
 var envKeys = map[string]string{
 	EnvVarStrategy:         KeyStrategy,
 	EnvVarDir:              KeyDir,
@@ -301,7 +302,9 @@ func (c Config) Validate() error {
 	var errs []error
 
 	if !c.Strategy.Valid() {
-		errs = append(errs, fmt.Errorf("%s must be split, module or unified, not %q", KeyStrategy, c.Strategy))
+		errs = append(errs, ierrors.New(
+			ierrors.Environment, "%s must be split, module or unified, not %q", KeyStrategy, c.Strategy,
+		))
 	}
 
 	if err := ValidateDir(c.Dir); err != nil {
@@ -309,21 +312,29 @@ func (c Config) Validate() error {
 	}
 
 	if c.Settings.Jobs < 1 {
-		errs = append(errs, fmt.Errorf("%s must be at least 1, not %d", KeyJobs, c.Settings.Jobs))
+		errs = append(errs, ierrors.New(
+			ierrors.Environment, "%s must be at least 1, not %d", KeyJobs, c.Settings.Jobs,
+		))
 	}
 
 	if c.Settings.OperationTimeout < 0 {
-		errs = append(errs, fmt.Errorf("%s must not be negative, not %d", KeyOperationTimeout, c.Settings.OperationTimeout))
+		errs = append(errs, ierrors.New(
+			ierrors.Environment, "%s must not be negative, not %d", KeyOperationTimeout, c.Settings.OperationTimeout,
+		))
 	}
 
 	if c.Settings.LockTimeout < 0 {
-		errs = append(errs, fmt.Errorf("%s must not be negative, not %d", KeyLockTimeout, c.Settings.LockTimeout))
+		errs = append(errs, ierrors.New(
+			ierrors.Environment, "%s must not be negative, not %d", KeyLockTimeout, c.Settings.LockTimeout,
+		))
 	}
 
 	switch c.Settings.Trace {
 	case TraceOff, TraceStderr, TraceStdout:
 	default:
-		errs = append(errs, fmt.Errorf("%s must be false, true or stdout, not %q", KeyTrace, c.Settings.Trace))
+		errs = append(errs, ierrors.New(
+			ierrors.Environment, "%s must be false, true or stdout, not %q", KeyTrace, c.Settings.Trace,
+		))
 	}
 
 	return errors.Join(errs...)

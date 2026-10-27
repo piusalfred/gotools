@@ -26,20 +26,20 @@ import (
 	"os"
 )
 
-// signalCause is what a context is cancelled with when a signal ended the run.
-type signalCause struct{ sig os.Signal }
+// signalError is what a context is cancelled with when a signal ended the run.
+type signalError struct{ sig os.Signal }
 
-func (c signalCause) Error() string { return "interrupted by signal: " + c.sig.String() }
+func (c signalError) Error() string { return "interrupted by signal: " + c.sig.String() }
 
 // SignalCause is the cause to cancel a context with (context.WithCancelCause)
 // when sig ended the run. A process started on that context is then sent sig,
 // not SIGTERM, and [SignalOf] tells which signal it was.
-func SignalCause(sig os.Signal) error { return signalCause{sig} }
+func SignalCause(sig os.Signal) error { return signalError{sig} }
 
 // SignalOf is the signal that cancelled ctx, when it was cancelled with
 // [SignalCause].
 func SignalOf(ctx context.Context) (os.Signal, bool) {
-	if c, ok := errors.AsType[signalCause](context.Cause(ctx)); ok {
+	if c, ok := errors.AsType[signalError](context.Cause(ctx)); ok {
 		return c.sig, true
 	}
 

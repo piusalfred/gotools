@@ -83,7 +83,9 @@ func (g *fakeGo) Run(ctx context.Context, c gocmd.Call) (gocmd.Result, error) {
 
 			return gocmd.Result{Stdout: []byte(or(g.o.version, "go1.24.3") + "\n")}, nil
 		case "GOPROXY":
-			return gocmd.Result{Stdout: []byte(or(g.o.goproxy, "https://proxy.golang.org,direct") + "\n" + g.o.gonoproxy + "\n")}, nil
+			return gocmd.Result{
+				Stdout: []byte(or(g.o.goproxy, "https://proxy.golang.org,direct") + "\n" + g.o.gonoproxy + "\n"),
+			}, nil
 		}
 	case "list":
 		if g.o.listBlocks {
@@ -96,7 +98,8 @@ func (g *fakeGo) Run(ctx context.Context, c gocmd.Call) (gocmd.Result, error) {
 			return gocmd.Result{Code: 1, Stderr: []byte(g.o.listStderr)}, nil
 		}
 	case "mod":
-		if g.o.verifyNoFlag && slices.ContainsFunc(c.Args, func(a string) bool { return strings.HasPrefix(a, "-modfile=") }) {
+		if g.o.verifyNoFlag &&
+			slices.ContainsFunc(c.Args, func(a string) bool { return strings.HasPrefix(a, "-modfile=") }) {
 			return gocmd.Result{Code: 2, Stderr: []byte("flag provided but not defined: -modfile")}, nil
 		}
 
@@ -172,7 +175,11 @@ func project(t *testing.T, st strategy.Strategy) *doctor.Doctor {
 			write(t, filepath.Join(root, "tools", n, "go.sum"), "sum\n")
 		}
 	case strategy.Unified:
-		write(t, filepath.Join(root, "tools", "go.mod"), "module tools\n\ngo 1.24\n\ntool example.com/a/x\n\ntool example.com/b/y\n\nrequire (\n\texample.com/a v1.0.0\n\texample.com/b v1.2.0\n)\n")
+		write(
+			t,
+			filepath.Join(root, "tools", "go.mod"),
+			"module tools\n\ngo 1.24\n\ntool example.com/a/x\n\ntool example.com/b/y\n\nrequire (\n\texample.com/a v1.0.0\n\texample.com/b v1.2.0\n)\n",
+		)
 		write(t, filepath.Join(root, "tools", "go.sum"), "sum\n")
 	}
 
@@ -268,11 +275,19 @@ func TestGoProblemsAreRows(t *testing.T) {
 		status doctor.Status
 		want   string
 	}{
-		"too old":      {goOpts{version: "go1.23.9"}, doctor.Fail, "Go 1.23.9 is too old. Go 1.24 or higher is required."},
-		"missing":      {goOpts{notFound: true}, doctor.Fail, "Go not installed. Install Go 1.24 or higher"},
-		"undetectable": {goOpts{versionStderr: "go: go.mod requires go >= 1.99 (running go 1.24; GOTOOLCHAIN=local)"}, doctor.Fail, "Could not determine Go version. go: go.mod requires go >= 1.99"},
-		"devel":        {goOpts{version: "devel go1.26-abc123 Tue Jan 1 00:00:00 2030"}, doctor.Pass, "meets minimum"},
-		"no version":   {goOpts{version: "weird"}, doctor.Fail, "Could not determine Go version."},
+		"too old": {
+			goOpts{version: "go1.23.9"},
+			doctor.Fail,
+			"Go 1.23.9 is too old. Go 1.24 or higher is required.",
+		},
+		"missing": {goOpts{notFound: true}, doctor.Fail, "Go not installed. Install Go 1.24 or higher"},
+		"undetectable": {
+			goOpts{versionStderr: "go: go.mod requires go >= 1.99 (running go 1.24; GOTOOLCHAIN=local)"},
+			doctor.Fail,
+			"Could not determine Go version. go: go.mod requires go >= 1.99",
+		},
+		"devel":      {goOpts{version: "devel go1.26-abc123 Tue Jan 1 00:00:00 2030"}, doctor.Pass, "meets minimum"},
+		"no version": {goOpts{version: "weird"}, doctor.Fail, "Could not determine Go version."},
 	}
 
 	for name, tc := range cases {
@@ -319,7 +334,13 @@ func TestProxy(t *testing.T) {
 	g = &fakeGo{o: goOpts{gonoproxy: "example.com", listStderr: "must not be called"}}
 	d.Go = g
 
-	wantRow(t, d.Run(context.Background()), "proxy", doctor.Pass, "every tool module is private — reachability not checked")
+	wantRow(
+		t,
+		d.Run(context.Background()),
+		"proxy",
+		doctor.Pass,
+		"every tool module is private — reachability not checked",
+	)
 
 	if len(g.called("list")) != 0 {
 		t.Fatal("a private module was sent to the proxy")
@@ -413,7 +434,13 @@ func TestToolsNotRunnable(t *testing.T) {
 	d.Go = &fakeGo{o: goOpts{toolStderr: `go: no such tool "staticcheck"`}}
 
 	r := d.Run(context.Background())
-	wantRow(t, r, "tools.x", doctor.Warn, `x@v1.0.0 — not runnable: go: no such tool "staticcheck" (run 'gotools sync')`)
+	wantRow(
+		t,
+		r,
+		"tools.x",
+		doctor.Warn,
+		`x@v1.0.0 — not runnable: go: no such tool "staticcheck" (run 'gotools sync')`,
+	)
 
 	if r.Issues() != 2 {
 		t.Fatalf("issues = %d", r.Issues())
@@ -456,7 +483,13 @@ func TestStrategyAgainstDisk(t *testing.T) {
 	d := project(t, strategy.Unified)
 	d.Layout.Strategy = strategy.Split
 
-	wantRow(t, d.Run(context.Background()), "config.strategy", doctor.Warn, "Strategy: split — disk looks like unified (run 'gotools sync' to migrate)")
+	wantRow(
+		t,
+		d.Run(context.Background()),
+		"config.strategy",
+		doctor.Warn,
+		"Strategy: split — disk looks like unified (run 'gotools sync' to migrate)",
+	)
 
 	// An empty tools directory.
 	d = project(t, strategy.Split)
@@ -474,7 +507,13 @@ func TestStrategyAgainstDisk(t *testing.T) {
 	d = project(t, strategy.Unified)
 	write(t, filepath.Join(d.Root, "tools/z.mod"), "module tools/z\n\ngo 1.24\n\ntool example.com/c/z\n")
 
-	wantRow(t, d.Run(context.Background()), "config.strategy", doctor.Warn, "Strategy: unified — tools holds more than one layout (unified, split); run 'gotools migrate unified' to clean up")
+	wantRow(
+		t,
+		d.Run(context.Background()),
+		"config.strategy",
+		doctor.Warn,
+		"Strategy: unified — tools holds more than one layout (unified, split); run 'gotools migrate unified' to clean up",
+	)
 }
 
 func TestOneToolUnderSeveralNames(t *testing.T) {
@@ -482,7 +521,13 @@ func TestOneToolUnderSeveralNames(t *testing.T) {
 	d.Manifest.SetTool(manifest.Tool{Name: "ex", Source: "go", Package: "example.com/a/x", Version: "v1.0.0"})
 
 	r := d.Run(context.Background())
-	wantRow(t, r, "config.duplicates", doctor.Warn, "are one tool (example.com/a/x@v1.0.0) under several names — keep one: 'gotools remove")
+	wantRow(
+		t,
+		r,
+		"config.duplicates",
+		doctor.Warn,
+		"are one tool (example.com/a/x@v1.0.0) under several names — keep one: 'gotools remove",
+	)
 
 	// The row exists only when there is something to say.
 	for _, c := range project(t, strategy.Split).Run(context.Background()).Checks {
@@ -555,7 +600,8 @@ func TestLock(t *testing.T) {
 	held.Unlock()
 
 	c := row(t, r, "lock")
-	if c.Status != doctor.Pass || !strings.Contains(c.Detail, "lock held") || !strings.Contains(c.Detail, "another gotools process is running") {
+	if c.Status != doctor.Pass || !strings.Contains(c.Detail, "lock held") ||
+		!strings.Contains(c.Detail, "another gotools process is running") {
 		t.Fatalf("held lock not reported: %+v", c)
 	}
 

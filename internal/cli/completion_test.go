@@ -41,7 +41,15 @@ func runWith(t *testing.T, dir string, environ []string, args ...string) result 
 
 	var out, errb bytes.Buffer
 
-	app := &cli.App{Program: "gotools", Version: "v9.9.9", Stdout: &out, Stderr: &errb, Environ: environ, WorkDir: dir, Go: goStub{}}
+	app := &cli.App{
+		Program: "gotools",
+		Version: "v9.9.9",
+		Stdout:  &out,
+		Stderr:  &errb,
+		Environ: environ,
+		WorkDir: dir,
+		Go:      goStub{},
+	}
 	err := app.Run(context.Background(), args)
 
 	return result{out: out.String(), err: errb.String(), runErr: err, app: app}
@@ -96,7 +104,8 @@ func TestCompletionPrintsUrfavesScriptForEachShell(t *testing.T) {
 
 func TestCompletionIsPartOfTheOverview(t *testing.T) {
 	r := runWith(t, t.TempDir(), nil, "help")
-	if !strings.Contains(r.out, "completion <bash|zsh|fish|pwsh|install>") || !strings.Contains(r.out, "Print or install shell completions.") {
+	if !strings.Contains(r.out, "completion <bash|zsh|fish|pwsh|install>") ||
+		!strings.Contains(r.out, "Print or install shell completions.") {
 		t.Fatalf("overview:\n%s", r.out)
 	}
 }
@@ -122,12 +131,24 @@ func TestCompletionInstallPaths(t *testing.T) {
 		want    string
 	}{
 		{"bash", []string{"HOME=" + home}, filepath.Join(home, ".local/share/bash-completion/completions/gotools")},
-		{"bash", []string{"HOME=" + home, "XDG_DATA_HOME=" + home + "/xdg"}, home + "/xdg/bash-completion/completions/gotools"},
-		{"bash", []string{"HOME=" + home, "XDG_DATA_HOME=" + home + "/xdg", "BASH_COMPLETION_USER_DIR=" + home + "/bc"}, home + "/bc/completions/gotools"},
+		{
+			"bash",
+			[]string{"HOME=" + home, "XDG_DATA_HOME=" + home + "/xdg"},
+			home + "/xdg/bash-completion/completions/gotools",
+		},
+		{
+			"bash",
+			[]string{"HOME=" + home, "XDG_DATA_HOME=" + home + "/xdg", "BASH_COMPLETION_USER_DIR=" + home + "/bc"},
+			home + "/bc/completions/gotools",
+		},
 		{"zsh", []string{"HOME=" + home}, home + "/.zsh/completions/_gotools"},
 		{"fish", []string{"HOME=" + home}, home + "/.config/fish/completions/gotools.fish"},
 		{"pwsh", []string{"HOME=" + home}, home + "/.config/powershell/completions/gotools.ps1"},
-		{"pwsh", []string{"HOME=" + home, "XDG_CONFIG_HOME=" + home + "/cfg"}, home + "/cfg/powershell/completions/gotools.ps1"},
+		{
+			"pwsh",
+			[]string{"HOME=" + home, "XDG_CONFIG_HOME=" + home + "/cfg"},
+			home + "/cfg/powershell/completions/gotools.ps1",
+		},
 	}
 
 	for _, c := range cases {
@@ -162,7 +183,8 @@ func TestCompletionInstallDetectsTheShell(t *testing.T) {
 	home := t.TempDir()
 
 	r := runWith(t, t.TempDir(), []string{"HOME=" + home, "SHELL=/bin/zsh"}, "completion", "install")
-	if r.runErr != nil || !strings.Contains(r.out, "Completion installed for zsh") || !strings.Contains(r.out, "fpath=") {
+	if r.runErr != nil || !strings.Contains(r.out, "Completion installed for zsh") ||
+		!strings.Contains(r.out, "fpath=") {
 		t.Fatalf("err=%v out=%s", r.runErr, r.out)
 	}
 
@@ -220,7 +242,17 @@ func TestCompletionStopsOfferingNamesOnceTheArgumentsAreComplete(t *testing.T) {
 	}
 
 	// remove takes any number of names.
-	if r := runWith(t, dir, nil, "remove", "a", "--generate-shell-completion"); strings.Join(words(r.out), " ") != "a b" {
+	if r := runWith(
+		t,
+		dir,
+		nil,
+		"remove",
+		"a",
+		"--generate-shell-completion",
+	); strings.Join(
+		words(r.out),
+		" ",
+	) != "a b" {
 		t.Errorf("remove a: %q", r.out)
 	}
 }
@@ -258,7 +290,14 @@ func TestCompletionRunsNothing(t *testing.T) {
 
 	var out bytes.Buffer
 
-	app := &cli.App{Program: "gotools", Stdout: &out, Stderr: &bytes.Buffer{}, Environ: []string{}, WorkDir: dir, Go: missingGo}
+	app := &cli.App{
+		Program: "gotools",
+		Stdout:  &out,
+		Stderr:  &bytes.Buffer{},
+		Environ: []string{},
+		WorkDir: dir,
+		Go:      missingGo,
+	}
 
 	for _, args := range [][]string{{"install", "--generate-shell-completion"}, {"remove", "--generate-shell-completion"}, {"purge", "--generate-shell-completion"}, {"sync", "--generate-shell-completion"}} {
 		if err := app.Run(context.Background(), args); err != nil {
@@ -359,7 +398,11 @@ func TestCompletionInstallKeepsWhatItReplaces(t *testing.T) {
 	}
 
 	r := runWith(t, t.TempDir(), []string{"HOME=" + home}, "completion", "install", "zsh")
-	if r.runErr != nil || !strings.Contains(r.out, "Updating existing completion at "+path+" (the previous one is kept as _gotools.bak)") {
+	if r.runErr != nil ||
+		!strings.Contains(
+			r.out,
+			"Updating existing completion at "+path+" (the previous one is kept as _gotools.bak)",
+		) {
 		t.Fatalf("err=%v out=%q", r.runErr, r.out)
 	}
 
@@ -367,7 +410,10 @@ func TestCompletionInstallKeepsWhatItReplaces(t *testing.T) {
 		t.Fatalf("backup = %q, %v", b, err)
 	}
 
-	if b, _ := os.ReadFile(path); strings.Contains(string(b), "my own tweaks") || !strings.Contains(string(b), "generate-shell-completion") {
+	if b, _ := os.ReadFile(
+		path,
+	); strings.Contains(string(b), "my own tweaks") ||
+		!strings.Contains(string(b), "generate-shell-completion") {
 		t.Fatalf("the script was not replaced: %q", b)
 	}
 

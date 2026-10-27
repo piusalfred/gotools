@@ -38,6 +38,8 @@ const (
 
 	// argKeyValue names the positional arguments: [key [value]].
 	argKeyValue = "key"
+	// maxConfigArgs is the key and the value.
+	maxConfigArgs = 2
 
 	usageConfig     = "View or edit .gotools.json configuration."
 	argsUsageConfig = "[key [value]]"
@@ -89,7 +91,7 @@ func (base *Config) Build(c *Context) *urfave.Command {
 			"config GOTOOLS_JOBS 4",
 			"config GOTOOLS_STRATEGY=module",
 		},
-		Args:     []urfave.Argument{&urfave.StringArgs{Name: argKeyValue, Min: 0, Max: 2}},
+		Args:     []urfave.Argument{&urfave.StringArgs{Name: argKeyValue, Min: 0, Max: maxConfigArgs}},
 		Complete: k.c.completeArguments(1, func(context.Context) []string { return config.Keys }),
 		Run:      k.run,
 	}.Build(c)
@@ -110,7 +112,12 @@ func (k *Config) run(ctx context.Context, cmd *urfave.Command) error {
 	}
 
 	if len(args) > 0 && !config.IsKey(args[0]) {
-		return ierrors.New(ierrors.Usage, "Unknown config key: %s\n   Valid keys: %s", args[0], strings.Join(config.Keys, ", "))
+		return ierrors.New(
+			ierrors.Usage,
+			"Unknown config key: %s\n   Valid keys: %s",
+			args[0],
+			strings.Join(config.Keys, ", "),
+		)
 	}
 
 	if err := c.Load(ctx); err != nil {
@@ -141,12 +148,14 @@ func (k *Config) show() error {
 
 	b, err := os.ReadFile(c.ManifestPath())
 	if err != nil {
-		return err
+		return ierrors.Wrap(ierrors.Generic, "Could not read "+config.ManifestFile, err)
 	}
 
-	_, err = c.Stdout.Write(b)
+	if _, err = c.Stdout.Write(b); err != nil {
+		return ierrors.Wrap(ierrors.Generic, "Could not write "+config.ManifestFile+" to the output", err)
+	}
 
-	return err
+	return nil
 }
 
 func (k *Config) get(key string) error {

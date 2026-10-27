@@ -113,7 +113,16 @@ func TestLexists(t *testing.T) {
 
 func TestSnapshotRestoresChangedDeletedAndCreatedFiles(t *testing.T) {
 	dir := t.TempDir()
-	changed, deleted, created := filepath.Join(dir, "changed"), filepath.Join(dir, "deleted"), filepath.Join(dir, "created")
+	changed, deleted, created := filepath.Join(
+		dir,
+		"changed",
+	), filepath.Join(
+		dir,
+		"deleted",
+	), filepath.Join(
+		dir,
+		"created",
+	)
 
 	for f, body := range map[string]string{changed: "before", deleted: "keep me"} {
 		if err := os.WriteFile(f, []byte(body), 0o644); err != nil {

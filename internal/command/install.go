@@ -43,6 +43,9 @@ const (
 
 	// argSpec names the positional arguments: [name] <pkg>.
 	argSpec = "spec"
+	// argsNameAndPackage is the argument count of `install <name> <pkg>`, the
+	// most install takes.
+	argsNameAndPackage = 2
 
 	usageInstall     = "Install a new tool."
 	argsUsageInstall = "[name] <pkg>"
@@ -109,7 +112,7 @@ func (base *Install) Build(c *Context) *urfave.Command {
 			&urfave.BoolFlag{Name: FlagForce, Usage: "Overwrite an existing tool with the same name"},
 			&urfave.BoolFlag{Name: FlagOffline, Usage: "Refuse to install (needs the network), exit 6"},
 		},
-		Args:   []urfave.Argument{&urfave.StringArgs{Name: argSpec, Min: 1, Max: 2}},
+		Args:   []urfave.Argument{&urfave.StringArgs{Name: argSpec, Min: 1, Max: argsNameAndPackage}},
 		Before: i.before,
 		Run:    i.run,
 	}.Build(c)
@@ -144,7 +147,10 @@ func (*Install) Pipe(ctx context.Context, c *Context, data []byte) error {
 	}
 
 	if len(specs) == 0 {
-		return ierrors.New(ierrors.Usage, "No tool specifications found on stdin.\n   Pipe one or more lines such as: go install <package>@<version>")
+		return ierrors.New(
+			ierrors.Usage,
+			"No tool specifications found on stdin.\n   Pipe one or more lines such as: go install <package>@<version>",
+		)
 	}
 
 	if err := c.prepareInstall(ctx, false); err != nil {
@@ -181,7 +187,14 @@ func parseStdinSpecs(prog string, data []byte) ([]tools.AddOptions, error) {
 		}
 
 		if j := slices.IndexFunc(specs, func(o tools.AddOptions) bool { return o.Name == spec.Name }); j >= 0 {
-			return nil, ierrors.New(ierrors.Usage, "stdin line %d: '%s' is listed twice with different packages (%s and %s)", i+1, spec.Name, specs[j].Pkg, spec.Pkg)
+			return nil, ierrors.New(
+				ierrors.Usage,
+				"stdin line %d: '%s' is listed twice with different packages (%s and %s)",
+				i+1,
+				spec.Name,
+				specs[j].Pkg,
+				spec.Pkg,
+			)
 		}
 
 		specs = append(specs, spec)
@@ -203,11 +216,16 @@ func parseInstallArgs(prog string, args []string) (tools.AddOptions, error) {
 	switch len(args) {
 	case 1:
 		pkg = args[0]
-	case 2:
+	case argsNameAndPackage:
 		name, pkg = args[0], args[1]
 	default:
-		if len(args) > 2 {
-			return tools.AddOptions{}, ierrors.New(ierrors.Usage, "Unknown argument: %s\n   %s", args[2], usage.Error())
+		if len(args) > argsNameAndPackage {
+			return tools.AddOptions{}, ierrors.New(
+				ierrors.Usage,
+				"Unknown argument: %s\n   %s",
+				args[argsNameAndPackage],
+				usage.Error(),
+			)
 		}
 
 		return tools.AddOptions{}, usage
@@ -215,7 +233,12 @@ func parseInstallArgs(prog string, args []string) (tools.AddOptions, error) {
 
 	for _, a := range args {
 		if strings.HasPrefix(a, "-") {
-			return tools.AddOptions{}, ierrors.New(ierrors.Usage, "Unknown flag or invalid argument: %s\n   %s", a, usage.Error())
+			return tools.AddOptions{}, ierrors.New(
+				ierrors.Usage,
+				"Unknown flag or invalid argument: %s\n   %s",
+				a,
+				usage.Error(),
+			)
 		}
 	}
 

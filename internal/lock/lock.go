@@ -250,7 +250,7 @@ func (l FileLocker) Holder() (Holder, error) {
 	}
 
 	if err != nil {
-		return Holder{}, err
+		return Holder{}, fmt.Errorf("inspect lock: %w", err)
 	}
 
 	defer f.Close()

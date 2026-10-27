@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +68,11 @@ func newInstallEnv(t *testing.T) *installEnv {
 	e := &installEnv{t: t, stub: t.TempDir(), ctrl: t.TempDir(), gobin: filepath.Join(t.TempDir(), "gobin")}
 
 	e.write(filepath.Join(e.stub, "curl"), stubCurl, 0o755)
-	e.write(filepath.Join(e.stub, "go"), "#!/bin/sh\n[ \"$1\" = env ] && { [ \"$2\" = GOPATH ] && echo \"$FAKE_GOPATH\"; exit 0; }\nexit 1\n", 0o755)
+	e.write(
+		filepath.Join(e.stub, "go"),
+		"#!/bin/sh\n[ \"$1\" = env ] && { [ \"$2\" = GOPATH ] && echo \"$FAKE_GOPATH\"; exit 0; }\nexit 1\n",
+		0o755,
+	)
 	e.write(filepath.Join(e.stub, "uname"), stubUname, 0o755)
 	e.write(filepath.Join(e.ctrl, "api.json"), `{"tag_name": "v9.9.9"}`, 0o644)
 	e.publish(payload)
@@ -134,7 +139,8 @@ func (e *installEnv) runScript(script, version string) (string, int) {
 	code := 0
 
 	if err := cmd.Run(); err != nil {
-		ee, ok := err.(*exec.ExitError)
+		ee := &exec.ExitError{}
+		ok := errors.As(err, &ee)
 		if !ok {
 			e.t.Fatal(err)
 		}
@@ -257,7 +263,8 @@ func TestInstallScriptRefusesAnUnsupportedPlatform(t *testing.T) {
 	e.write(filepath.Join(e.ctrl, "uname_s"), "Plan9\n", 0o644)
 
 	out, rc := e.run("")
-	if rc != 1 || !strings.Contains(out, "Unsupported platform") || !strings.Contains(out, "go install") || !e.intact() {
+	if rc != 1 || !strings.Contains(out, "Unsupported platform") || !strings.Contains(out, "go install") ||
+		!e.intact() {
 		t.Fatalf("rc=%d intact=%v\n%s", rc, e.intact(), out)
 	}
 
@@ -286,7 +293,8 @@ func TestInstallScriptChecksumMismatch(t *testing.T) {
 	e.manifest(strings.Repeat("0", 64) + "  gotools-linux-amd64\n")
 
 	out, rc := e.run("")
-	if rc != 1 || !e.intact() || !strings.Contains(out, "Checksum verification FAILED") || !strings.Contains(out, "Nothing was installed") {
+	if rc != 1 || !e.intact() || !strings.Contains(out, "Checksum verification FAILED") ||
+		!strings.Contains(out, "Nothing was installed") {
 		t.Fatalf("rc=%d intact=%v\n%s", rc, e.intact(), out)
 	}
 }
@@ -401,21 +409,29 @@ func (e *installEnv) stamped(tag string) string {
 func TestInstallScriptDefaultVersion(t *testing.T) {
 	e := newInstallEnv(t)
 
-	if out, rc := e.run(""); rc != 0 || !strings.Contains(e.urls(), "api.github.com") || !strings.Contains(e.urls(), "/v9.9.9/") {
+	if out, rc := e.run(
+		"",
+	); rc != 0 || !strings.Contains(e.urls(), "api.github.com") ||
+		!strings.Contains(e.urls(), "/v9.9.9/") {
 		t.Fatalf("unstamped: rc=%d urls=%s\n%s", rc, e.urls(), out)
 	}
 
 	e = newInstallEnv(t)
 
 	out, rc := e.runScript(e.stamped("v1.2.3"), "")
-	if rc != 0 || strings.Contains(e.urls(), "api.github.com") || !strings.Contains(e.urls(), "/releases/download/v1.2.3/gotools-linux-amd64") {
+	if rc != 0 || strings.Contains(e.urls(), "api.github.com") ||
+		!strings.Contains(e.urls(), "/releases/download/v1.2.3/gotools-linux-amd64") {
 		t.Fatalf("stamped: rc=%d urls=%s\n%s", rc, e.urls(), out)
 	}
 
 	// VERSION still wins over the stamp.
 	e = newInstallEnv(t)
 
-	if out, rc := e.runScript(e.stamped("v1.2.3"), "v1.0.0"); rc != 0 || !strings.Contains(e.urls(), "/releases/download/v1.0.0/gotools-linux-amd64") || strings.Contains(e.urls(), "/v1.2.3/") {
+	if out, rc := e.runScript(
+		e.stamped("v1.2.3"),
+		"v1.0.0",
+	); rc != 0 || !strings.Contains(e.urls(), "/releases/download/v1.0.0/gotools-linux-amd64") ||
+		strings.Contains(e.urls(), "/v1.2.3/") {
 		t.Fatalf("VERSION over the stamp: rc=%d urls=%s\n%s", rc, e.urls(), out)
 	}
 

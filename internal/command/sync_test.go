@@ -71,7 +71,12 @@ func syncProject(t *testing.T, strategy string, tools ...[3]string) string {
 func TestSyncRestoresThenFastPath(t *testing.T) {
 	for _, st := range []string{"split", "module", "unified"} {
 		t.Run(st, func(t *testing.T) {
-			dir := syncProject(t, st, [3]string{"x", "example.com/a/x", "v1.0.0"}, [3]string{"y", "example.com/b/y", "v1.2.0"})
+			dir := syncProject(
+				t,
+				st,
+				[3]string{"x", "example.com/a/x", "v1.0.0"},
+				[3]string{"y", "example.com/b/y", "v1.2.0"},
+			)
 			g := installGo(installOpts{})
 
 			r := syncIn(t, g, dir, installOpts{})
@@ -146,7 +151,8 @@ func TestSyncOfflineMismatch(t *testing.T) {
 	g := installGo(installOpts{})
 
 	r := syncIn(t, g, dir, installOpts{}, "--offline")
-	if r.code() != ierrors.Offline || !strings.Contains(r.runErr.Error(), "Network required") || !strings.Contains(r.runErr.Error(), "gotools sync") {
+	if r.code() != ierrors.Offline || !strings.Contains(r.runErr.Error(), "Network required") ||
+		!strings.Contains(r.runErr.Error(), "gotools sync") {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
@@ -154,14 +160,23 @@ func TestSyncOfflineMismatch(t *testing.T) {
 		t.Fatal("offline sync used the network")
 	}
 
-	if r := syncIn(t, installGo(installOpts{}), dir, installOpts{environ: []string{"GOTOOLS_OFFLINE=1"}}); r.code() != ierrors.Offline {
+	if r := syncIn(
+		t,
+		installGo(installOpts{}),
+		dir,
+		installOpts{environ: []string{"GOTOOLS_OFFLINE=1"}},
+	); r.code() != ierrors.Offline {
 		t.Fatalf("env offline: %v", r.runErr)
 	}
 }
 
 func TestSyncDetectsDrift(t *testing.T) {
 	dir := syncProject(t, "split", [3]string{"x", "example.com/a/x", "v1.0.0"})
-	writeFile(t, filepath.Join(dir, "tools/x.mod"), "module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v0.9.0\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/x.mod"),
+		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v0.9.0\n",
+	)
 
 	g := installGo(installOpts{})
 
@@ -179,7 +194,11 @@ func TestSyncDetectsDrift(t *testing.T) {
 
 func TestSyncDiscoversFromDisk(t *testing.T) {
 	dir := syncProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools/x.mod"), "module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/x.mod"),
+		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n",
+	)
 
 	r := syncIn(t, installGo(installOpts{}), dir, installOpts{})
 	r.ok(t)
@@ -197,7 +216,11 @@ func TestSyncDiscoversFromDisk(t *testing.T) {
 // being discovered again under the name inferred from its binary.
 func TestSyncKeepsTheManifestNameOfAnAliasedUnifiedTool(t *testing.T) {
 	dir := syncProject(t, "unified", [3]string{"fmt", "mvdan.cc/gofumpt", "v1.0.0"})
-	writeFile(t, filepath.Join(dir, "tools/go.mod"), "module tools\n\ngo 1.24\n\ntool mvdan.cc/gofumpt\n\nrequire mvdan.cc v1.0.0\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/go.mod"),
+		"module tools\n\ngo 1.24\n\ntool mvdan.cc/gofumpt\n\nrequire mvdan.cc v1.0.0\n",
+	)
 
 	syncIn(t, installGo(installOpts{}), dir, installOpts{}).ok(t)
 
@@ -223,7 +246,11 @@ func TestSyncIgnoresAStrayGoModInTheSplitDirectory(t *testing.T) {
 
 func TestSyncDryRunWritesNothing(t *testing.T) {
 	dir := syncProject(t, "split", [3]string{"x", "example.com/a/x", "v1.0.0"})
-	writeFile(t, filepath.Join(dir, "tools/z.mod"), "module tools/z\n\ngo 1.24\n\ntool example.com/c/z\n\nrequire example.com/c v1.0.0\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/z.mod"),
+		"module tools/z\n\ngo 1.24\n\ntool example.com/c/z\n\nrequire example.com/c v1.0.0\n",
+	)
 
 	before := readFile(t, filepath.Join(dir, config.ManifestFile))
 	g := installGo(installOpts{})
@@ -274,7 +301,8 @@ func TestSyncStrategyMismatch(t *testing.T) {
 	r := syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--dry-run")
 	r.ok(t)
 
-	if !strings.Contains(r.out, "Would auto-migrate from 'unified' to 'split'") || !exists(filepath.Join(dir, "tools/go.mod")) {
+	if !strings.Contains(r.out, "Would auto-migrate from 'unified' to 'split'") ||
+		!exists(filepath.Join(dir, "tools/go.mod")) {
 		t.Fatalf("out=%q", r.out)
 	}
 
@@ -358,7 +386,12 @@ func TestSyncParallel(t *testing.T) {
 
 // The jobs setting applies when the flag is not given.
 func TestSyncJobsSettingApplies(t *testing.T) {
-	dir := syncProject(t, "unified", [3]string{"a", "example.com/a/a", "v1.0.0"}, [3]string{"b", "example.com/b/b", "v1.0.0"})
+	dir := syncProject(
+		t,
+		"unified",
+		[3]string{"a", "example.com/a/a", "v1.0.0"},
+		[3]string{"b", "example.com/b/b", "v1.0.0"},
+	)
 
 	r := syncIn(t, installGo(installOpts{}), dir, installOpts{environ: []string{"GOTOOLS_JOBS=4"}})
 	r.ok(t)
@@ -369,7 +402,12 @@ func TestSyncJobsSettingApplies(t *testing.T) {
 }
 
 func TestSyncParallelFailureLeavesManifest(t *testing.T) {
-	dir := syncProject(t, "split", [3]string{"a", "example.com/a/a", "latest"}, [3]string{"b", "example.com/b/b", "latest"})
+	dir := syncProject(
+		t,
+		"split",
+		[3]string{"a", "example.com/a/a", "latest"},
+		[3]string{"b", "example.com/b/b", "latest"},
+	)
 	before := readFile(t, filepath.Join(dir, config.ManifestFile))
 
 	g := &fakeGo{intercept: func(c gocmd.Call) (gocmd.Result, error, bool) {
@@ -395,7 +433,12 @@ func TestSyncParallelFailureLeavesManifest(t *testing.T) {
 }
 
 func TestSyncUnifiedJobsWarns(t *testing.T) {
-	dir := syncProject(t, "unified", [3]string{"a", "example.com/a/a", "v1.0.0"}, [3]string{"b", "example.com/b/b", "v1.0.0"})
+	dir := syncProject(
+		t,
+		"unified",
+		[3]string{"a", "example.com/a/a", "v1.0.0"},
+		[3]string{"b", "example.com/b/b", "v1.0.0"},
+	)
 
 	r := syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--jobs", "4")
 	r.ok(t)
@@ -442,7 +485,13 @@ func TestSyncTidyGenericFailureIsNotAUsageError(t *testing.T) {
 func TestSyncTakesTheLock(t *testing.T) {
 	dir := syncProject(t, "split")
 
-	holder := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: installGo(installOpts{})}
+	holder := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      installGo(installOpts{}),
+	}
 	if err := holder.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -490,9 +539,17 @@ func TestContextSyncUnlockedTakesNoLock(t *testing.T) {
 func TestSyncNeedsGo(t *testing.T) {
 	dir := syncProject(t, "split")
 
-	missing := runnerFunc(func(context.Context, gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound })
+	missing := runnerFunc(
+		func(context.Context, gocmd.Call) (gocmd.Result, error) { return gocmd.Result{}, gocmd.ErrNotFound },
+	)
 
-	c := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: missing}
+	c := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      missing,
+	}
 
 	err := run(command.NewSync(), c)
 	if ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "Go is not installed") {
@@ -506,16 +563,22 @@ func TestSyncNeedsGo(t *testing.T) {
 func TestSyncFastPathNoticesHandEditsToTheToolFiles(t *testing.T) {
 	edits := map[string]func(t *testing.T, dir, st string){
 		"an edited modfile": func(t *testing.T, dir, st string) {
+			t.Helper()
+
 			p := filepath.Join(dir, layoutPaths(st, "x")[0])
 			writeFile(t, p, readFile(t, p)+"\n// edited by hand\n")
 		},
 		"a deleted sum": func(t *testing.T, dir, st string) {
+			t.Helper()
+
 			sums := map[string]string{"split": "tools/x.sum", "module": "tools/x/go.sum", "unified": "tools/go.sum"}
 			if err := os.Remove(filepath.Join(dir, sums[st])); err != nil {
 				t.Fatal(err)
 			}
 		},
 		"an orphan modfile": func(t *testing.T, dir, st string) {
+			t.Helper()
+
 			writeFile(t, filepath.Join(dir, "tools", "orphan.mod"), "module orphan\n\ngo 1.24\n")
 		},
 	}
@@ -532,13 +595,27 @@ func TestSyncFastPathNoticesHandEditsToTheToolFiles(t *testing.T) {
 				syncIn(t, installGo(installOpts{}), dir, installOpts{}).ok(t)
 
 				// Untouched, the second run is the fast path.
-				if r := syncIn(t, installGo(installOpts{}), dir, installOpts{}); !strings.Contains(r.out, "Tools up to date") {
+				if r := syncIn(
+					t,
+					installGo(installOpts{}),
+					dir,
+					installOpts{},
+				); !strings.Contains(
+					r.out,
+					"Tools up to date",
+				) {
 					t.Fatalf("an untouched project missed the fast path: %q", r.out)
 				}
 
 				edit(t, dir, st)
 
-				if r := syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--offline"); r.code() != ierrors.Offline {
+				if r := syncIn(
+					t,
+					installGo(installOpts{}),
+					dir,
+					installOpts{},
+					"--offline",
+				); r.code() != ierrors.Offline {
 					t.Fatalf("offline accepted a project whose files changed: %v", r.runErr)
 				}
 

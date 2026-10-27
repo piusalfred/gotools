@@ -35,6 +35,8 @@ const (
 
 	// argOldNew names the positional arguments: <old> <new>.
 	argOldNew = "name"
+	// renameArgCount is the old name and the new one.
+	renameArgCount = 2
 
 	usageRename     = "Rename a tool (manifest + modfiles)."
 	argsUsageRename = "<old> <new>"
@@ -75,16 +77,18 @@ func (base *Rename) Build(c *Context) *urfave.Command {
 		ArgsUsage:   argsUsageRename,
 		Description: descriptionRename,
 		Examples:    []string{"rename goimports imports", "rename goimports imports --dry-run"},
-		Flags:       []urfave.Flag{&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be renamed without making changes"}},
-		Args:        []urfave.Argument{&urfave.StringArgs{Name: argOldNew, Min: 2, Max: 2}},
-		Complete:    r.c.completeArguments(1, r.c.toolNames),
-		Before:      r.before,
-		Run:         r.run,
+		Flags: []urfave.Flag{
+			&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be renamed without making changes"},
+		},
+		Args:     []urfave.Argument{&urfave.StringArgs{Name: argOldNew, Min: renameArgCount, Max: renameArgCount}},
+		Complete: r.c.completeArguments(1, r.c.toolNames),
+		Before:   r.before,
+		Run:      r.run,
 	}.Build(c)
 }
 
 func (r *Rename) before(ctx context.Context, cmd *urfave.Command) error {
-	names, err := positional(cmd, 2, 2)
+	names, err := positional(cmd, renameArgCount, renameArgCount)
 	if err != nil {
 		return err
 	}

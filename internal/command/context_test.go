@@ -103,13 +103,19 @@ func TestPlanAdoptionRefusesWhatCannotBeAdopted(t *testing.T) {
 	const twin = "module m\n\ngo 1.24\n\ntool (\n\texample.com/a/foo\n\texample.com/b/foo\n)\n"
 
 	c, _, _ := adoptionContext(t, twin)
-	if _, err := c.PlanAdoption(command.PlanAdoptionParams{}); ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "'foo'") {
+	if _, err := c.PlanAdoption(
+		command.PlanAdoptionParams{},
+	); ierrors.CodeOf(err) != ierrors.Usage ||
+		!strings.Contains(err.Error(), "'foo'") {
 		t.Fatalf("twin: %v", err)
 	}
 
 	c, _, _ = adoptionContext(t, "module m\n\ngo 1.24\n\ntool example.com/b/foo\n",
 		manifest.Tool{Name: "foo", Source: "go", Package: "example.com/a/foo", Version: "v1.0.0"})
-	if _, err := c.PlanAdoption(command.PlanAdoptionParams{}); ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), "already managed") {
+	if _, err := c.PlanAdoption(
+		command.PlanAdoptionParams{},
+	); ierrors.CodeOf(err) != ierrors.Usage ||
+		!strings.Contains(err.Error(), "already managed") {
 		t.Fatalf("managed clash: %v", err)
 	}
 
@@ -125,7 +131,11 @@ func TestPlanAdoptionRefusesWhatCannotBeAdopted(t *testing.T) {
 }
 
 func TestManagedAsAndUnmanaged(t *testing.T) {
-	c, _, _ := adoptionContext(t, "", manifest.Tool{Name: "gi", Source: "go", Package: "example.com/x/goimports", Version: "v1.0.0"})
+	c, _, _ := adoptionContext(
+		t,
+		"",
+		manifest.Tool{Name: "gi", Source: "go", Package: "example.com/x/goimports", Version: "v1.0.0"},
+	)
 
 	byName := modparser.Spec{Name: "gi", Package: "example.com/other"}
 	byPackage := modparser.Spec{Name: "goimports", Package: "example.com/x/goimports"}
@@ -152,7 +162,11 @@ func TestManagedAsAndUnmanaged(t *testing.T) {
 func TestAdoptSaysWhenThereIsNothingToAdopt(t *testing.T) {
 	c, _, out := adoptionContext(t, "")
 
-	if err := c.Adopt(context.Background(), command.AdoptParams{}); err != nil || !strings.Contains(out.String(), "No go.mod in project root") {
+	if err := c.Adopt(
+		context.Background(),
+		command.AdoptParams{},
+	); err != nil ||
+		!strings.Contains(out.String(), "No go.mod in project root") {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 
@@ -160,7 +174,11 @@ func TestAdoptSaysWhenThereIsNothingToAdopt(t *testing.T) {
 
 	c, g, out = adoptionContext(t, "module m\n\ngo 1.24\n")
 
-	if err := c.Adopt(context.Background(), command.AdoptParams{}); err != nil || !strings.Contains(out.String(), "No tool directives in go.mod") || len(g.calls) != 0 {
+	if err := c.Adopt(
+		context.Background(),
+		command.AdoptParams{},
+	); err != nil || !strings.Contains(out.String(), "No tool directives in go.mod") ||
+		len(g.calls) != 0 {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 }
@@ -189,7 +207,11 @@ func TestAdoptDryRunReportsAndChangesNothing(t *testing.T) {
 }
 
 func TestAdoptSkipsWhatIsAlreadyManaged(t *testing.T) {
-	c, g, out := adoptionContext(t, rootGoMod, manifest.Tool{Name: "addlicense", Source: "go", Package: "github.com/google/addlicense", Version: "v1.1.1"})
+	c, g, out := adoptionContext(
+		t,
+		rootGoMod,
+		manifest.Tool{Name: "addlicense", Source: "go", Package: "github.com/google/addlicense", Version: "v1.1.1"},
+	)
 
 	specs, _ := c.PlanAdoption(command.PlanAdoptionParams{})
 
@@ -197,7 +219,9 @@ func TestAdoptSkipsWhatIsAlreadyManaged(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !strings.Contains(out.String(), "addlicense — already managed, skipping") || strings.Contains(out.String(), "Would install addlicense") || len(g.calls) != 0 {
+	if !strings.Contains(out.String(), "addlicense — already managed, skipping") ||
+		strings.Contains(out.String(), "Would install addlicense") ||
+		len(g.calls) != 0 {
 		t.Fatalf("out:\n%s", out)
 	}
 }
@@ -205,7 +229,11 @@ func TestAdoptSkipsWhatIsAlreadyManaged(t *testing.T) {
 // The pins in the root go.mod are gone once it is stripped, so a pin that
 // differs from the manifest's is said out loud.
 func TestAdoptWarnsWhenTheRootPinDiffersFromTheManifest(t *testing.T) {
-	c, _, _ := adoptionContext(t, rootGoMod, manifest.Tool{Name: "addlicense", Source: "go", Package: "github.com/google/addlicense", Version: "v1.0.0"})
+	c, _, _ := adoptionContext(
+		t,
+		rootGoMod,
+		manifest.Tool{Name: "addlicense", Source: "go", Package: "github.com/google/addlicense", Version: "v1.0.0"},
+	)
 
 	var errb bytes.Buffer
 
@@ -223,11 +251,19 @@ func TestAdoptWarnsWhenTheRootPinDiffersFromTheManifest(t *testing.T) {
 	}
 
 	// The same pin is nothing to say.
-	c, _, _ = adoptionContext(t, rootGoMod, manifest.Tool{Name: "addlicense", Source: "go", Package: "github.com/google/addlicense", Version: "v1.1.1"})
+	c, _, _ = adoptionContext(
+		t,
+		rootGoMod,
+		manifest.Tool{Name: "addlicense", Source: "go", Package: "github.com/google/addlicense", Version: "v1.1.1"},
+	)
 	errb.Reset()
 	c.Stderr = &errb
 
-	if err := c.Adopt(context.Background(), command.AdoptParams{Specs: specs, DryRun: true}); err != nil || strings.Contains(errb.String(), "pins") {
+	if err := c.Adopt(
+		context.Background(),
+		command.AdoptParams{Specs: specs, DryRun: true},
+	); err != nil ||
+		strings.Contains(errb.String(), "pins") {
 		t.Fatalf("err=%v stderr=%q", err, &errb)
 	}
 }

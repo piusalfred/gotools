@@ -324,7 +324,8 @@ func TestMigrateDryRunWritesNothing(t *testing.T) {
 		r := migrateIn(t, g, dir, installOpts{}, args...)
 		r.ok(t)
 
-		if !strings.Contains(r.out, "[dry-run] Would migrate tools/ from 'split' to 'module'") || !strings.Contains(r.out, "x "+pkgX+"@v1.0.0") {
+		if !strings.Contains(r.out, "[dry-run] Would migrate tools/ from 'split' to 'module'") ||
+			!strings.Contains(r.out, "x "+pkgX+"@v1.0.0") {
 			t.Fatalf("%v: out=%q", args, r.out)
 		}
 
@@ -402,8 +403,16 @@ func TestMigrateAdoptingTheDiskStrategyHonoursDryRun(t *testing.T) {
 func TestMigrateConsolidatesHybridDirectory(t *testing.T) {
 	dir := newProject(t, "unified")
 
-	writeFile(t, filepath.Join(dir, "tools/go.mod"), "module tools\n\ngo 1.24\n\ntool "+pkgY+"\n\nrequire example.com/b v1.2.0\n")
-	writeFile(t, filepath.Join(dir, "tools/x.mod"), "module tools/x\n\ngo 1.24\n\ntool "+pkgX+"\n\nrequire example.com/a v1.0.0\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/go.mod"),
+		"module tools\n\ngo 1.24\n\ntool "+pkgY+"\n\nrequire example.com/b v1.2.0\n",
+	)
+	writeFile(
+		t,
+		filepath.Join(dir, "tools/x.mod"),
+		"module tools/x\n\ngo 1.24\n\ntool "+pkgX+"\n\nrequire example.com/a v1.0.0\n",
+	)
 
 	migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "unified").ok(t)
 
@@ -427,7 +436,11 @@ func TestMigrateKeepsManifestOnlyTools(t *testing.T) {
 
 	migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "module").ok(t)
 
-	if mod := readFile(t, filepath.Join(dir, "tools/z/go.mod")); !strings.Contains(mod, "tool example.com/c/z") || !strings.Contains(mod, "v1.5.0") {
+	if mod := readFile(
+		t,
+		filepath.Join(dir, "tools/z/go.mod"),
+	); !strings.Contains(mod, "tool example.com/c/z") ||
+		!strings.Contains(mod, "v1.5.0") {
 		t.Fatalf("tools/z/go.mod:\n%s", mod)
 	}
 
@@ -483,7 +496,8 @@ func TestMigratePreservesUnrelatedFiles(t *testing.T) {
 	migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "unified").ok(t)
 
 	got := tree(t, dir)
-	if got["tools/README.md"] != "keep me\n" || got["tools/.gitignore"] != "*.log\n" || got["tools/.hidden.mod"] != "module hidden\n" {
+	if got["tools/README.md"] != "keep me\n" || got["tools/.gitignore"] != "*.log\n" ||
+		got["tools/.hidden.mod"] != "module hidden\n" {
 		t.Fatalf("unrelated files lost: %v", keys(got))
 	}
 
@@ -630,7 +644,13 @@ func TestMigrateLockHeld(t *testing.T) {
 	before := tree(t, dir)
 	o := installOpts{environ: []string{"GOTOOLS_LOCK_TIMEOUT=0"}}
 
-	holder := &command.Context{Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: installGo(installOpts{})}
+	holder := &command.Context{
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      installGo(installOpts{}),
+	}
 	if err := holder.Load(context.Background()); err != nil {
 		t.Fatal(err)
 	}

@@ -81,7 +81,8 @@ func newRelease(t *testing.T, tag, binary string) *release {
 			return
 		}
 
-		if req.Header.Get("Accept") != "application/vnd.github+json" || req.Header.Get("User-Agent") != "gotools/v0.0.1" {
+		if req.Header.Get("Accept") != "application/vnd.github+json" ||
+			req.Header.Get("User-Agent") != "gotools/v0.0.1" {
 			http.Error(w, "bad headers", http.StatusBadRequest)
 
 			return
@@ -106,7 +107,13 @@ func newRelease(t *testing.T, tag, binary string) *release {
 
 			m := r.manifest
 			if m == "" {
-				m = fmt.Sprintf("%s  %s\n%s  gotools-darwin-arm64\n%s  gotools.sh\n", sum(r.binary), asset, sum("other"), sum("script"))
+				m = fmt.Sprintf(
+					"%s  %s\n%s  gotools-darwin-arm64\n%s  gotools.sh\n",
+					sum(r.binary),
+					asset,
+					sum("other"),
+					sum("script"),
+				)
 			}
 
 			_, _ = w.Write([]byte(m))
@@ -172,11 +179,11 @@ func onlyFile(t *testing.T, dir, name string) {
 	}
 }
 
-func install(r *release, target string) (out, errs string, err error) {
+func install(r *release, target string) (string, string, error) {
 	var o, e bytes.Buffer
 
 	u := &selfupdate.Updater{Source: r.source(), Out: &o, Err: &e}
-	err = u.Install(context.Background(), r.tag, target)
+	err := u.Install(context.Background(), r.tag, target)
 
 	return o.String(), e.String(), err
 }
@@ -230,7 +237,8 @@ func TestInstallNeedsAChecksumForThisPlatform(t *testing.T) {
 	exe := installedBinary(t, oldBinary)
 
 	_, _, err := install(r, exe)
-	if ierrors.CodeOf(err) != ierrors.Generic || !strings.Contains(err.Error(), "no checksum for "+asset) || r.requests.Load() != 0 {
+	if ierrors.CodeOf(err) != ierrors.Generic || !strings.Contains(err.Error(), "no checksum for "+asset) ||
+		r.requests.Load() != 0 {
 		t.Fatalf("err=%v downloads=%d", err, r.requests.Load())
 	}
 
@@ -243,7 +251,8 @@ func TestInstallWithoutAChecksumManifest(t *testing.T) {
 	exe := installedBinary(t, oldBinary)
 
 	_, _, err := install(r, exe)
-	if ierrors.CodeOf(err) != ierrors.Network || !strings.Contains(err.Error(), "checksums file") || r.requests.Load() != 0 {
+	if ierrors.CodeOf(err) != ierrors.Network || !strings.Contains(err.Error(), "checksums file") ||
+		r.requests.Load() != 0 {
 		t.Fatalf("err=%v downloads=%d", err, r.requests.Load())
 	}
 
@@ -295,14 +304,18 @@ func TestLatest(t *testing.T) {
 
 	r.apiStatus = http.StatusInternalServerError
 
-	if _, err := r.source().Latest(context.Background()); ierrors.CodeOf(err) != ierrors.Network || !strings.Contains(err.Error(), "Could not fetch latest version") {
+	if _, err := r.source().
+		Latest(context.Background()); ierrors.CodeOf(err) != ierrors.Network ||
+		!strings.Contains(err.Error(), "Could not fetch latest version") {
 		t.Fatalf("api 500: %v", err)
 	}
 
 	r.apiStatus = http.StatusOK
 	r.apiBody = `not json`
 
-	if _, err := r.source().Latest(context.Background()); ierrors.CodeOf(err) != ierrors.Network || !strings.Contains(err.Error(), "Could not read the latest release") {
+	if _, err := r.source().
+		Latest(context.Background()); ierrors.CodeOf(err) != ierrors.Network ||
+		!strings.Contains(err.Error(), "Could not read the latest release") {
 		t.Fatalf("bad json: %v", err)
 	}
 
@@ -395,7 +408,9 @@ func TestInstallInAnUnwritableDirectory(t *testing.T) {
 	defer func() { _ = os.Chmod(dir, 0o755) }()
 
 	_, _, err := install(r, exe)
-	if ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "Cannot write to") || !strings.Contains(err.Error(), "go install") || r.requests.Load() != 0 {
+	if ierrors.CodeOf(err) != ierrors.Environment || !strings.Contains(err.Error(), "Cannot write to") ||
+		!strings.Contains(err.Error(), "go install") ||
+		r.requests.Load() != 0 {
 		t.Fatalf("err=%v downloads=%d", err, r.requests.Load())
 	}
 }
@@ -479,7 +494,10 @@ func TestGitHubSourceIsForThisPlatform(t *testing.T) {
 	s := selfupdate.GitHub("v1.2.3")
 
 	if s.GOOS != runtime.GOOS || s.GOARCH != runtime.GOARCH || s.UserAgent != "gotools/v1.2.3" ||
-		!strings.Contains(s.APIURL, "piusalfred/gotools/releases/latest") || !strings.Contains(s.DownloadBase, "piusalfred/gotools/releases/download") || s.Client == nil {
+		!strings.Contains(
+			s.APIURL,
+			"piusalfred/gotools/releases/latest",
+		) || !strings.Contains(s.DownloadBase, "piusalfred/gotools/releases/download") || s.Client == nil {
 		t.Fatalf("source = %+v", s)
 	}
 }

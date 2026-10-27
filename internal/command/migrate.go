@@ -197,7 +197,11 @@ func (c *Context) Migrate(ctx context.Context, p MigrateParams) error {
 	// Offline mode forbids the reinstall, so it is refused before the old
 	// layout is touched.
 	if len(specs) > 0 && c.Config.Settings.Offline {
-		return ierrors.New(ierrors.Offline, "Offline mode: migrate must reinstall %d tool(s). Network required.", len(specs))
+		return ierrors.New(
+			ierrors.Offline,
+			"Offline mode: migrate must reinstall %d tool(s). Network required.",
+			len(specs),
+		)
 	}
 
 	st, err := stashLayout(toolsDir)
@@ -246,7 +250,12 @@ func (c *Context) adoptStrategy(p MigrateParams) error {
 		return ierrors.Wrap(ierrors.Generic, "Could not write the manifest", err)
 	}
 
-	_, _ = fmt.Fprintf(out, "✅ %s now says strategy '%s' (the tools directory already matches).\n", config.ManifestFile, p.To)
+	_, _ = fmt.Fprintf(
+		out,
+		"✅ %s now says strategy '%s' (the tools directory already matches).\n",
+		config.ManifestFile,
+		p.To,
+	)
 
 	return nil
 }
@@ -318,9 +327,11 @@ func (c *Context) toolsToMigrate(det strategy.Detection, from strategy.Strategy)
 	slices.SortFunc(specs, func(a, b modparser.Spec) int { return strings.Compare(a.Name, b.Name) })
 
 	if len(errs) > 0 {
-		return specs, ierrors.New(ierrors.Environment,
+		return specs, ierrors.New(
+			ierrors.Environment,
 			"Refusing to migrate: some files in the tools directory could not be read and would be lost.\n   %v\n   Fix or remove them and retry.",
-			errors.Join(errs...))
+			errors.Join(errs...),
+		)
 	}
 
 	return specs, nil
@@ -356,7 +367,10 @@ func (c *Context) rebuild(ctx context.Context, p MigrateParams, specs []modparse
 	}
 
 	// The manifest is written once, last: until then a failure leaves it
-	// exactly as it was.
+	// exactly as it was. The fingerprint comes just before it, from the target
+	// layout: the stash took the old one, and without a new one the next
+	// offline sync refuses a project that is in sync. A failure here still
+	// restores the old layout, fingerprint included.
 	for _, t := range installed {
 		c.Manifest.SetTool(t)
 	}
@@ -406,7 +420,7 @@ func stashLayout(toolsDir string) (*stash, error) {
 
 	for _, e := range entries {
 		if ownedEntry(toolsDir, e) {
-			if err := fsx.RejectSymlink(filepath.Join(toolsDir, e.Name()), "migrate"); err != nil {
+			if err = fsx.RejectSymlink(filepath.Join(toolsDir, e.Name()), "migrate"); err != nil {
 				return nil, err
 			}
 
@@ -493,7 +507,12 @@ func (s *stash) restore() error {
 	}
 
 	if len(errs) > 0 {
-		return ierrors.New(ierrors.Generic, "Could not restore the old layout; your files are preserved in %s: %v", s.backup, errors.Join(errs...))
+		return ierrors.New(
+			ierrors.Generic,
+			"Could not restore the old layout; your files are preserved in %s: %v",
+			s.backup,
+			errors.Join(errs...),
+		)
 	}
 
 	if s.backup != "" {

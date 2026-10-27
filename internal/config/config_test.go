@@ -129,7 +129,8 @@ func TestPartialManifestKeepsTheOtherDefaults(t *testing.T) {
 
 	c := mustLoad(t, project(t, `{"settings": {"jobs": 8}}`))
 
-	if c.Settings.Jobs != 8 || c.Strategy != config.DefaultStrategy || c.Settings.LockTimeout != config.DefaultLockTimeout {
+	if c.Settings.Jobs != 8 || c.Strategy != config.DefaultStrategy ||
+		c.Settings.LockTimeout != config.DefaultLockTimeout {
 		t.Fatalf("got %+v", c)
 	}
 }
@@ -238,7 +239,12 @@ func TestInvalidValuesAreErrors(t *testing.T) {
 		{"jobs of zero in the manifest", `{"settings": {"jobs": 0}}`, nil, "settings.jobs must be at least 1"},
 		{"manifest jobs as text", `{"settings": {"jobs": "many"}}`, nil, "settings.jobs"},
 		{"negative timeout", "", []string{"GOTOOLS_LOCK_TIMEOUT=-5"}, "settings.lock_timeout must not be negative"},
-		{"negative operation timeout", `{"settings": {"operation_timeout": -1}}`, nil, "settings.operation_timeout must not be negative"},
+		{
+			"negative operation timeout",
+			`{"settings": {"operation_timeout": -1}}`,
+			nil,
+			"settings.operation_timeout must not be negative",
+		},
 		{"boolean that is not one", "", []string{"GOTOOLS_OFFLINE=yes"}, "settings.offline"},
 		{"unknown trace mode", "", []string{"GOTOOLS_TRACE=loud"}, "settings.trace must be"},
 		{"unknown strategy", "", []string{"GOTOOLS_STRATEGY=flat"}, "strategy must be split, module or unified"},
@@ -276,7 +282,13 @@ func TestAllProblemsAreReportedTogether(t *testing.T) {
 func TestUnknownKeysAndVariablesAreIgnored(t *testing.T) {
 	t.Parallel()
 
-	c := mustLoad(t, project(t, `{"colour": "blue", "settings": {"sparkle": true}}`), "GOTOOLS_COLOUR=blue", "HOME=/tmp", "GOTOOLS_JOBS=2")
+	c := mustLoad(
+		t,
+		project(t, `{"colour": "blue", "settings": {"sparkle": true}}`),
+		"GOTOOLS_COLOUR=blue",
+		"HOME=/tmp",
+		"GOTOOLS_JOBS=2",
+	)
 
 	if c.Settings.Jobs != 2 || c.Strategy != config.DefaultStrategy {
 		t.Fatalf("got %+v", c)
@@ -289,11 +301,19 @@ func TestUnsafeToolsDirectoryIsAnError(t *testing.T) {
 	for _, dir := range []string{"..", "../x", "a/../../x", "/abs", "/", ".", "./", ".//"} {
 		fromManifest := `{"dir": "` + dir + `"}`
 
-		if _, err := config.Load(project(t, fromManifest), nil); err == nil || !strings.Contains(err.Error(), "tools directory") {
+		if _, err := config.Load(
+			project(t, fromManifest),
+			nil,
+		); err == nil ||
+			!strings.Contains(err.Error(), "tools directory") {
 			t.Errorf("manifest dir %q: err = %v", dir, err)
 		}
 
-		if _, err := config.Load(project(t, ""), []string{config.EnvVarDir + "=" + dir}); err == nil || !strings.Contains(err.Error(), "tools directory") {
+		if _, err := config.Load(
+			project(t, ""),
+			[]string{config.EnvVarDir + "=" + dir},
+		); err == nil ||
+			!strings.Contains(err.Error(), "tools directory") {
 			t.Errorf("%s=%q: err = %v", config.EnvVarDir, dir, err)
 		}
 	}
@@ -337,7 +357,8 @@ func TestOverridesOutrankEveryLayer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Strategy != config.StrategyUnified || got.Dir != "flag" || got.GoVersion != "1.30" || got.ModulePrefix != "example.com/flag" {
+	if got.Strategy != config.StrategyUnified || got.Dir != "flag" || got.GoVersion != "1.30" ||
+		got.ModulePrefix != "example.com/flag" {
 		t.Fatalf("layout = %+v", got.Layout)
 	}
 }

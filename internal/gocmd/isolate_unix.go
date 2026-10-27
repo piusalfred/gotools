@@ -27,15 +27,18 @@ import (
 	"os"
 	"os/exec"
 	"syscall"
-	"time"
 )
+
+// signalExitBase is the shell convention for a child killed by signal n: it
+// exits with 128+n.
+const signalExitBase = 128
 
 // isolate puts the child in its own process group and makes cancellation
 // signal the whole group. After WaitDelay the leader is killed outright.
 func isolate(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
-	cmd.WaitDelay = 3 * time.Second
+	cmd.WaitDelay = killDelay
 }
 
 // terminateOnCancel signals only the direct child (it shares our process group, so
@@ -45,7 +48,7 @@ func isolate(cmd *exec.Cmd) {
 // terminate.
 func terminateOnCancel(ctx context.Context, cmd *exec.Cmd) {
 	cmd.Cancel = func() error { return cmd.Process.Signal(cancelSignal(ctx)) }
-	cmd.WaitDelay = 3 * time.Second
+	cmd.WaitDelay = killDelay
 }
 
 // cancelSignal is the signal that cancelled ctx (see SignalCause), else SIGTERM.
@@ -61,7 +64,7 @@ func cancelSignal(ctx context.Context) os.Signal {
 // 128+signal when a signal killed it (ExitCode reports -1 then).
 func exitCode(ee *exec.ExitError) int {
 	if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
-		return 128 + int(ws.Signal())
+		return signalExitBase + int(ws.Signal())
 	}
 
 	return ee.ExitCode()

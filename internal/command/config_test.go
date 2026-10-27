@@ -33,13 +33,20 @@ import (
 	"github.com/piusalfred/gotools/internal/manifest"
 )
 
-func configIn(t *testing.T, dir string, environ []string, args ...string) (out string, err error) {
+func configIn(t *testing.T, dir string, environ []string, args ...string) (string, error) {
 	t.Helper()
 
 	var o bytes.Buffer
 
-	c := &command.Context{Stdout: &o, Stderr: &bytes.Buffer{}, Environ: environ, Program: "gotools", WorkDir: dir, Go: &fakeGo{}}
-	err = run(command.NewConfig(), c, args...)
+	c := &command.Context{
+		Stdout:  &o,
+		Stderr:  &bytes.Buffer{},
+		Environ: environ,
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      &fakeGo{},
+	}
+	err := run(command.NewConfig(), c, args...)
 
 	return o.String(), err
 }
@@ -61,7 +68,8 @@ func TestConfigCreateSetGet(t *testing.T) {
 	}
 
 	out, err = configIn(t, dir, nil, "GOTOOLS_STRATEGY", "module")
-	if err != nil || !strings.Contains(out, "Set GOTOOLS_STRATEGY=module") || !strings.Contains(out, "Strategy changed. Run 'gotools sync'") {
+	if err != nil || !strings.Contains(out, "Set GOTOOLS_STRATEGY=module") ||
+		!strings.Contains(out, "Strategy changed. Run 'gotools sync'") {
 		t.Fatalf("err=%v out=%s", err, out)
 	}
 
@@ -85,7 +93,8 @@ func TestConfigGetsAKeyTheFileLeavesUnset(t *testing.T) {
 	writeFile(t, filepath.Join(dir, config.ManifestFile), `{"version":1,"strategy":"split"}`)
 
 	out, err := configIn(t, dir, nil, "GOTOOLS_MODULE_PREFIX")
-	if err != nil || !strings.Contains(out, "GOTOOLS_MODULE_PREFIX is not set. (auto-detected from root go.mod when empty)") {
+	if err != nil ||
+		!strings.Contains(out, "GOTOOLS_MODULE_PREFIX is not set. (auto-detected from root go.mod when empty)") {
 		t.Fatalf("err=%v out=%s", err, out)
 	}
 
@@ -123,7 +132,8 @@ func TestConfigValidation(t *testing.T) {
 
 func TestConfigUnknownKeyListsTheValidOnes(t *testing.T) {
 	_, err := configIn(t, t.TempDir(), nil, "GOTOOLS_BOGUS")
-	if err == nil || !strings.Contains(err.Error(), "Unknown config key: GOTOOLS_BOGUS") || !strings.Contains(err.Error(), strings.Join(config.Keys, ", ")) {
+	if err == nil || !strings.Contains(err.Error(), "Unknown config key: GOTOOLS_BOGUS") ||
+		!strings.Contains(err.Error(), strings.Join(config.Keys, ", ")) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -160,7 +170,8 @@ func TestConfigKeepsTheToolsAndTheStrategy(t *testing.T) {
 	}
 
 	b := readFile(t, filepath.Join(dir, config.ManifestFile))
-	if !strings.Contains(b, `"strategy": "module"`) || !strings.Contains(b, "p/a") || !strings.Contains(b, `"jobs": 2`) {
+	if !strings.Contains(b, `"strategy": "module"`) || !strings.Contains(b, "p/a") ||
+		!strings.Contains(b, `"jobs": 2`) {
 		t.Fatalf("lost data:\n%s", b)
 	}
 }

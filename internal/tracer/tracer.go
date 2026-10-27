@@ -173,7 +173,7 @@ func (t *FileTracer) emit(level string, e Entry) {
 
 	line, err := json.Marshal(rec)
 	if err != nil {
-		t.warn("trace: %v", err)
+		t.warnf("trace: %v", err)
 
 		return
 	}
@@ -181,7 +181,7 @@ func (t *FileTracer) emit(level string, e Entry) {
 	line = append(line, '\n')
 
 	if err := appendFile(t.cfg.Path, line); err != nil {
-		t.warn("trace: could not write %s: %v", t.cfg.Path, err)
+		t.warnf("trace: could not write %s: %v", t.cfg.Path, err)
 	}
 
 	if t.cfg.Echo != nil {
@@ -189,7 +189,7 @@ func (t *FileTracer) emit(level string, e Entry) {
 	}
 }
 
-func (t *FileTracer) warn(format string, args ...any) {
+func (t *FileTracer) warnf(format string, args ...any) {
 	if t.cfg.Warn != nil {
 		_, _ = fmt.Fprintf(t.cfg.Warn, "⚠️  "+format+"\n", args...)
 	}
@@ -200,16 +200,20 @@ func (t *FileTracer) warn(format string, args ...any) {
 func appendFile(path string, data []byte) error {
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return err
+		return fmt.Errorf("open trace log: %w", err)
 	}
 
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 
-		return err
+		return fmt.Errorf("append to trace log: %w", err)
 	}
 
-	return f.Close()
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close trace log: %w", err)
+	}
+
+	return nil
 }
 
 const shellSafe = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789@%+=:,./_-"
@@ -225,14 +229,12 @@ func ShellQuote(arg string) string {
 
 // ReproCommand is the copy-pasteable invocation for a trace record.
 func ReproCommand(program, tool string, args []string) string {
-	words := make([]string, 0, len(args)+3)
-	words = append(words, program, "exec", ShellQuote(tool))
-
-	for _, a := range args {
-		words = append(words, ShellQuote(a))
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = ShellQuote(a)
 	}
 
-	return strings.Join(words, " ")
+	return strings.Join(append([]string{program, "exec", ShellQuote(tool)}, quoted...), " ")
 }
 
 // StdinKind reports whether r is a terminal or a pipe, as a Config.Stdin value.

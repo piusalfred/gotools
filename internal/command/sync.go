@@ -49,6 +49,9 @@ const (
 
 	FlagJobs = "jobs"
 
+	// goModCommand is the go subcommand that edits and tidies modfiles.
+	goModCommand = "mod"
+
 	usageSync = "Sync tool state to match .gotools.json."
 
 	// Each paragraph is one line: help wraps it.
@@ -94,8 +97,16 @@ func (base *Sync) Build(c *Context) *urfave.Command {
 		},
 		Flags: []urfave.Flag{
 			&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be done without making changes"},
-			&urfave.BoolFlag{Name: FlagOffline, Usage: "Hermetic: fingerprint match only, exit 6 otherwise (GOTOOLS_OFFLINE=1 does the same)"},
-			&urfave.IntFlag{Name: FlagJobs, Usage: "Reinstall N tools at a time; split and module only (GOTOOLS_JOBS=N does the same)", Value: 1, Validator: validJobs},
+			&urfave.BoolFlag{
+				Name:  FlagOffline,
+				Usage: "Hermetic: fingerprint match only, exit 6 otherwise (GOTOOLS_OFFLINE=1 does the same)",
+			},
+			&urfave.IntFlag{
+				Name:      FlagJobs,
+				Usage:     "Reinstall N tools at a time; split and module only (GOTOOLS_JOBS=N does the same)",
+				Value:     1,
+				Validator: validJobs,
+			},
 		},
 		Before: s.before,
 		Run:    s.run,
@@ -186,7 +197,11 @@ func (c *Context) Sync(ctx context.Context, p SyncParams) error {
 			return nil
 		}
 
-		return ierrors.New(ierrors.Offline, "Offline mode: manifest has changed. Network required.\n   Run '%s sync' locally and commit the updated files.", c.Program)
+		return ierrors.New(
+			ierrors.Offline,
+			"Offline mode: manifest has changed. Network required.\n   Run '%s sync' locally and commit the updated files.",
+			c.Program,
+		)
 	}
 
 	if len(c.Manifest.Tools) > 0 {
@@ -215,7 +230,14 @@ func (c *Context) syncLocked(ctx context.Context, r syncRun) error {
 			return nil
 		}
 
-		_, _ = fmt.Fprintf(out, "⚠️  Strategy mismatch: %s says '%s' but %s/ looks like '%s'.\n", config.ManifestFile, l.Strategy, l.Dir, disk)
+		_, _ = fmt.Fprintf(
+			out,
+			"⚠️  Strategy mismatch: %s says '%s' but %s/ looks like '%s'.\n",
+			config.ManifestFile,
+			l.Strategy,
+			l.Dir,
+			disk,
+		)
 		_, _ = fmt.Fprintf(out, "🔀 Auto-migrating to '%s'...\n", l.Strategy)
 
 		return c.Migrate(ctx, MigrateParams{To: l.Strategy})
@@ -352,7 +374,7 @@ func (c *Context) tidyAll(ctx context.Context, r syncRun) error {
 
 // editAndTidy sets the go directive and tidies the module in dir.
 func (c *Context) editAndTidy(ctx context.Context, dir, target, what string) error {
-	res, err := c.Runner().Run(ctx, gocmd.Call{Dir: dir, Args: []string{"mod", "edit", "-go=" + target}})
+	res, err := c.Runner().Run(ctx, gocmd.Call{Dir: dir, Args: []string{goModCommand, "edit", "-go=" + target}})
 	if err != nil {
 		return timeoutOr(err, what)
 	}
@@ -361,7 +383,7 @@ func (c *Context) editAndTidy(ctx context.Context, dir, target, what string) err
 		return ierrors.New(ierrors.Generic, "go mod edit failed in %s\n%s", dir, strings.TrimSpace(string(res.Stderr)))
 	}
 
-	res, err = c.Network().Run(ctx, gocmd.Call{Dir: dir, Args: []string{"mod", "tidy"}})
+	res, err = c.Network().Run(ctx, gocmd.Call{Dir: dir, Args: []string{goModCommand, "tidy"}})
 	if err != nil {
 		return timeoutOr(err, what)
 	}
@@ -442,12 +464,14 @@ func (c *Context) tidyScratch(ctx context.Context, r syncRun, modfile, sumfile, 
 		return ierrors.New(ierrors.Generic, "Could not read %s: %v", modfile, err)
 	}
 
-	if err := os.WriteFile(filepath.Join(tmp, "go.mod"), mod, 0o600); err != nil {
+	//nolint:gosec // tmp comes from os.MkdirTemp above and the file name is constant
+	if err = os.WriteFile(filepath.Join(tmp, "go.mod"), mod, 0o600); err != nil {
 		return ierrors.New(ierrors.Generic, "Could not write the scratch module: %v", err)
 	}
 
-	if sum, err := os.ReadFile(sumfile); err == nil {
-		if err := os.WriteFile(filepath.Join(tmp, "go.sum"), sum, 0o600); err != nil {
+	if sum, rerr := os.ReadFile(sumfile); rerr == nil {
+		//nolint:gosec // same scratch directory and a constant file name
+		if err = os.WriteFile(filepath.Join(tmp, "go.sum"), sum, 0o600); err != nil {
 			return ierrors.New(ierrors.Generic, "Could not write the scratch module: %v", err)
 		}
 	}
@@ -474,7 +498,7 @@ func (c *Context) tidyScratch(ctx context.Context, r syncRun, modfile, sumfile, 
 }
 
 func (c *Context) goModEdit(ctx context.Context, dir, flag string) error {
-	res, err := c.Runner().Run(ctx, gocmd.Call{Dir: dir, Args: []string{"mod", "edit", flag}})
+	res, err := c.Runner().Run(ctx, gocmd.Call{Dir: dir, Args: []string{goModCommand, "edit", flag}})
 	if err != nil {
 		return timeoutOr(err, "go mod edit")
 	}
@@ -493,7 +517,7 @@ func copyBack(tmp, modfile, sumfile string) error {
 		return ierrors.New(ierrors.Generic, "Could not read the tidied module: %v", err)
 	}
 
-	if err := fsx.WriteFileAtomic(modfile, b, 0o644); err != nil {
+	if err = fsx.WriteFileAtomic(modfile, b, 0o644); err != nil {
 		return ierrors.New(ierrors.Generic, "Could not write %s: %v", modfile, err)
 	}
 
@@ -580,7 +604,13 @@ func (c *Context) discoverFromDisk(r syncRun) error {
 		}
 
 		if r.dryRun {
-			_, _ = fmt.Fprintf(c.Stdout, "  [dry-run] Would add %s (%s@%s) — discovered from disk\n", s.Name, s.Package, s.Version)
+			_, _ = fmt.Fprintf(
+				c.Stdout,
+				"  [dry-run] Would add %s (%s@%s) — discovered from disk\n",
+				s.Name,
+				s.Package,
+				s.Version,
+			)
 
 			continue
 		}
@@ -627,7 +657,7 @@ func (c *Context) reinstallList(r syncRun) []manifest.Tool {
 			_, _ = fmt.Fprintf(c.Stdout, "  ⬇ %s (%s@%s) — missing, reinstalling...\n", t.Name, t.Package, t.Version)
 		default:
 			if have == "" {
-				have = "unknown"
+				have = unknownValue
 			}
 
 			_, _ = fmt.Fprintf(c.Stdout, "  ⚠ %s: manifest %s, disk %s — reinstalling...\n", t.Name, t.Version, have)
@@ -653,35 +683,45 @@ func (c *Context) ToolsOnDisk() ([]modparser.Spec, error) {
 
 	switch l.Strategy {
 	case strategy.Unified:
-		mod, err := c.ModFiles.Read(filepath.Join(dir, "go.mod"))
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, nil
-		}
-
-		if err != nil {
-			return nil, fmt.Errorf("parse %s: %w", path.Join(path.Clean(filepath.ToSlash(l.Dir)), "go.mod"), err)
-		}
-
-		specs := mod.Scan()
-		for i := range specs {
-			if n, ok := c.Manifest.FindByPackage(specs[i].Package); ok {
-				specs[i].Name = n
-			}
-		}
-
-		return specs, nil
+		return c.unifiedToolsOnDisk(l, dir)
 	case strategy.Split, strategy.Module:
-	default:
-		return nil, ierrors.New(ierrors.Environment, "Unknown strategy: %s", l.Strategy)
+		return c.separateToolsOnDisk(l, dir)
 	}
 
+	return nil, ierrors.New(ierrors.Environment, "Unknown strategy: %s", l.Strategy)
+}
+
+// unifiedToolsOnDisk reads the tool directives of the one tools/go.mod.
+func (c *Context) unifiedToolsOnDisk(l strategy.Layout, dir string) ([]modparser.Spec, error) {
+	mod, err := c.ModFiles.Read(filepath.Join(dir, "go.mod"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path.Join(path.Clean(filepath.ToSlash(l.Dir)), "go.mod"), err)
+	}
+
+	specs := mod.Scan()
+	for i := range specs {
+		if n, ok := c.Manifest.FindByPackage(specs[i].Package); ok {
+			specs[i].Name = n
+		}
+	}
+
+	return specs, nil
+}
+
+// separateToolsOnDisk reads the modfile of each tool in the split (tools/<name>.mod)
+// and module (tools/<name>/go.mod) layouts.
+func (c *Context) separateToolsOnDisk(l strategy.Layout, dir string) ([]modparser.Spec, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, ierrors.Wrap(ierrors.Generic, "Could not read "+dir, err)
 	}
 
 	var (
@@ -691,20 +731,9 @@ func (c *Context) ToolsOnDisk() ([]modparser.Spec, error) {
 
 	for _, e := range entries {
 		n := e.Name()
-		if strings.HasPrefix(n, ".") {
-			continue
-		}
 
-		var name string
-
-		switch fi, err := os.Stat(filepath.Join(dir, n)); {
-		case err != nil:
-			continue
-		case l.Strategy == strategy.Split && fi.Mode().IsRegular() && n != "go.mod" && strings.HasSuffix(n, ".mod"):
-			name = strings.TrimSuffix(n, ".mod")
-		case l.Strategy == strategy.Module && fi.IsDir() && isRegularFile(filepath.Join(dir, n, "go.mod")):
-			name = n
-		default:
+		name, ok := toolNameOnDisk(l.Strategy, dir, n)
+		if !ok {
 			continue
 		}
 
@@ -733,4 +762,27 @@ func (c *Context) ToolsOnDisk() ([]modparser.Spec, error) {
 	}
 
 	return specs, errors.Join(errs...)
+}
+
+// toolNameOnDisk is the tool an entry of the tools directory holds, and false
+// for an entry that is not a tool's modfile or directory for the strategy:
+// dot-files, a stray tools/go.mod, and anything unreadable.
+func toolNameOnDisk(s strategy.Strategy, dir, entry string) (string, bool) {
+	if strings.HasPrefix(entry, ".") {
+		return "", false
+	}
+
+	fi, err := os.Stat(filepath.Join(dir, entry))
+	if err != nil {
+		return "", false
+	}
+
+	switch {
+	case s == strategy.Split && fi.Mode().IsRegular() && entry != "go.mod" && strings.HasSuffix(entry, ".mod"):
+		return strings.TrimSuffix(entry, ".mod"), true
+	case s == strategy.Module && fi.IsDir() && isRegularFile(filepath.Join(dir, entry, "go.mod")):
+		return entry, true
+	}
+
+	return "", false
 }

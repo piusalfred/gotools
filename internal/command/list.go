@@ -27,6 +27,7 @@ import (
 
 	urfave "github.com/urfave/cli/v3"
 
+	ierrors "github.com/piusalfred/gotools/internal/errors"
 	"github.com/piusalfred/gotools/internal/format"
 )
 
@@ -100,7 +101,10 @@ func (l *List) run(ctx context.Context, cmd *urfave.Command) error {
 	}
 
 	for _, t := range c.Manifest.SortedTools() {
-		doc.Tools = append(doc.Tools, listTool{Name: t.Name, Source: t.Source, Package: t.Package, Version: t.Version, Go: l.goVersionOf(t.Name)})
+		doc.Tools = append(
+			doc.Tools,
+			listTool{Name: t.Name, Source: t.Source, Package: t.Package, Version: t.Version, Go: l.goVersionOf(t.Name)},
+		)
 	}
 
 	// The table is built only for text: it reads every modfile on disk.
@@ -147,18 +151,24 @@ func (l *List) rows(manifestTools []listTool) [][6]string {
 
 		version := s.Version
 		if version == "latest" {
-			version = "unknown" // no pin in the modfile
+			version = unknownValue // no pin in the modfile
 		}
 
 		rel, _ := layout.ModFileRel(s.Name)
 
-		rows = append(rows, [6]string{s.Name, source, string(layout.Strategy), l.goVersionOf(s.Name), rel, s.Package + "@" + version})
+		rows = append(
+			rows,
+			[6]string{s.Name, source, string(layout.Strategy), l.goVersionOf(s.Name), rel, s.Package + "@" + version},
+		)
 	}
 
 	// Nothing on disk: show what the manifest declares.
 	if len(specs) == 0 {
 		for _, t := range manifestTools {
-			rows = append(rows, [6]string{t.Name, t.Source, string(layout.Strategy), "?", "(manifest)", t.Package + "@" + t.Version})
+			rows = append(
+				rows,
+				[6]string{t.Name, t.Source, string(layout.Strategy), "?", "(manifest)", t.Package + "@" + t.Version},
+			)
 		}
 	}
 
@@ -193,7 +203,7 @@ func (d listDocument) WriteText(w io.Writer) error {
 
 	for _, r := range append(header, d.rows...) {
 		if _, err := fmt.Fprintf(w, listRow, r[0], r[1], r[2], r[3], r[4], r[5]); err != nil {
-			return err
+			return ierrors.Wrap(ierrors.Generic, "Could not write the tool list", err)
 		}
 	}
 

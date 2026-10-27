@@ -55,127 +55,174 @@ type AddOptions struct {
 	RejectTwin bool
 }
 
+// addPlan is where one tool lives, worked out before anything is written.
+type addPlan struct {
+	pkgBase  string // the package path without its @version
+	target   string // the go version the tool's modfile declares
+	modfile  string
+	sumfile  string
+	toolsDir string
+	toolDir  string // the module directory in the module strategy
+}
+
 // Add adds one tool to the tools directory and, unless NoFlush, to the
 // manifest. Every failure restores the modfile and sum exactly as they were
 // and removes the module directory only if it ended up empty, and a tool that
 // fails to build leaves nothing behind that the manifest does not know about.
-func (m *GoManager) Add(ctx context.Context, o AddOptions) (tool manifest.Tool, err error) {
-	cfg := m.cfg
-
-	if err := CheckPackageSpec(o.Pkg); err != nil {
-		return manifest.Tool{}, err
-	}
-
-	pkgBase, _, _ := strings.Cut(o.Pkg, "@")
-	l := cfg.Layout
-
-	target, err := cfg.Versions.Resolve(ctx)
+func (m *GoManager) Add(ctx context.Context, o AddOptions) (manifest.Tool, error) {
+	p, err := m.planAdd(ctx, o)
 	if err != nil {
 		return manifest.Tool{}, err
 	}
 
-	modfile, err := l.ModFile(cfg.Root, o.Name)
-	if err != nil {
-		return manifest.Tool{}, err
-	}
-
-	sumfile, err := l.SumFile(cfg.Root, o.Name)
-	if err != nil {
-		return manifest.Tool{}, err
-	}
+	l := m.cfg.Layout
 
 	if !o.Quiet {
-		_, _ = fmt.Fprintf(cfg.Out, "📦 Installing %s (%s) [strategy=%s]...\n", o.Name, o.Pkg, l.Strategy)
+		_, _ = fmt.Fprintf(m.cfg.Out, "📦 Installing %s (%s) [strategy=%s]...\n", o.Name, o.Pkg, l.Strategy)
 	}
 
-	toolsDir := l.ToolsDir(cfg.Root)
-	toolDir := filepath.Dir(modfile) // the module directory in the module strategy
-
-	for _, f := range symlinkGuard(l.Strategy, modfile, sumfile, toolDir) {
-		if err := fsx.RejectSymlink(f, "install "+o.Name); err != nil {
+	for _, f := range symlinkGuard(l.Strategy, p.modfile, p.sumfile, p.toolDir) {
+		if err = fsx.RejectSymlink(f, "install "+o.Name); err != nil {
 			return manifest.Tool{}, err
 		}
 	}
 
-	snap := fsx.TakeSnapshot(modfile, sumfile)
+	snap := fsx.TakeSnapshot(p.modfile, p.sumfile)
 
-	defer func() {
-		if err != nil {
-			snap.Restore()
-
-			if l.Strategy == strategy.Module {
-				_ = os.Remove(toolDir) // only succeeds when empty
-			}
-		}
-	}()
-
-	if err := os.MkdirAll(toolDir, 0o755); err != nil {
-		return manifest.Tool{}, ierrors.New(ierrors.Generic, "Could not create %s: %v", toolDir, err)
+	tool, err := m.installTool(ctx, o, p)
+	if err == nil && !o.NoFlush {
+		err = m.recordTool(tool)
 	}
 
-	if err := m.prepareModfile(o, modfile, target, pkgBase); err != nil {
-		return manifest.Tool{}, err
-	}
-
-	if err := m.goGetTool(ctx, o, toolsDir, modfile); err != nil {
-		return manifest.Tool{}, err
-	}
-
-	mod, err := cfg.ModFiles.Read(modfile)
 	if err != nil {
-		return manifest.Tool{}, ierrors.New(ierrors.Generic, "Could not read %s after install: %v", modfile, err)
+		snap.Restore()
+
+		if l.Strategy == strategy.Module {
+			_ = os.Remove(p.toolDir) // only succeeds when empty
+		}
+
+		return manifest.Tool{}, err
 	}
 
-	resolved := mod.VersionFor(pkgBase)
+	if !o.Quiet {
+		m.reportInstalled(o, tool)
+	}
+
+	return tool, nil
+}
+
+// planAdd validates the package and resolves the files the tool will occupy.
+func (m *GoManager) planAdd(ctx context.Context, o AddOptions) (addPlan, error) {
+	cfg := m.cfg
+	l := cfg.Layout
+
+	if err := CheckPackageSpec(o.Pkg); err != nil {
+		return addPlan{}, err
+	}
+
+	target, err := cfg.Versions.Resolve(ctx)
+	if err != nil {
+		return addPlan{}, err
+	}
+
+	modfile, err := l.ModFile(cfg.Root, o.Name)
+	if err != nil {
+		return addPlan{}, err
+	}
+
+	sumfile, err := l.SumFile(cfg.Root, o.Name)
+	if err != nil {
+		return addPlan{}, err
+	}
+
+	pkgBase, _, _ := strings.Cut(o.Pkg, "@")
+
+	return addPlan{
+		pkgBase:  pkgBase,
+		target:   target,
+		modfile:  modfile,
+		sumfile:  sumfile,
+		toolsDir: l.ToolsDir(cfg.Root),
+		toolDir:  filepath.Dir(modfile),
+	}, nil
+}
+
+// installTool writes the modfile, runs go get and proves the tool builds. It
+// leaves undoing a failure to the caller, which holds the snapshot.
+func (m *GoManager) installTool(ctx context.Context, o AddOptions, p addPlan) (manifest.Tool, error) {
+	if err := os.MkdirAll(p.toolDir, 0o755); err != nil {
+		return manifest.Tool{}, ierrors.New(ierrors.Generic, "Could not create %s: %v", p.toolDir, err)
+	}
+
+	if err := m.prepareModfile(o, p.modfile, p.target, p.pkgBase); err != nil {
+		return manifest.Tool{}, err
+	}
+
+	if err := m.goGetTool(ctx, o, p.toolsDir, p.modfile); err != nil {
+		return manifest.Tool{}, err
+	}
+
+	mod, err := m.cfg.ModFiles.Read(p.modfile)
+	if err != nil {
+		return manifest.Tool{}, ierrors.New(ierrors.Generic, "Could not read %s after install: %v", p.modfile, err)
+	}
+
+	resolved := mod.VersionFor(p.pkgBase)
 	if resolved == "" {
 		resolved = "latest"
 	}
 
 	if o.RejectTwin {
-		if err := m.refuseTwin(o.Name, pkgBase, resolved); err != nil {
+		if err = m.refuseTwin(o.Name, p.pkgBase, resolved); err != nil {
 			return manifest.Tool{}, err
 		}
 	}
 
-	if err := m.verifyBuilt(ctx, o.Name, pkgBase, modfile); err != nil {
+	if err = m.verifyBuilt(ctx, o.Name, p.pkgBase, p.modfile); err != nil {
 		return manifest.Tool{}, err
 	}
 
-	m.advise(ctx, mod, pkgBase, toolsDir)
+	m.advise(ctx, mod, p.pkgBase, p.toolsDir)
 
-	tool = manifest.Tool{Name: o.Name, Source: "go", Package: pkgBase, Version: resolved}
+	return manifest.Tool{Name: o.Name, Source: "go", Package: p.pkgBase, Version: resolved}, nil
+}
 
-	if !o.NoFlush {
-		mf := m.manifest()
-		prev, had := mf.Tool(o.Name)
+// recordTool writes tool to the manifest. When the write fails, the manifest
+// in memory goes back to what it was, so a later flush does not persist a tool
+// whose install was rolled back.
+func (m *GoManager) recordTool(tool manifest.Tool) error {
+	mf := m.manifest()
+	prev, had := mf.Tool(tool.Name)
 
-		mf.SetTool(tool)
+	mf.SetTool(tool)
 
-		if err := m.flush(); err != nil {
-			if had {
-				mf.SetTool(prev)
-			} else {
-				mf.RemoveTool(o.Name)
-			}
-
-			return manifest.Tool{}, err
-		}
+	err := m.flush()
+	if err == nil {
+		return nil
 	}
 
-	if o.Quiet {
-		return tool, nil
+	if had {
+		mf.SetTool(prev)
+	} else {
+		mf.RemoveTool(tool.Name)
 	}
+
+	return err
+}
+
+// reportInstalled says the tool is installed and, for @latest, that the
+// version it resolved to should be pinned.
+func (m *GoManager) reportInstalled(o AddOptions, tool manifest.Tool) {
+	cfg := m.cfg
 
 	_, _ = fmt.Fprintf(cfg.Out, "✅ Installed %s\n", o.Name)
 
 	// A floating version breaks reproducibility.
 	if strings.HasSuffix(o.Pkg, "@latest") {
-		_, _ = fmt.Fprintf(cfg.Out, "⚠️  Installed at @latest (resolved: %s).\n", resolved)
+		_, _ = fmt.Fprintf(cfg.Out, "⚠️  Installed at @latest (resolved: %s).\n", tool.Version)
 		_, _ = fmt.Fprint(cfg.Out, "   Pin this version for reproducibility:\n")
-		_, _ = fmt.Fprintf(cfg.Out, "     %s install %s %s@%s\n", cfg.Program, o.Name, pkgBase, resolved)
+		_, _ = fmt.Fprintf(cfg.Out, "     %s install %s %s@%s\n", cfg.Program, o.Name, tool.Package, tool.Version)
 	}
-
-	return tool, nil
 }
 
 // advise prints the advisor's warnings for the module that provides pkg. They
@@ -217,9 +264,21 @@ func (m *GoManager) refuseTwin(name, pkg, version string) error {
 		why = "(the unified strategy keeps one version of each module)"
 	}
 
-	return ierrors.New(ierrors.Usage,
+	return ierrors.New(
+		ierrors.Usage,
 		"%s is already managed as '%s' (%s) %s, so '%s' would be a second name for the same tool.\n   Rename it:   %s rename %s %s\n   Or change it: %s install --force %s %s",
-		pkg, other.Name, other.Version, why, name, cfg.Program, other.Name, name, cfg.Program, other.Name, pkg+"@<version>")
+		pkg,
+		other.Name,
+		other.Version,
+		why,
+		name,
+		cfg.Program,
+		other.Name,
+		name,
+		cfg.Program,
+		other.Name,
+		pkg+"@<version>",
+	)
 }
 
 // symlinkGuard lists the paths that must not be symlinks for strategy s.
@@ -247,7 +306,7 @@ func (m *GoManager) prepareModfile(o AddOptions, modfile, target, pkgBase string
 		}
 
 		fresh := fmt.Sprintf("module %s\n\ngo %s\n", cfg.Layout.ModulePath(cfg.Prefix, name), target)
-		if err := fsx.WriteFileAtomic(modfile, []byte(fresh), 0o644); err != nil {
+		if err = fsx.WriteFileAtomic(modfile, []byte(fresh), 0o644); err != nil {
 			return ierrors.New(ierrors.Generic, "Could not create %s: %v", modfile, err)
 		}
 
@@ -396,8 +455,18 @@ func (m *GoManager) verifyBuilt(ctx context.Context, name, pkgBase, modfile stri
 	}
 
 	if notATool.MatchString(detail) {
-		return ierrors.New(ierrors.Environment, "Tool installed but not runnable: %s\n   go tool error: %s", name, detail)
+		return ierrors.New(
+			ierrors.Environment,
+			"Tool installed but not runnable: %s\n   go tool error: %s",
+			name,
+			detail,
+		)
 	}
 
-	return ierrors.New(ierrors.Environment, "Tool installed but failed to build: %s\n   go tool error: %s", name, detail)
+	return ierrors.New(
+		ierrors.Environment,
+		"Tool installed but failed to build: %s\n   go tool error: %s",
+		name,
+		detail,
+	)
 }

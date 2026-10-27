@@ -98,75 +98,14 @@ func (m *GoManager) planRename(oldName, newName string) (*renamePlan, error) {
 
 	plan := &renamePlan{tool: old, newTool: old}
 	plan.newTool.Name = newName
-	l := cfg.Layout
-	toolsDir := l.ToolsDir(cfg.Root)
-	dirRel := filepath.ToSlash(l.Dir)
 
-	switch l.Strategy {
+	var err error
+
+	switch l := cfg.Layout; l.Strategy {
 	case strategy.Split:
-		modOld, err := l.ModFile(cfg.Root, oldName)
-		if err != nil {
-			return nil, err
-		}
-
-		modNew, err := l.ModFile(cfg.Root, newName)
-		if err != nil {
-			return nil, err
-		}
-
-		sumOld, _ := l.SumFile(cfg.Root, oldName)
-		sumNew, _ := l.SumFile(cfg.Root, newName)
-
-		for _, f := range []string{modOld, sumOld} {
-			if err := fsx.RejectSymlink(f, "rename "+oldName); err != nil {
-				return nil, err
-			}
-		}
-
-		// Lstat, so a dangling symlink at the target name is seen.
-		if fsx.Lexists(modNew) || fsx.Lexists(sumNew) {
-			return nil, ierrors.New(ierrors.Environment,
-				"Refusing: %s/%s.mod (or .sum) already exists but is not in the manifest.", dirRel, newName)
-		}
-
-		if !fsx.Lexists(modOld) {
-			plan.warn = fmt.Sprintf("%s/%s.mod not found — renaming in the manifest only (sync will recreate it).", dirRel, oldName)
-
-			return plan, nil
-		}
-
-		plan.from, plan.to, plan.modfile = []string{modOld}, []string{modNew}, modNew
-		if fsx.Lexists(sumOld) {
-			plan.from, plan.to = append(plan.from, sumOld), append(plan.to, sumNew)
-		}
+		err = m.planSplitRename(plan, oldName, newName)
 	case strategy.Module:
-		if err := strategy.ValidateName(oldName); err != nil {
-			return nil, err
-		}
-
-		if err := strategy.ValidateName(newName); err != nil {
-			return nil, err
-		}
-
-		dOld, dNew := filepath.Join(toolsDir, oldName), filepath.Join(toolsDir, newName)
-
-		for _, f := range []string{dOld, filepath.Join(dOld, "go.mod")} {
-			if err := fsx.RejectSymlink(f, "rename "+oldName); err != nil {
-				return nil, err
-			}
-		}
-
-		if fsx.Lexists(dNew) {
-			return nil, ierrors.New(ierrors.Environment, "Refusing: %s/%s already exists but is not in the manifest.", dirRel, newName)
-		}
-
-		if !fsx.Lexists(filepath.Join(dOld, "go.mod")) {
-			plan.warn = fmt.Sprintf("%s/%s/go.mod not found — renaming in the manifest only (sync will recreate it).", dirRel, oldName)
-
-			return plan, nil
-		}
-
-		plan.from, plan.to, plan.modfile = []string{dOld}, []string{dNew}, filepath.Join(dNew, "go.mod")
+		err = m.planModuleRename(plan, oldName, newName)
 	case strategy.Unified:
 		// Tool names there come from the go.mod directives; a manifest-only
 		// rename would desync list, info and exec.
@@ -180,7 +119,106 @@ func (m *GoManager) planRename(oldName, newName string) (*renamePlan, error) {
 		return nil, ierrors.New(ierrors.Environment, "Unknown strategy: %s", l.Strategy)
 	}
 
+	if err != nil {
+		return nil, err
+	}
+
 	return plan, nil
+}
+
+// planSplitRename checks the split layout's modfile and sum pair and records
+// the files to move. A missing modfile leaves only the manifest to change.
+func (m *GoManager) planSplitRename(plan *renamePlan, oldName, newName string) error {
+	cfg := m.cfg
+	l := cfg.Layout
+	dirRel := filepath.ToSlash(l.Dir)
+
+	modOld, err := l.ModFile(cfg.Root, oldName)
+	if err != nil {
+		return err
+	}
+
+	modNew, err := l.ModFile(cfg.Root, newName)
+	if err != nil {
+		return err
+	}
+
+	sumOld, _ := l.SumFile(cfg.Root, oldName)
+	sumNew, _ := l.SumFile(cfg.Root, newName)
+
+	for _, f := range []string{modOld, sumOld} {
+		if err = fsx.RejectSymlink(f, "rename "+oldName); err != nil {
+			return err
+		}
+	}
+
+	// Lstat, so a dangling symlink at the target name is seen.
+	if fsx.Lexists(modNew) || fsx.Lexists(sumNew) {
+		return ierrors.New(ierrors.Environment,
+			"Refusing: %s/%s.mod (or .sum) already exists but is not in the manifest.", dirRel, newName)
+	}
+
+	if !fsx.Lexists(modOld) {
+		plan.warn = fmt.Sprintf(
+			"%s/%s.mod not found — renaming in the manifest only (sync will recreate it).",
+			dirRel,
+			oldName,
+		)
+
+		return nil
+	}
+
+	plan.from, plan.to, plan.modfile = []string{modOld}, []string{modNew}, modNew
+	if fsx.Lexists(sumOld) {
+		plan.from, plan.to = append(plan.from, sumOld), append(plan.to, sumNew)
+	}
+
+	return nil
+}
+
+// planModuleRename checks the module layout's tool directory and records the
+// directory to move. A missing go.mod leaves only the manifest to change.
+func (m *GoManager) planModuleRename(plan *renamePlan, oldName, newName string) error {
+	cfg := m.cfg
+	toolsDir := cfg.Layout.ToolsDir(cfg.Root)
+	dirRel := filepath.ToSlash(cfg.Layout.Dir)
+
+	for _, name := range []string{oldName, newName} {
+		if err := strategy.ValidateName(name); err != nil {
+			return err
+		}
+	}
+
+	dOld, dNew := filepath.Join(toolsDir, oldName), filepath.Join(toolsDir, newName)
+
+	for _, f := range []string{dOld, filepath.Join(dOld, "go.mod")} {
+		if err := fsx.RejectSymlink(f, "rename "+oldName); err != nil {
+			return err
+		}
+	}
+
+	if fsx.Lexists(dNew) {
+		return ierrors.New(
+			ierrors.Environment,
+			"Refusing: %s/%s already exists but is not in the manifest.",
+			dirRel,
+			newName,
+		)
+	}
+
+	if !fsx.Lexists(filepath.Join(dOld, "go.mod")) {
+		plan.warn = fmt.Sprintf(
+			"%s/%s/go.mod not found — renaming in the manifest only (sync will recreate it).",
+			dirRel,
+			oldName,
+		)
+
+		return nil
+	}
+
+	plan.from, plan.to, plan.modfile = []string{dOld}, []string{dNew}, filepath.Join(dNew, "go.mod")
+
+	return nil
 }
 
 // apply performs the rename and undoes every step if a later one fails, so a

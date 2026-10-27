@@ -345,7 +345,8 @@ func TestACommandSeesTheAppsContext(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Program != "gotools" || got.WorkDir != "/work" || len(got.Environ) != 1 || got.Stdout == nil || got.Interactive {
+	if got.Program != "gotools" || got.WorkDir != "/work" || len(got.Environ) != 1 || got.Stdout == nil ||
+		got.Interactive {
 		t.Fatalf("context = %+v", got)
 	}
 }
@@ -368,7 +369,13 @@ func TestPipedInputGoesToThePipedCommand(t *testing.T) {
 	_, _ = w.WriteString("go install example.com/x@v1\n")
 	_ = w.Close()
 
-	app := &cli.App{Program: "gotools", Stdin: r, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Commands: []command.Command{piped}}
+	app := &cli.App{
+		Program:  "gotools",
+		Stdin:    r,
+		Stdout:   &bytes.Buffer{},
+		Stderr:   &bytes.Buffer{},
+		Commands: []command.Command{piped},
+	}
 
 	if err := app.Run(context.Background(), nil); err != nil || got != "go install example.com/x@v1\n" {
 		t.Fatalf("err=%v got=%q", err, got)
@@ -392,7 +399,13 @@ func TestBareInvocationShowsTheOverview(t *testing.T) {
 }
 
 func TestPipedInputWithNoPipedCommandShowsTheOverview(t *testing.T) {
-	app := &cli.App{Program: "gotools", Stdin: strings.NewReader("pkg@v1\n"), Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Commands: []command.Command{fake{name: "demo"}}}
+	app := &cli.App{
+		Program:  "gotools",
+		Stdin:    strings.NewReader("pkg@v1\n"),
+		Stdout:   &bytes.Buffer{},
+		Stderr:   &bytes.Buffer{},
+		Commands: []command.Command{fake{name: "demo"}},
+	}
 
 	if err := app.Run(context.Background(), nil); ierrors.CodeOf(err) != ierrors.Usage {
 		t.Fatalf("err = %v", err)
@@ -416,7 +429,11 @@ func TestRunsInstallEndToEnd(t *testing.T) {
 	dir := t.TempDir()
 
 	// The default strategy, split, needs a module in the project root.
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/test\n\ngo 1.24\n"), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "go.mod"),
+		[]byte("module example.com/test\n\ngo 1.24\n"),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -501,7 +518,11 @@ func TestVersionUsageErrorQuotesTheHelpLine(t *testing.T) {
 	usage, _, _ := strings.Cut(help, "\n")
 
 	r := run(t, t.TempDir(), "version", "--bogus")
-	if want := strings.TrimPrefix(usage, "Usage: "); r.runErr == nil || !strings.Contains(r.runErr.Error(), "Usage: "+want) {
+	if want := strings.TrimPrefix(
+		usage,
+		"Usage: ",
+	); r.runErr == nil ||
+		!strings.Contains(r.runErr.Error(), "Usage: "+want) {
 		t.Fatalf("err = %v, want the line %q", r.runErr, want)
 	}
 }

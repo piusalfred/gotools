@@ -110,7 +110,7 @@ func (XParser) Validate(f *File) error {
 
 	for _, t := range f.Tools {
 		if strings.HasPrefix(t, "-") {
-			errs = append(errs, fmt.Errorf("invalid tool %q: must not start with '-'", t))
+			errs = append(errs, ierrors.New(ierrors.Environment, "invalid tool %q: must not start with '-'", t))
 
 			continue
 		}
@@ -190,7 +190,7 @@ func (s Spec) String() string {
 
 // Scan lists the tool directives as name, package and version.
 func (m *File) Scan() []Spec {
-	var out []Spec
+	out := make([]Spec, 0, len(m.Tools))
 
 	for _, p := range m.Tools {
 		v := m.VersionFor(p)
@@ -233,7 +233,7 @@ func (m *File) BinaryNameFor(toolName string) string {
 func (m *File) DropTools(pkgs ...string) error {
 	for _, pkg := range pkgs {
 		if err := m.file.DropTool(pkg); err != nil {
-			return err
+			return ierrors.Wrap(ierrors.Generic, "drop tool "+pkg, err)
 		}
 	}
 
@@ -251,7 +251,7 @@ func (m *File) StripTools() error {
 // SetModule rewrites the module line and leaves everything else untouched.
 func (m *File) SetModule(modPath string) error {
 	if err := m.file.AddModuleStmt(modPath); err != nil {
-		return err
+		return ierrors.Wrap(ierrors.Generic, "set module "+modPath, err)
 	}
 
 	m.refresh()
@@ -261,7 +261,12 @@ func (m *File) SetModule(modPath string) error {
 
 // Format renders the go.mod with the edits made so far.
 func (m *File) Format() ([]byte, error) {
-	return m.file.Format()
+	b, err := m.file.Format()
+	if err != nil {
+		return nil, ierrors.Wrap(ierrors.Generic, "format go.mod", err)
+	}
+
+	return b, nil
 }
 
 // ModulePath returns the module path of the go.mod in dir, or "" when there is

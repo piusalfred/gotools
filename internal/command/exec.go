@@ -192,7 +192,7 @@ func (e *Exec) resolve() (resolve.Ref, error) {
 	}
 
 	for _, path := range guard {
-		if err := fsx.RejectSymlink(path, "exec "+e.name); err != nil {
+		if err = fsx.RejectSymlink(path, "exec "+e.name); err != nil {
 			return resolve.Ref{}, err
 		}
 	}
@@ -207,13 +207,23 @@ func (e *Exec) resolve() (resolve.Ref, error) {
 			return ref, ierrors.New(ierrors.ToolNotFound, "No %s found. Run 'init' first.", ref.ModFileRel)
 		}
 
-		return ref, ierrors.New(ierrors.ToolNotFound, "Tool '%s' not found (%s missing). Run 'install' first.", e.name, ref.ModFileRel)
+		return ref, ierrors.New(
+			ierrors.ToolNotFound,
+			"Tool '%s' not found (%s missing). Run 'install' first.",
+			e.name,
+			ref.ModFileRel,
+		)
 	case err != nil:
 		return ref, ierrors.New(ierrors.Environment, "%v", err)
 	case ref.Package == "":
 		// Taking the first directive of the shared go.mod would run another
 		// tool.
-		return ref, ierrors.New(ierrors.ToolNotFound, "Tool '%s' has no tool directive in %s. Run 'install' first.", e.name, ref.ModFileRel)
+		return ref, ierrors.New(
+			ierrors.ToolNotFound,
+			"Tool '%s' has no tool directive in %s. Run 'install' first.",
+			e.name,
+			ref.ModFileRel,
+		)
 	}
 
 	return ref, nil
@@ -248,7 +258,13 @@ func (e *Exec) build(ctx context.Context, ref resolve.Ref) (string, error) {
 	}
 
 	if _, err := os.Stat(bin); err != nil {
-		return "", ierrors.New(ierrors.Generic, "go tool -n %s reported %q, which cannot be run: %v", ref.Binary, bin, err)
+		return "", ierrors.New(
+			ierrors.Generic,
+			"go tool -n %s reported %q, which cannot be run: %v",
+			ref.Binary,
+			bin,
+			err,
+		)
 	}
 
 	return bin, nil

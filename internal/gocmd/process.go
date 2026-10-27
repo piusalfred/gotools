@@ -23,6 +23,7 @@ package gocmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 )
@@ -55,7 +56,7 @@ var _ ProcessRunner = ExecProcessRunner{}
 
 // Run implements ProcessRunner.
 func (ExecProcessRunner) Run(ctx context.Context, p Process) (int, error) {
-	cmd := exec.CommandContext(ctx, p.Bin, p.Args...)
+	cmd := exec.CommandContext(ctx, p.Bin, p.Args...) //nolint:gosec // G204: exec runs the tool the manifest names
 	cmd.Dir = p.Dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = p.Stdin, p.Stdout, p.Stderr
 	terminateOnCancel(ctx, cmd)
@@ -70,5 +71,9 @@ func (ExecProcessRunner) Run(ctx context.Context, p Process) (int, error) {
 		return 0, ctx.Err()
 	}
 
-	return 0, err
+	if err != nil {
+		return 0, fmt.Errorf("run %s: %w", p.Bin, err)
+	}
+
+	return 0, nil
 }

@@ -68,7 +68,14 @@ func buildGo(bin string) *fakeGo {
 	}}
 }
 
-func execIn(t *testing.T, g *fakeGo, dir string, environ []string, stdin string, args ...string) (out, errs string, err error) {
+func execIn(
+	t *testing.T,
+	g *fakeGo,
+	dir string,
+	environ []string,
+	stdin string,
+	args ...string,
+) (string, string, error) {
 	t.Helper()
 
 	var o, e bytes.Buffer
@@ -79,7 +86,7 @@ func execIn(t *testing.T, g *fakeGo, dir string, environ []string, stdin string,
 	}
 
 	c := &command.Context{Stdin: r, Stdout: &o, Stderr: &e, Environ: environ, Program: "gotools", WorkDir: dir, Go: g}
-	err = run(command.NewExec(), c, args...)
+	err := run(command.NewExec(), c, args...)
 
 	return o.String(), e.String(), err
 }
@@ -160,8 +167,11 @@ func TestExecUnifiedPicksTheRequestedTool(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	writeFile(t, filepath.Join(dir, "tools", "go.mod"),
-		"module tools/tools\n\ngo 1.24\n\ntool golang.org/x/tools/cmd/goimports\n\ntool example.com/x/cmd/staticcheck\n")
+	writeFile(
+		t,
+		filepath.Join(dir, "tools", "go.mod"),
+		"module tools/tools\n\ngo 1.24\n\ntool golang.org/x/tools/cmd/goimports\n\ntool example.com/x/cmd/staticcheck\n",
+	)
 
 	g := buildGo(fakeTool(t))
 
@@ -224,7 +234,8 @@ func TestExecRefusals(t *testing.T) {
 		_ = os.Remove(filepath.Join(dir, "tools", "go.mod"))
 
 		_, _, err := execIn(t, buildGo(bin), dir, nil, "", "goimports")
-		if ierrors.CodeOf(err) != ierrors.ToolNotFound || !strings.Contains(err.Error(), "No tools/go.mod found. Run 'init' first.") {
+		if ierrors.CodeOf(err) != ierrors.ToolNotFound ||
+			!strings.Contains(err.Error(), "No tools/go.mod found. Run 'init' first.") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -239,13 +250,13 @@ func TestExecRefusals(t *testing.T) {
 	t.Run("symlinked modfile", func(t *testing.T) {
 		dir := infoFixture(t, "split")
 		mod := filepath.Join(dir, "tools", "goimports.mod")
-		real := filepath.Join(dir, "real.mod")
+		target := filepath.Join(dir, "real.mod")
 
-		if err := os.Rename(mod, real); err != nil {
+		if err := os.Rename(mod, target); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := os.Symlink(real, mod); err != nil {
+		if err := os.Symlink(target, mod); err != nil {
 			t.Fatal(err)
 		}
 
@@ -258,13 +269,13 @@ func TestExecRefusals(t *testing.T) {
 	t.Run("symlinked module directory", func(t *testing.T) {
 		dir := infoFixture(t, "module")
 		d := filepath.Join(dir, "tools", "goimports")
-		real := filepath.Join(dir, "realdir")
+		target := filepath.Join(dir, "realdir")
 
-		if err := os.Rename(d, real); err != nil {
+		if err := os.Rename(d, target); err != nil {
 			t.Fatal(err)
 		}
 
-		if err := os.Symlink(real, d); err != nil {
+		if err := os.Symlink(target, d); err != nil {
 			t.Fatal(err)
 		}
 
@@ -285,7 +296,8 @@ func TestExecBuildFailure(t *testing.T) {
 	}}
 
 	_, errs, err := execIn(t, g, infoFixture(t, "split"), nil, "", "goimports")
-	if ierrors.CodeOf(err) != ierrors.Generic || !strings.Contains(errs, "go: no such tool") || !strings.Contains(err.Error(), "Could not build tool 'goimports'") {
+	if ierrors.CodeOf(err) != ierrors.Generic || !strings.Contains(errs, "go: no such tool") ||
+		!strings.Contains(err.Error(), "Could not build tool 'goimports'") {
 		t.Fatalf("err=%v stderr=%s", err, errs)
 	}
 }
@@ -301,8 +313,16 @@ func TestExecBuildOutcomes(t *testing.T) {
 	}{
 		"go missing": {err: gocmd.ErrNotFound, code: ierrors.Environment, msg: "go is not installed"},
 		"go broken":  {err: os.ErrPermission, code: ierrors.Generic, msg: "go tool -n goimports:"},
-		"no path":    {result: gocmd.Result{Stdout: []byte("\n")}, code: ierrors.Generic, msg: "printed no binary path"},
-		"gone":       {result: gocmd.Result{Stdout: []byte(filepath.Join(dir, "gone"))}, code: ierrors.Generic, msg: "cannot be run"},
+		"no path": {
+			result: gocmd.Result{Stdout: []byte("\n")},
+			code:   ierrors.Generic,
+			msg:    "printed no binary path",
+		},
+		"gone": {
+			result: gocmd.Result{Stdout: []byte(filepath.Join(dir, "gone"))},
+			code:   ierrors.Generic,
+			msg:    "cannot be run",
+		},
 	}
 
 	for name, tc := range cases {
@@ -338,12 +358,23 @@ func TestExecHelpIsExecsOnlyWhenItComesFirst(t *testing.T) {
 
 	var o bytes.Buffer
 
-	c := &command.Context{Stdout: &o, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: infoFixture(t, "split"), Go: g}
+	c := &command.Context{
+		Stdout:  &o,
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: infoFixture(t, "split"),
+		Go:      g,
+	}
 
 	for _, flag := range []string{"--help", "-h"} {
 		o.Reset()
 
-		if err := run(command.NewExec(), c, flag); err != nil || !strings.Contains(o.String(), "Run a managed tool with the given arguments") {
+		if err := run(
+			command.NewExec(),
+			c,
+			flag,
+		); err != nil ||
+			!strings.Contains(o.String(), "Run a managed tool with the given arguments") {
 			t.Fatalf("%s: err=%v out=%q", flag, err, o.String())
 		}
 	}
@@ -378,7 +409,16 @@ func readTrace(t *testing.T, dir string) []tracer.Record {
 func TestExecTrace(t *testing.T) {
 	dir := infoFixture(t, "split")
 
-	_, errs, err := execIn(t, buildGo(fakeTool(t)), dir, []string{"GOTOOLS_TRACE=1"}, "", "goimports", `say "hi"`, "it's")
+	_, errs, err := execIn(
+		t,
+		buildGo(fakeTool(t)),
+		dir,
+		[]string{"GOTOOLS_TRACE=1"},
+		"",
+		"goimports",
+		`say "hi"`,
+		"it's",
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +466,8 @@ func TestExecTraceModesAndLevels(t *testing.T) {
 	recs := readTrace(t, dir)
 	last := recs[len(recs)-1]
 
-	if last.Level != "fatal" || last.Tool != "ghost" || last.ExitCode != nil || last.Args != nil || !strings.Contains(last.Error, "not found") {
+	if last.Level != "fatal" || last.Tool != "ghost" || last.ExitCode != nil || last.Args != nil ||
+		!strings.Contains(last.Error, "not found") {
 		t.Fatalf("fatal = %+v", last)
 	}
 }
@@ -450,14 +491,23 @@ func TestExecUsesTheContextsProcessRunner(t *testing.T) {
 
 	var o bytes.Buffer
 
-	c := &command.Context{Stdin: strings.NewReader("in"), Stdout: &o, Stderr: &bytes.Buffer{}, Program: "gotools", WorkDir: dir, Go: buildGo("/bin/sh"), Process: f}
+	c := &command.Context{
+		Stdin:   strings.NewReader("in"),
+		Stdout:  &o,
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		WorkDir: dir,
+		Go:      buildGo("/bin/sh"),
+		Process: f,
+	}
 
 	err := run(command.NewExec(), c, "goimports", "-w", ".")
 	if ierrors.CodeOf(err) != 7 {
 		t.Fatalf("err = %v", err)
 	}
 
-	if f.got.Bin != "/bin/sh" || strings.Join(f.got.Args, " ") != "-w ." || f.got.Dir != dir || f.got.Stdout != io.Writer(&o) {
+	if f.got.Bin != "/bin/sh" || strings.Join(f.got.Args, " ") != "-w ." || f.got.Dir != dir ||
+		f.got.Stdout != io.Writer(&o) {
 		t.Fatalf("process = %+v", f.got)
 	}
 }

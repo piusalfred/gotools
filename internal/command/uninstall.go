@@ -67,8 +67,10 @@ func (base *Uninstall) Build(c *Context) *urfave.Command {
 		Usage:       usageUninstall,
 		Description: descriptionUninstall,
 		Examples:    []string{"uninstall", "uninstall --dry-run"},
-		Flags:       []urfave.Flag{&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be removed without deleting"}},
-		Run:         u.run,
+		Flags: []urfave.Flag{
+			&urfave.BoolFlag{Name: FlagDryRun, Usage: "Show what would be removed without deleting"},
+		},
+		Run: u.run,
 	}.Build(c)
 }
 
@@ -92,8 +94,17 @@ func (u *Uninstall) run(_ context.Context, cmd *urfave.Command) error {
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(c.Stdout, "⚠️  WARNING: This will delete the %s executable (%s).\n", ProductName, strings.Join(targets, ", "))
-	_, _ = fmt.Fprintf(c.Stdout, "   Projects keep their %s and tools directory; only the program goes.\n", config.ManifestFile)
+	_, _ = fmt.Fprintf(
+		c.Stdout,
+		"⚠️  WARNING: This will delete the %s executable (%s).\n",
+		ProductName,
+		strings.Join(targets, ", "),
+	)
+	_, _ = fmt.Fprintf(
+		c.Stdout,
+		"   Projects keep their %s and tools directory; only the program goes.\n",
+		config.ManifestFile,
+	)
 	_, _ = fmt.Fprintf(c.Stdout, "Do you want to uninstall %s? (y/N): ", ProductName)
 
 	if !c.confirmed() {

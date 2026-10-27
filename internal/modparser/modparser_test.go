@@ -269,7 +269,11 @@ func TestValidate(t *testing.T) {
 		{"flag as tool", "module m\n\ntool -x\n", []string{`invalid tool "-x"`, "must not start with '-'"}},
 		{"trailing slash", "module m\n\ntool example.com/x/\n", []string{`invalid tool "example.com/x/"`}},
 		{"dot dot", "module m\n\ntool ../x\n", []string{`invalid tool "../x"`}},
-		{"every bad tool is reported", "module m\n\ntool (\n\t-x\n\texample.com/ok\n\t../y\n)\n", []string{`"-x"`, `"../y"`}},
+		{
+			"every bad tool is reported",
+			"module m\n\ntool (\n\t-x\n\texample.com/ok\n\t../y\n)\n",
+			[]string{`"-x"`, `"../y"`},
+		},
 	}
 
 	for _, c := range cases {

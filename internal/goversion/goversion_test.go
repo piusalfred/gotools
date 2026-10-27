@@ -81,7 +81,11 @@ func TestRequire(t *testing.T) {
 		{"missing", &runner{err: gocmd.ErrNotFound}, "Go is not installed"},
 		{"cannot run", &runner{err: errors.New("boom")}, "Could not determine Go version: boom"},
 		{"fails", &runner{res: gocmd.Result{Code: 2}}, "Could not determine Go version."},
-		{"fails and says why", &runner{res: gocmd.Result{Code: 1, Stderr: []byte("go: invalid GOTOOLCHAIN \"bogus\"\nsecond line\n")}}, "Could not determine Go version. go: invalid GOTOOLCHAIN \"bogus\""},
+		{
+			"fails and says why",
+			&runner{res: gocmd.Result{Code: 1, Stderr: []byte("go: invalid GOTOOLCHAIN \"bogus\"\nsecond line\n")}},
+			"Could not determine Go version. go: invalid GOTOOLCHAIN \"bogus\"",
+		},
 		{"empty", goVersion(""), "Could not determine Go version."},
 	}
 
@@ -138,7 +142,13 @@ func TestResolveFallsBackToTheToolchain(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if got, err := goversion.Resolve(context.Background(), goVersion("go1.26rc1"), "", root); err != nil || got != "1.26" {
+		if got, err := goversion.Resolve(
+			context.Background(),
+			goVersion("go1.26rc1"),
+			"",
+			root,
+		); err != nil ||
+			got != "1.26" {
 			t.Fatalf("damaged go.mod: %q, %v", got, err)
 		}
 	}

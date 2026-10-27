@@ -47,9 +47,9 @@ const Inherit = "inherit"
 var majorMinor = regexp.MustCompile(`([0-9]+)\.([0-9]+)`)
 
 // MeetsMin compares X.Y numerically, using the first X.Y pair in each string
-// ("1.24.3", "go1.24", "devel go1.26-abc"). ok is false when either side has
-// no X.Y pair.
-func MeetsMin(actual, required string) (meets, ok bool) {
+// ("1.24.3", "go1.24", "devel go1.26-abc"). The second result is false when
+// either side has no X.Y pair; the first is then false too.
+func MeetsMin(actual, required string) (bool, bool) {
 	a := majorMinor.FindStringSubmatch(actual)
 	r := majorMinor.FindStringSubmatch(required)
 
@@ -70,7 +70,11 @@ func MeetsMin(actual, required string) (meets, ok bool) {
 func Require(ctx context.Context, r gocmd.Runner, dir string) error {
 	res, err := r.Run(ctx, gocmd.Call{Dir: dir, Args: []string{"env", "GOVERSION"}})
 	if errors.Is(err, gocmd.ErrNotFound) {
-		return ierrors.New(ierrors.Environment, "Go is not installed. Please install Go %s or higher.\n   https://go.dev/dl/", Min)
+		return ierrors.New(
+			ierrors.Environment,
+			"Go is not installed. Please install Go %s or higher.\n   https://go.dev/dl/",
+			Min,
+		)
 	}
 
 	if err != nil {

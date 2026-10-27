@@ -96,27 +96,48 @@ func newFakeRelease(t *testing.T, tag string) *fakeRelease {
 	return r
 }
 
-func selfUpdateIn(t *testing.T, r *fakeRelease, exe, current string, environ []string, args ...string) (out, errs string, err error) {
+func selfUpdateIn(
+	t *testing.T,
+	r *fakeRelease,
+	exe, current string,
+	environ []string,
+	args ...string,
+) (string, string, error) {
 	t.Helper()
 
 	return selfUpdateAnswering(t, r, exe, current, environ, "", args...)
 }
 
 // selfUpdateAnswering runs self-update with answer on stdin.
-func selfUpdateAnswering(t *testing.T, r *fakeRelease, exe, current string, environ []string, answer string, args ...string) (out, errs string, err error) {
+func selfUpdateAnswering(
+	t *testing.T,
+	r *fakeRelease,
+	exe, current string,
+	environ []string,
+	answer string,
+	args ...string,
+) (string, string, error) {
 	t.Helper()
 
 	var o, e bytes.Buffer
 
 	c := &command.Context{
-		Stdin: strings.NewReader(answer), Stdout: &o, Stderr: &e, Environ: environ, Program: "gotools", Version: current, WorkDir: t.TempDir(),
-		Exe: func() (string, error) { return exe, nil },
+		Stdin: strings.NewReader(
+			answer,
+		),
+		Stdout:  &o,
+		Stderr:  &e,
+		Environ: environ,
+		Program: "gotools",
+		Version: current,
+		WorkDir: t.TempDir(),
+		Exe:     func() (string, error) { return exe, nil },
 		Releases: selfupdate.Source{
 			APIURL: r.srv.URL + "/api/latest", DownloadBase: r.srv.URL + "/dl", Client: r.srv.Client(),
 			GOOS: "linux", GOARCH: "amd64", UserAgent: "gotools/" + current,
 		},
 	}
-	err = run(command.NewSelfUpdate(), c, args...)
+	err := run(command.NewSelfUpdate(), c, args...)
 
 	return o.String(), e.String(), err
 }
@@ -164,7 +185,8 @@ func TestSelfUpdateNothingToDo(t *testing.T) {
 		exe := fakeInstalled(t, oldBinary)
 
 		out, _, err := selfUpdateIn(t, r, exe, tc.current, nil)
-		if err != nil || r.downloads.Load() != 0 || readFile(t, exe) != oldBinary || !strings.Contains(out, tc.want) || strings.Contains(out, "New version found") {
+		if err != nil || r.downloads.Load() != 0 || readFile(t, exe) != oldBinary || !strings.Contains(out, tc.want) ||
+			strings.Contains(out, "New version found") {
 			t.Fatalf("%s: err=%v out=%q downloads=%d", name, err, out, r.downloads.Load())
 		}
 	}
@@ -175,8 +197,11 @@ func TestSelfUpdateDryRunAndOffline(t *testing.T) {
 	exe := fakeInstalled(t, oldBinary)
 
 	out, _, err := selfUpdateIn(t, r, exe, "v0.0.1", nil, "--dry-run")
-	if err != nil || !strings.Contains(out, "[dry-run] Would download") || !strings.Contains(out, "/dl/v9.9.9/"+asset) ||
-		!strings.Contains(out, selfupdate.Checksums) || r.downloads.Load() != 0 || readFile(t, exe) != oldBinary {
+	if err != nil || !strings.Contains(out, "[dry-run] Would download") ||
+		!strings.Contains(out, "/dl/v9.9.9/"+asset) ||
+		!strings.Contains(out, selfupdate.Checksums) ||
+		r.downloads.Load() != 0 ||
+		readFile(t, exe) != oldBinary {
 		t.Fatalf("dry-run: err=%v out=%q", err, out)
 	}
 
@@ -233,9 +258,18 @@ func TestSelfUpdateCannotLocateItself(t *testing.T) {
 	r := newFakeRelease(t, "v9.9.9")
 
 	c := &command.Context{
-		Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}, Program: "gotools", Version: "v0.0.1",
-		Exe:      func() (string, error) { return "", os.ErrNotExist },
-		Releases: selfupdate.Source{APIURL: r.srv.URL + "/api/latest", DownloadBase: r.srv.URL + "/dl", Client: r.srv.Client(), GOOS: "linux", GOARCH: "amd64"},
+		Stdout:  &bytes.Buffer{},
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		Version: "v0.0.1",
+		Exe:     func() (string, error) { return "", os.ErrNotExist },
+		Releases: selfupdate.Source{
+			APIURL:       r.srv.URL + "/api/latest",
+			DownloadBase: r.srv.URL + "/dl",
+			Client:       r.srv.Client(),
+			GOOS:         "linux",
+			GOARCH:       "amd64",
+		},
 	}
 
 	if err := run(command.NewSelfUpdate(), c); ierrors.CodeOf(err) != ierrors.Environment {
@@ -257,9 +291,19 @@ func TestSelfUpdateAliasAndNoProjectNeeded(t *testing.T) {
 	var o bytes.Buffer
 
 	c := &command.Context{
-		Stdout: &o, Stderr: &bytes.Buffer{}, Program: "gotools", Version: "v0.0.1", WorkDir: dir,
-		Exe:      func() (string, error) { return exe, nil },
-		Releases: selfupdate.Source{APIURL: r.srv.URL + "/api/latest", DownloadBase: r.srv.URL + "/dl", Client: r.srv.Client(), GOOS: "linux", GOARCH: "amd64"},
+		Stdout:  &o,
+		Stderr:  &bytes.Buffer{},
+		Program: "gotools",
+		Version: "v0.0.1",
+		WorkDir: dir,
+		Exe:     func() (string, error) { return exe, nil },
+		Releases: selfupdate.Source{
+			APIURL:       r.srv.URL + "/api/latest",
+			DownloadBase: r.srv.URL + "/dl",
+			Client:       r.srv.Client(),
+			GOOS:         "linux",
+			GOARCH:       "amd64",
+		},
 	}
 
 	if err := run(command.NewSelfUpdate(), c, "--yes"); err != nil || readFile(t, exe) != newBinary {
@@ -280,7 +324,9 @@ func TestSelfUpdateAsksBeforeInstalling(t *testing.T) {
 		exe := fakeInstalled(t, oldBinary)
 
 		out, _, err := selfUpdateAnswering(t, r, exe, "v0.0.1", nil, answer)
-		if err != nil || !strings.Contains(out, "Update gotools from v0.0.1 to v9.9.9? (y/N): ") || !strings.Contains(out, "Successfully updated to v9.9.9") || readFile(t, exe) != newBinary {
+		if err != nil || !strings.Contains(out, "Update gotools from v0.0.1 to v9.9.9? (y/N): ") ||
+			!strings.Contains(out, "Successfully updated to v9.9.9") ||
+			readFile(t, exe) != newBinary {
 			t.Fatalf("%q: err=%v out=%q", answer, err, out)
 		}
 	}
@@ -294,7 +340,8 @@ func TestSelfUpdateCancelsWithoutAYes(t *testing.T) {
 		exe := fakeInstalled(t, oldBinary)
 
 		out, _, err := selfUpdateAnswering(t, r, exe, "v0.0.1", nil, answer)
-		if err != nil || !strings.Contains(out, "Update cancelled") || r.downloads.Load() != 0 || readFile(t, exe) != oldBinary {
+		if err != nil || !strings.Contains(out, "Update cancelled") || r.downloads.Load() != 0 ||
+			readFile(t, exe) != oldBinary {
 			t.Fatalf("%q: err=%v out=%q downloads=%d", answer, err, out, r.downloads.Load())
 		}
 	}

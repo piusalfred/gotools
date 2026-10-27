@@ -31,7 +31,6 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 
@@ -90,12 +89,12 @@ func (JSONFormatter) Kind() Kind { return JSON }
 func (JSONFormatter) Write(w io.Writer, doc Document) error {
 	body, err := json.Marshal(doc, jsontext.EscapeForHTML(false), jsontext.AllowInvalidUTF8(true))
 	if err != nil {
-		return err
+		return ierrors.Wrap(ierrors.Generic, "format: marshal JSON document", err)
 	}
 
 	rest, ok := bytes.CutPrefix(body, []byte("{"))
 	if !ok {
-		return errors.New("format: a JSON document must be an object")
+		return ierrors.New(ierrors.Generic, "format: a JSON document must be an object")
 	}
 
 	var out bytes.Buffer
@@ -110,8 +109,11 @@ func (JSONFormatter) Write(w io.Writer, doc Document) error {
 	out.WriteByte('\n')
 
 	_, err = w.Write(out.Bytes())
+	if err != nil {
+		return ierrors.Wrap(ierrors.Generic, "format: write JSON document", err)
+	}
 
-	return err
+	return nil
 }
 
 // For returns the formatter for kind.
@@ -177,6 +179,9 @@ type Failure struct {
 // WriteText implements Document.
 func (f Failure) WriteText(w io.Writer) error {
 	_, err := fmt.Fprintln(w, f.Message)
+	if err != nil {
+		return ierrors.Wrap(ierrors.Generic, "format: write message", err)
+	}
 
-	return err
+	return nil
 }
