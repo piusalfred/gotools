@@ -151,6 +151,8 @@ jobs:
         needs: [meta, build]
         if: needs.meta.outputs.release == 'true'
         runs-on: ubuntu-latest
+        env:
+            DOCKER_BUILD_RECORD_UPLOAD: "false"
         permissions:
             contents: read
             packages: write
@@ -250,9 +252,13 @@ jobs:
               with:
                   ref: ${{ github.event.workflow_run.head_sha }}
 
-            - name: Download all artifacts
+            # Match by name: build-push-action also uploads *.dockerbuild build
+            # records to this run, and they are not release assets (downloading
+            # them failed the release after the image was already pushed).
+            - name: Download the binaries
               uses: actions/download-artifact@v4
               with:
+                  pattern: gotools-*
                   path: dist
                   merge-multiple: true
 
