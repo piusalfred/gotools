@@ -36,6 +36,7 @@ on:
             - ".golangci.yaml"
             - ".pre-commit-config.yaml"
             - ".github/workflows/test.yml"
+            - ".github/workflows/release.yml"
     pull_request:
         paths:
             - "**.go"
@@ -50,6 +51,7 @@ on:
             - ".golangci.yaml"
             - ".pre-commit-config.yaml"
             - ".github/workflows/test.yml"
+            - ".github/workflows/release.yml"
     workflow_dispatch: {}
 
 jobs:
