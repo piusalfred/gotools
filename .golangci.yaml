@@ -248,12 +248,6 @@ linters:
             # carries the message and the exit code; wrapping it again repeats both.
             ignore-package-globs:
                 - github.com/piusalfred/gotools/*
-            ignore-sigs:
-                - .Errorf(
-                - errors.New(
-                - errors.Unwrap(
-                - errors.Join(
-                - (context.Context).Err()
     exclusions:
         warn-unused: false
         presets:

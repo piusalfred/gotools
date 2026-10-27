@@ -68,7 +68,7 @@ func (ExecProcessRunner) Run(ctx context.Context, p Process) (int, error) {
 	}
 
 	if ctx.Err() != nil {
-		return 0, ctx.Err()
+		return 0, fmt.Errorf("run %s: %w", p.Bin, ctx.Err())
 	}
 
 	if err != nil {

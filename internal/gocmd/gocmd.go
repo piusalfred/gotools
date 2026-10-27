@@ -108,7 +108,7 @@ func (g ExecRunner) Run(ctx context.Context, c Call) (Result, error) {
 	res := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
 
 	if ctx.Err() != nil {
-		return res, ctx.Err()
+		return res, fmt.Errorf("run %s: %w", bin, ctx.Err())
 	}
 
 	if ee, ok := errors.AsType[*exec.ExitError](err); ok {

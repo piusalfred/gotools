@@ -76,7 +76,7 @@ func readPiped(ctx context.Context, r io.Reader) ([]byte, bool, error) {
 
 	select {
 	case <-ctx.Done():
-		return nil, false, ctx.Err()
+		return nil, false, ierrors.Wrap(ierrors.Generic, "Reading stdin was interrupted", ctx.Err())
 	case res := <-done:
 		switch {
 		case res.err != nil:
