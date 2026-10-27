@@ -365,6 +365,10 @@ func (c *Context) rebuild(ctx context.Context, p MigrateParams, specs []modparse
 		c.Manifest.Strategy = string(p.To)
 	}
 
+	if err := target.Record(ctx); err != nil {
+		return ierrors.Wrap(ierrors.Generic, "Could not write the fingerprint", err)
+	}
+
 	if err := c.Flush(); err != nil {
 		return ierrors.Wrap(ierrors.Generic, "Could not write the manifest", err)
 	}

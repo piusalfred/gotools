@@ -33,6 +33,7 @@ import (
 	"github.com/piusalfred/gotools/internal/command"
 	"github.com/piusalfred/gotools/internal/config"
 	ierrors "github.com/piusalfred/gotools/internal/errors"
+	"github.com/piusalfred/gotools/internal/fingerprint"
 	"github.com/piusalfred/gotools/internal/gocmd"
 )
 
@@ -234,6 +235,83 @@ func TestMigrateEveryPair(t *testing.T) {
 				noMigrateLeftovers(t, dir)
 			})
 		}
+	}
+}
+
+// The migration stashes the old fingerprint and installs the tools again, so
+// it has to record the new one: otherwise the next offline sync, which takes
+// only the fingerprint fast path, refuses a project that is in sync.
+func TestMigrateRecordsTheFingerprint(t *testing.T) {
+	all := []string{"split", "module", "unified"}
+
+	for _, from := range all {
+		for _, to := range all {
+			if from == to {
+				continue
+			}
+
+			t.Run(from+"_to_"+to, func(t *testing.T) {
+				dir := installedProject(t, from)
+
+				migrateIn(t, installGo(installOpts{}), dir, installOpts{}, to).ok(t)
+
+				fp := readFile(t, filepath.Join(dir, "tools", fingerprint.FileName))
+				if !strings.Contains(fp, "|"+to+"|") {
+					t.Fatalf("fingerprint = %q, want it to record strategy %q", fp, to)
+				}
+
+				r := syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--offline")
+				r.ok(t)
+
+				if !strings.Contains(r.out, "fingerprint match") {
+					t.Fatalf("offline sync after migrate: %q", r.out)
+				}
+			})
+		}
+	}
+}
+
+// Sync migrates on its own when the manifest names another strategy than the
+// disk shows, and that path must leave a fingerprint too.
+func TestSyncAutoMigrationRecordsTheFingerprint(t *testing.T) {
+	dir := installedProject(t, "split")
+
+	m := readManifest(t, dir)
+	m.Strategy = "module"
+
+	if err := m.Flush(filepath.Join(dir, config.ManifestFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	r := syncIn(t, installGo(installOpts{}), dir, installOpts{})
+	r.ok(t)
+
+	if !strings.Contains(r.out, "Auto-migrating to 'module'") {
+		t.Fatalf("sync did not migrate: %q", r.out)
+	}
+
+	r = syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--offline")
+	r.ok(t)
+
+	if !strings.Contains(r.out, "fingerprint match") {
+		t.Fatalf("offline sync after the auto-migration: %q", r.out)
+	}
+}
+
+// A failed migration puts the old layout back, and with it the old fingerprint.
+func TestMigrateFailureKeepsTheOldFingerprint(t *testing.T) {
+	dir := installedProject(t, "split")
+	syncIn(t, installGo(installOpts{}), dir, installOpts{}).ok(t)
+
+	path := filepath.Join(dir, "tools", fingerprint.FileName)
+	before := readFile(t, path)
+
+	if r := migrateIn(t, failingOn(pkgY), dir, installOpts{}, "module"); r.runErr == nil {
+		t.Fatal("migrate succeeded although a tool failed to install")
+	}
+
+	if got := readFile(t, path); got != before {
+		t.Fatalf("fingerprint changed by a failed migration:\nbefore %q\nafter  %q", before, got)
 	}
 }
 
