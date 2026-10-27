@@ -31,6 +31,10 @@ on:
             - "install.sh"
             - "Makefile"
             - "test/**"
+            - "tools/**"
+            - ".gotools.json"
+            - ".golangci.yaml"
+            - ".pre-commit-config.yaml"
             - ".github/workflows/test.yml"
     pull_request:
         paths:
@@ -41,6 +45,10 @@ on:
             - "install.sh"
             - "Makefile"
             - "test/**"
+            - "tools/**"
+            - ".gotools.json"
+            - ".golangci.yaml"
+            - ".pre-commit-config.yaml"
             - ".github/workflows/test.yml"
     workflow_dispatch: {}
 
@@ -57,6 +65,11 @@ jobs:
               uses: actions/setup-go@v5
               with:
                   go-version-file: go.mod
+                  # The tools (golangci-lint is the big one) have their own go.sum files;
+                  # keying the cache on them keeps their build out of every run.
+                  cache-dependency-path: |
+                      go.sum
+                      tools/*/go.sum
 
             - name: Set up Python
               uses: actions/setup-python@v5

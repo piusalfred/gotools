@@ -42,8 +42,9 @@ internal/            # the implementation, one self-standing package per concern
   errors/            # Code, Error, CodeOf, the exit-code table (every package uses it)
 test/                # integration tests (build tag) and the install.sh test
   testdata/project/  # the throw-away module integration tests copy
-tools/               # the tools this repo builds with (split strategy, committed)
+tools/               # the tools this repo builds with (module strategy, committed)
 .gotools.json        # manifest for those tools
+.golangci.yaml       # golangci-lint: the linters and the formatters
 install.sh           # standalone curl-to-install script
 ```
 
@@ -67,8 +68,9 @@ checkout, so gotools builds itself with itself.
 ```bash
 make build          # -> bin/gotools
 make install        # go install ./cmd/gotools
-make fmt            # addlicense, gci, gofumpt, go mod tidy, rumdl
-make lint           # vet, staticcheck, license, imports, gofumpt, rumdl, shellcheck
+make fmt            # go fix, addlicense, golangci-lint fmt, go mod tidy, rumdl
+make lint           # golangci-lint (linters + formatters), vet, license, rumdl, shellcheck
+make fix            # golangci-lint run --fix, then fmt; read the diff and run the tests
 make check          # lint + unit tests (what CI's static-analysis job runs)
 pre-commit run --all-files
 ```
@@ -110,13 +112,14 @@ module cannot run them.
 ## CI
 
 Tests run on every push to `main` and on pull requests that touch Go code, the
-Makefile, `version.txt` or the tests. They use the newest Go release, so a
+Makefile, `version.txt`, the tests, the tools (`tools/`, `.gotools.json`) or the
+lint configuration. They use the newest Go release, so a
 release that breaks gotools shows up on the next run. The workflow can also be
 started by hand.
 
 | Job | What it does |
 | --- | --- |
-| `static-analysis` | pre-commit (vet, staticcheck, license, imports, gofumpt, shellcheck, rumdl, version check), then `go test -race ./...` |
+| `static-analysis` | pre-commit (vet, golangci-lint, govulncheck, license, shellcheck, rumdl, version check), then `go test -race ./...` |
 | `test` | integration tests on ubuntu-latest and macos-latest, with the newest Go |
 
 The Version Guard (`.github/workflows/version-check.yml`) is a separate workflow:

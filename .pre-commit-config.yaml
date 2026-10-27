@@ -40,28 +40,16 @@ repos:
             entry: make lint-go-vet
             pass_filenames: false
             always_run: true
-          - id: lint-imports
-            name: import ordering
+          - id: lint-golangci
+            name: golangci-lint
             language: system
-            entry: make lint-imports
-            pass_filenames: false
-            always_run: true
-          - id: lint-go-fmt
-            name: go formatting
-            language: system
-            entry: make lint-go-fmt
+            entry: make lint-golangci
             pass_filenames: false
             always_run: true
           - id: govulncheck
             name: govulncheck
             language: system
             entry: make govulncheck
-            pass_filenames: false
-            always_run: true
-          - id: lint-staticcheck
-            name: staticcheck
-            language: system
-            entry: make lint-staticcheck
             pass_filenames: false
             always_run: true
           - id: version-check

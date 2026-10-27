@@ -16,7 +16,7 @@ docker run --rm \
   -u "$(id -u):$(id -g)" \
   -v "$PWD":/work \
   -v gotools-cache:/cache \
-  ghcr.io/piusalfred/gotools:vX.Y.Z exec gofumpt -w .
+  ghcr.io/piusalfred/gotools:vX.Y.Z exec golangci-lint fmt
 ```
 
 The entrypoint is `gotools`, so everything after the image name is a gotools
