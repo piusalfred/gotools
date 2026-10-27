@@ -128,12 +128,13 @@ docs/                # USAGE, INSTALLATION, STRATEGIES, MIGRATION, CONFIGURATION
 
 ```bash
 make build              # -> bin/gotools
-make test               # go test ./...   (offline, fake go, fast)
-make test-race          # with the race detector
+make test               # every test: go build, unit, then integration (needs go + network)
+make go-build           # go build ./...  (compile check, writes nothing)
+make test-unit          # go test -race ./...   (offline, fake go, fast)
 make test-integration   # real go + network: go test -tags integration ./test/...
 make lint               # vet, staticcheck, license, imports, gofumpt, rumdl, shellcheck
 make fmt                # addlicense, gci, gofumpt, go mod tidy, rumdl
-make check              # lint + test (what CI's static-analysis job runs)
+make check              # lint + test-unit (what CI's static-analysis job runs)
 pre-commit run --all-files
 make set-version VER=vX.Y.Z   # write version.txt
 ```
@@ -322,8 +323,11 @@ a key. The exit-code table is checked against `docs/USAGE.md`, and the release a
    `version-check` hook enforce it for changes headed to `main`; PRs to `dev`
    do not bump.
 2. Push to `main`.
-3. The release workflow runs only after the Test workflow passed on that push,
-   re-verifies the bump, cross-compiles `gotools-<os>-<arch>` for linux and
+3. The release workflow runs only after the Test workflow passed on a push to
+   `main`. It releases when `version.txt` is ahead of the latest published
+   release (and does nothing when they are equal), so a version whose Test run
+   failed or never ran ships with the next green push. It then cross-compiles
+   `gotools-<os>-<arch>` for linux and
    darwin on amd64 and arm64, smoke-runs one, attaches `install.sh` stamped
    with the release's version (`DEFAULT_VERSION`), writes `checksums-sha256.txt`
    (the binaries and `install.sh`) and creates the GitHub release.

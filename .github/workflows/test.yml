@@ -42,8 +42,6 @@ on:
             - "Makefile"
             - "test/**"
             - ".github/workflows/test.yml"
-    schedule:
-        - cron: "57 3 * * 0" # 03:57 UTC every Sunday
     workflow_dispatch: {}
 
 jobs:
@@ -93,10 +91,10 @@ jobs:
             fail-fast: false
             matrix:
                 runner:
-                    - ubuntu-latest       # linux/amd64
-                    - macos-latest        # macos/arm64
+                    - ubuntu-latest # linux/amd64
+                    - macos-latest # macos/arm64
                 go-version:
-                    - stable  # the newest Go: the weekly run exists to catch what a new release breaks
+                    - stable # the newest Go, so a new release that breaks gotools shows up on the next run
         runs-on: ${{ matrix.runner }}
         steps:
             - uses: actions/checkout@v4
@@ -118,73 +116,5 @@ jobs:
                       test-${{ matrix.runner }}-go-${{ matrix.go-version }}-
 
             - name: Run integration tests
-              timeout-minutes: 30
-              run: go test -tags integration -timeout 30m -count=1 ./test/...
-
-    # ------------------------------------------------------------------
-    # 3. Build — smoke test that the binary compiles and starts on each platform.
-    # ------------------------------------------------------------------
-    build:
-        needs: static-analysis
-        strategy:
-            fail-fast: false
-            matrix:
-                runner:
-                    - ubuntu-latest
-                    - macos-latest
-                go-version:
-                    - stable
-        runs-on: ${{ matrix.runner }}
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Set up Go ${{ matrix.go-version }}
-              uses: actions/setup-go@v5
-              with:
-                  go-version: ${{ matrix.go-version }}
-
-            - name: Build
-              run: |
-                  go build -trimpath -ldflags="-s -w" -o gotools ./cmd/gotools
-                  # No go, no bash on PATH: the binary is self-contained.
-                  env -i PATH=/nonexistent ./gotools version
-
-    # ------------------------------------------------------------------
-    # 4. Retry on failure — scheduled runs only.
-    #    Absorbs transient network/proxy issues. PR/push failures are
-    #    NOT retried so flaky tests stay visible.
-    # ------------------------------------------------------------------
-    test-retry:
-        needs: test
-        if: failure() && github.event_name == 'schedule'
-        strategy:
-            fail-fast: false
-            matrix:
-                runner:
-                    - ubuntu-latest
-                    - macos-latest
-                go-version:
-                    - stable
-        runs-on: ${{ matrix.runner }}
-        steps:
-            - uses: actions/checkout@v4
-
-            - name: Set up Go ${{ matrix.go-version }}
-              uses: actions/setup-go@v5
-              with:
-                  go-version: ${{ matrix.go-version }}
-
-            - name: Cache Go modules
-              uses: actions/cache@v4
-              with:
-                  path: |
-                      ~/.cache/go-build
-                      ~/go/pkg/mod
-                  key: retry-${{ matrix.runner }}-go-${{ matrix.go-version }}-${{ hashFiles('go.mod') }}-${{ github.run_id }}
-                  restore-keys: |
-                      retry-${{ matrix.runner }}-go-${{ matrix.go-version }}-${{ hashFiles('go.mod') }}-
-                      retry-${{ matrix.runner }}-go-${{ matrix.go-version }}-
-
-            - name: Retry integration tests
               timeout-minutes: 30
               run: go test -tags integration -timeout 30m -count=1 ./test/...

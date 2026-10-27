@@ -33,7 +33,9 @@ steps:
 PRs intended for `main` and direct pushes to `main` must bump `VERSION`
 (`make set-version VER=x.y.z`) — the Version Guard workflow fails otherwise.
 PRs targeting `dev` don't bump. Releases are only cut after the Test workflow
-passed on that main push, so an untested commit can never ship.
+passed on that main push, so an untested commit can never ship. The release
+workflow publishes when `version.txt` is ahead of the latest release, so a
+merge that leaves it unchanged releases nothing.
 
 ## Parallel cold restores
 

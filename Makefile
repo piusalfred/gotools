@@ -49,7 +49,7 @@ VERSION_GREP := grep -E '^var Version = ' | cut -d'"' -f2
 
 .PHONY: all build install clean help \
         fmt fix-go fmt-license fmt-imports fmt-go fmt-mod fmt-md \
-        test test-race test-integration cover \
+        test go-build test-unit test-integration cover \
         lint lint-shellcheck lint-go-vet lint-staticcheck lint-rumdl lint-license lint-imports lint-go-fmt \
         govulncheck check version-check get-version set-version sync-main
 
@@ -58,12 +58,13 @@ all: build
 help:
 	@echo "build             build $(BIN)"
 	@echo "install           go install ./cmd/gotools"
-	@echo "test              unit tests (fake go, offline)"
-	@echo "test-race         unit tests with the race detector"
+	@echo "test              everything: go-build, unit tests, then the integration tests"
+	@echo "go-build          compile every package (go build ./...), nothing is written"
+	@echo "test-unit         unit tests with the race detector (fake go, offline)"
 	@echo "test-integration  real go and network: -tags integration ./test/..."
 	@echo "lint              vet, staticcheck, license, imports, gofumpt, markdown, shellcheck"
 	@echo "fmt               go fix, license headers, imports, gofumpt, go mod tidy, markdown"
-	@echo "check             lint + test (what CI's static-analysis job runs)"
+	@echo "check             lint + test-unit (what CI's static-analysis job runs)"
 	@echo "get-version / set-version VER=vX.Y.Z / version-check"
 
 # Rebuilt whenever a non-test Go source changes.
@@ -102,10 +103,17 @@ fmt-md:
 fix-go:
 	go fix -tags integration ./...
 
-test:
-	$(GO) test -timeout 30m -count=1 ./...
+# Every test the project has, compile check first so a build error is reported
+# before any test runs. The integration half needs network access and a Go
+# toolchain; use test-unit for the fast, offline loop.
+test: go-build test-unit test-integration
 
-test-race:
+# Distinct from build, which writes bin/gotools: this only proves that every
+# package compiles.
+go-build:
+	$(GO) build ./...
+
+test-unit:
 	$(GO) test -race -timeout 30m -count=1 ./...
 
 # Needs network access and a Go toolchain; takes a few minutes.
@@ -163,7 +171,7 @@ lint-go-fmt: $(BIN)
 	@echo "Checking Go formatting"
 	@diff=$$($(GOFUMPT) -d -extra $(GO_SOURCES)); if [ -n "$$diff" ]; then printf "%s\n" "$$diff"; exit 1; fi
 
-check: lint test
+check: lint test-unit
 	@echo "✅ All checks passed"
 
 get-version:
