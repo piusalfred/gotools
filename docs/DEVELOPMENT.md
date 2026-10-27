@@ -76,8 +76,9 @@ pre-commit run --all-files
 ## Running tests
 
 ```bash
-make test               # go test ./...  (offline, fake go, fast)
-make test-race          # the same with the race detector
+make test               # every test: go build, unit, then integration (needs go and network)
+make go-build           # go build ./...  (compile check, writes nothing)
+make test-unit          # go test -race ./...  (offline, fake go, fast)
 make test-integration   # real go and the module proxy: -tags integration ./test/...
 ```
 
@@ -109,15 +110,14 @@ module cannot run them.
 ## CI
 
 Tests run on every push to `main` and on pull requests that touch Go code, the
-Makefile, `version.txt` or the tests. A weekly scheduled run uses the newest Go
-release, to catch what a new release breaks.
+Makefile, `version.txt` or the tests. They use the newest Go release, so a
+release that breaks gotools shows up on the next run. The workflow can also be
+started by hand.
 
 | Job | What it does |
 | --- | --- |
 | `static-analysis` | pre-commit (vet, staticcheck, license, imports, gofumpt, shellcheck, rumdl, version check), then `go test -race ./...` |
 | `test` | integration tests on ubuntu-latest and macos-latest, with the newest Go |
-| `build` | builds the binary and runs it with an empty `PATH` |
-| `test-retry` | scheduled runs only: runs the integration tests again after a failure, to absorb a flaky proxy; pushes and pull requests are never retried |
 
 The Version Guard (`.github/workflows/version-check.yml`) is a separate workflow:
 it runs on pull requests and pushes that target `main` and touch shipped code,
@@ -134,7 +134,10 @@ See `.github/workflows/test.yml`.
    target `main`; `make version-check` runs the same check locally.
 2. Push to `main`.
 3. The release workflow (`.github/workflows/release.yml`) runs only after the
-   Test workflow passed on that push. It re-verifies the bump, cross-compiles
+   Test workflow passed on a push to `main`. It releases when `version.txt` is
+   ahead of the latest published release and does nothing when they are equal,
+   so a version whose Test run failed or never ran ships with the next green
+   push; a version behind the latest release fails the run. It cross-compiles
    `gotools-<os>-<arch>` for linux and darwin on amd64 and arm64, smoke-runs
    one, attaches `install.sh` with the release's version stamped in as its
    default, writes `checksums-sha256.txt` (the binaries and `install.sh`) and

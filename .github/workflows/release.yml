@@ -27,6 +27,12 @@ on:
         types: [completed]
         branches: [main]
 
+# Two Test runs finishing close together would both see the same latest
+# release and both publish it. Queue them so the second sees the first.
+concurrency:
+    group: production-release
+    cancel-in-progress: false
+
 jobs:
     # ------------------------------------------------------------------
     # 0. Gate: only proceed when CI passed on a push to main.
@@ -38,33 +44,58 @@ jobs:
             - run: echo "✅ Test workflow passed on a main push — release may proceed"
 
     # ------------------------------------------------------------------
-    # 1. Extract the version tag from version.txt (single source of truth)
+    # 1. Decide whether version.txt is ahead of the latest published release.
+    #    Comparing with the latest release (not with the previous commit)
+    #    means a version whose Test run never passed or never ran is still
+    #    released by the next green push, and a push that leaves version.txt
+    #    alone releases nothing.
     # ------------------------------------------------------------------
     meta:
         needs: guard
         runs-on: ubuntu-latest
         outputs:
             tag: ${{ steps.meta.outputs.tag }}
+            release: ${{ steps.meta.outputs.release }}
         steps:
             - uses: actions/checkout@v4
               with:
                   ref: ${{ github.event.workflow_run.head_sha }}
-                  # The version check compares with origin/main; a shallow
-                  # checkout has no such ref and the check would pass vacuously.
-                  fetch-depth: 0
-            - name: Verify the version bump (vs previous main commit)
-              run: make version-check BASE=origin/main
-            - name: Extract Version
+
+            - name: Compare version.txt with the latest release
               id: meta
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
               run: |
-                  VERSION=$(make get-version)
-                  echo "tag=$VERSION" >> "$GITHUB_OUTPUT"
+                  new=$(make get-version)
+                  if ! printf '%s' "$new" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-+][A-Za-z0-9.-]+)?$'; then
+                      echo "::error::version.txt must hold a version like v1.2.3, not '$new'"
+                      exit 1
+                  fi
+                  echo "tag=$new" >> "$GITHUB_OUTPUT"
+
+                  # No release yet is not an error: the first one is cut.
+                  latest=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+                  echo "version.txt: $new, latest release: ${latest:-none}"
+
+                  if [ -z "$latest" ]; then
+                      echo "release=true" >> "$GITHUB_OUTPUT"
+                  elif [ "$new" = "$latest" ]; then
+                      echo "release=false" >> "$GITHUB_OUTPUT"
+                      echo "$new is already released; nothing to do"
+                  elif [ "$(printf '%s\n%s\n' "$latest" "$new" | sort -V | tail -n 1)" = "$new" ]; then
+                      echo "release=true" >> "$GITHUB_OUTPUT"
+                  else
+                      echo "::error::version.txt ($new) is behind the latest release ($latest)"
+                      exit 1
+                  fi
 
     # ------------------------------------------------------------------
     # 2. Cross-compile the Go binary for each OS/arch combination
     # ------------------------------------------------------------------
     build:
         needs: meta
+        if: needs.meta.outputs.release == 'true'
         runs-on: ubuntu-latest
         strategy:
             matrix:
@@ -114,6 +145,7 @@ jobs:
     # ------------------------------------------------------------------
     release:
         needs: [meta, build]
+        if: needs.meta.outputs.release == 'true'
         runs-on: ubuntu-latest
         permissions:
             contents: write

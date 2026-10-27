@@ -42,6 +42,12 @@ func sh(script string, p gocmd.Process) gocmd.Process {
 	return p
 }
 
+// sleepsUntilStopped must exec: the runner signals only the direct child, and a
+// shell that forks sleep instead (dash does, bash and macOS sh do not) defers a
+// SIGINT until sleep ends, so the child would be killed after WaitDelay (137)
+// and not stopped by the signal under test.
+const sleepsUntilStopped = "exec sleep 30"
+
 func TestProcessPassesTheStreamsThrough(t *testing.T) {
 	var out, errb bytes.Buffer
 
@@ -116,7 +122,7 @@ func TestProcessStopsWhenTheContextEnds(t *testing.T) {
 
 	start := time.Now()
 
-	code, err := gocmd.ExecProcessRunner{}.Run(ctx, sh("sleep 30", gocmd.Process{}))
+	code, err := gocmd.ExecProcessRunner{}.Run(ctx, sh(sleepsUntilStopped, gocmd.Process{}))
 	if err != nil || code != 128+15 || ctx.Err() == nil {
 		t.Fatalf("code=%d err=%v ctx=%v", code, err, ctx.Err())
 	}
@@ -133,7 +139,7 @@ func TestProcessGetsTheSignalThatCancelledTheContext(t *testing.T) {
 		ctx, cancel := context.WithCancelCause(context.Background())
 		time.AfterFunc(100*time.Millisecond, func() { cancel(gocmd.SignalCause(sig)) })
 
-		code, err := gocmd.ExecProcessRunner{}.Run(ctx, sh("sleep 30", gocmd.Process{}))
+		code, err := gocmd.ExecProcessRunner{}.Run(ctx, sh(sleepsUntilStopped, gocmd.Process{}))
 		if err != nil || code != want {
 			t.Errorf("%v: code=%d err=%v, want %d", sig, code, err, want)
 		}
@@ -143,7 +149,7 @@ func TestProcessGetsTheSignalThatCancelledTheContext(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	time.AfterFunc(100*time.Millisecond, func() { cancel(errors.New("done")) })
 
-	if code, err := (gocmd.ExecProcessRunner{}).Run(ctx, sh("sleep 30", gocmd.Process{})); err != nil || code != 128+15 {
+	if code, err := (gocmd.ExecProcessRunner{}).Run(ctx, sh(sleepsUntilStopped, gocmd.Process{})); err != nil || code != 128+15 {
 		t.Errorf("code=%d err=%v", code, err)
 	}
 }
