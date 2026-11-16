@@ -93,6 +93,10 @@ Three knobs cover CI edge cases:
 | `GOTOOLS_LOCK_STALE_TIMEOUT` | `300` | Age at which a pid-less legacy lock counts as stale |
 | `GOTOOLS_NO_LOCK` | *(unset)* | `1` skips locking entirely — only for CI with serial workspace guarantees |
 
+The lock file (`.gotools.flock` in the tools dir) is local state and must not be
+committed: `init` adds it to `.gitignore` in a git repository, and every other
+command warns when it is not ignored.
+
 Stale locks are detected automatically and removed before waiting:
 the lock records its holder's PID, and a lock whose process is dead is
 stale no matter its age (a *live* holder is never stale). Legacy locks

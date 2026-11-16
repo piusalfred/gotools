@@ -905,3 +905,65 @@ func TestBuildingTwiceDoesNotShareARunsState(t *testing.T) {
 		t.Fatalf("the run used the wrong Context: A=%v B=%v out=%q", files(t, dirA), files(t, dirB), outB.String())
 	}
 }
+
+// Without the lock nothing else creates the tools directory, and the
+// fingerprint is written into it: init on a fresh project must still work.
+func TestInitWithoutALockCreatesTheToolsDirectory(t *testing.T) {
+	dir := t.TempDir()
+
+	o := initIn(t, dir, opts{environ: []string{"GOTOOLS_NO_LOCK=1"}}, nil)
+	if o.runErr != nil {
+		t.Fatal(o.runErr)
+	}
+
+	if !exists(filepath.Join(dir, "tools", ".gotools.fingerprint")) {
+		t.Fatal("no fingerprint was written")
+	}
+
+	if exists(filepath.Join(dir, "tools", ".gotools.flock")) {
+		t.Fatal("a lock file appeared although locking is off")
+	}
+}
+
+// init on a directory that has tools but no manifest writes the first manifest
+// from them: that is how a lost manifest is rebuilt.
+func TestInitRebuildsTheManifestFromToolsOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(
+		t,
+		filepath.Join(dir, "tools", "x.mod"),
+		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n",
+	)
+
+	if o := initIn(t, dir, opts{}, nil); o.runErr != nil {
+		t.Fatal(o.runErr)
+	}
+
+	if tl, ok := readManifest(t, dir).Tool("x"); !ok || tl.Version != "v1.5.0" {
+		t.Fatalf("tool = %+v", tl)
+	}
+}
+
+// Running init again is not a rebuild: the manifest that exists is the truth.
+func TestInitAgainDoesNotAdoptWhatTheManifestDoesNotList(t *testing.T) {
+	dir := t.TempDir()
+
+	if o := initIn(t, dir, opts{}, nil); o.runErr != nil {
+		t.Fatal(o.runErr)
+	}
+
+	writeFile(
+		t,
+		filepath.Join(dir, "tools", "x.mod"),
+		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n",
+	)
+
+	o := initIn(t, dir, opts{}, nil)
+	if o.runErr != nil {
+		t.Fatal(o.runErr)
+	}
+
+	if len(manifestTools(t, dir)) != 0 || !strings.Contains(o.err, "x  example.com/a/x@v1.5.0") {
+		t.Fatalf("tools = %v, stderr = %s", manifestTools(t, dir), o.err)
+	}
+}

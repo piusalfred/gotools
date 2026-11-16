@@ -30,7 +30,7 @@ internal/            # the implementation, one self-standing package per concern
   command/           # Command interface (Build -> *urfave.Command), Spec, Context, and
                      #   one file per command: init, install, sync, migrate, version,
                      #   info, check, config, remove, rename, upgrade, list, exec,
-                     #   uninstall, purge, doctor, self-update
+                     #   uninstall, purge, doctor, self-update, import-gobin
   config/            # layered settings on koanf: default < manifest < env < overrides;
                      #   Keys, ParseSetting, FormatSetting for `config`
   manifest/          # .gotools.json: Parse/Load/Render/Flush, tool store, Get/Set
@@ -41,6 +41,9 @@ internal/            # the implementation, one self-standing package per concern
   selfupdate/        # Source (releases), Updater (download, verify checksum, swap, roll back)
   modparser/         # go.mod parsing on golang.org/x/mod/modfile
   fingerprint/       # the sync fingerprint (+ file adapter)
+  binfo/             # Reader of a Go binary's build info (never runs it), Scan of a directory
+  versioncheck/      # Compare (is a recorded gotools version too far from this one), Stamp
+  gitignore/         # FindRepo, Ignored (reads the ignore files, no git), Add an entry atomically
   lock/              # flock(2) project lock (Locker, FileLocker, With)
   tracer/            # exec trace, JSON Lines (Tracer, FileTracer, Nop)
   format/            # Formatter (text, JSON) and the Document each command builds
@@ -211,6 +214,28 @@ builds itself with itself. `bin/` is git-ignored.
   say so in their params (`SyncParams.Unlocked`). The kernel releases the flock
   when the holder dies, so there is no stale-lock logic. `GOTOOLS_NO_LOCK=1`
   skips it. A fake `Locker` for tests returns `lock.New(release)`.
+- **The lock file is not committed.** `init` in a git repository appends
+  `.gotools.flock` to the project's `.gitignore` (`Context.ignoreLock`; a
+  failure is a warning, `--dry-run` writes nothing) and `Load` warns, for every
+  other command, when the file is not ignored (`warnUnignoredLock`;
+  `internal/gitignore` reads the ignore files and never runs git, so a global
+  excludes file is not seen). init sets `keepQuietAboutGitignore` so it does not
+  warn about what it fixes.
+- **The writing version is recorded.** The manifest (`gotools_version`,
+  `Manifest.Writer`) and the fingerprint (a fifth field, `Fingerprint.Writer`)
+  name the gotools that wrote them. `Context.Flush` and `fingerprintParams` stamp
+  with `versioncheck.Stamp`, which never lowers a later recorded version and
+  records nothing for a build that is not semver. `Load` warns through
+  `warnVersionDrift` (any difference: newer writer means self-update, older means
+  sync; manifest first, then fingerprint). The writer is not part of the fingerprint's
+  state (`Fingerprint.Same`), so an upgrade does not make a project look changed;
+  `stampStale` makes online `sync` do one full run to record the new version,
+  offline never writes.
+- **import-gobin.** Reads each GOBIN binary's build info with `internal/binfo`
+  (never executes it) and installs `package@version` through `Context.Install`,
+  one binary at a time under one lock. A binary that cannot be imported, or
+  whose install fails, is skipped and reported; only a cancelled run or an
+  unknown named binary (exit 5) is an error.
 - **Timeouts.** Network-bound go calls (`go get`, `mod tidy`, `list -m`) run
   through `Context.Network()`, bounded by `GOTOOLS_OPERATION_TIMEOUT` (default
   120s, 0 disables). A `*gocmd.TimeoutError` becomes exit 3 via `timeoutOr`.
@@ -259,9 +284,17 @@ builds itself with itself. `bin/` is git-ignored.
   when tracing is on (`Context.Tracer`).
 - **sync** reconciles disk and manifest: fingerprint fast path (tool list +
   strategy + Go version + module prefix, order-independent), tidy per strategy,
-  discovery of tools on disk, drift reinstall (`--jobs N` for split/module),
+  drift reinstall (`--jobs N` for split/module),
   auto-migration when the disk layout differs from the manifest. The
-  fingerprint is written only after a successful sync.
+  fingerprint is written only after a successful sync. **The manifest rules**
+  (`syncRun.manifestRules`: a manifest file exists, and this is not init's first
+  write, `SyncParams.Rebuild`): a tool in the tools directory that it does not
+  list (a stray) is never added, never tidied, and keeps the online fast path
+  from saying "up to date" (`hasStrays`). On a terminal each is asked about and
+  a yes runs `Tools().Remove` (`reviewStrays`); without one, or on a dry run, it
+  is only reported (`reportStrays`) and nothing is deleted. With no manifest file
+  the directory is the only record, so sync rebuilds the manifest from it
+  (`discoverFromDisk`).
 - **stdin pipe mode.** `gotools` with no command and piped stdin installs the
   listed tools (`command.Piped`, `parseStdinSpecs`): every line is validated before anything is
   installed; a terminal or `/dev/null` shows usage.

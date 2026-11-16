@@ -41,6 +41,7 @@ import (
 	"github.com/piusalfred/gotools/internal/modparser"
 	"github.com/piusalfred/gotools/internal/strategy"
 	"github.com/piusalfred/gotools/internal/tools"
+	"github.com/piusalfred/gotools/internal/versioncheck"
 )
 
 // The sync command's name, flags and help text.
@@ -163,6 +164,10 @@ type SyncParams struct {
 	// Jobs is how many tools reinstall at once; 0 leaves it to the jobs
 	// setting.
 	Jobs int
+	// Rebuild takes the tools directory as the truth although a manifest file
+	// exists: init just wrote one from nothing, in a directory that already had
+	// tools, and those are what it is rebuilt from.
+	Rebuild bool
 	// Unlocked syncs without taking the project lock: the caller holds it, or
 	// this is a dry run that must not create the lock file in a tools
 	// directory that does not exist yet.
@@ -174,6 +179,18 @@ type syncRun struct {
 	dryRun bool
 	target string // the Go version modfiles declare
 	jobs   int
+	// manifestRules reports that a manifest file exists, so it is the truth: a
+	// tool in the tools directory that it does not list is reported and left
+	// alone. Without one, the directory is all there is to rebuild it from.
+	manifestRules bool
+}
+
+// strayTool reports that the tools directory holds a tool the manifest, which
+// rules, does not list. Sync does not touch it.
+func (c *Context) strayTool(r syncRun, name string) bool {
+	_, listed := c.Manifest.Tool(name)
+
+	return r.manifestRules && !listed
 }
 
 // Sync reconciles the tools directory with the manifest. The project must be
@@ -210,7 +227,7 @@ func (c *Context) Sync(ctx context.Context, p SyncParams) error {
 		}
 	}
 
-	r := syncRun{dryRun: p.DryRun, target: target, jobs: jobs}
+	r := syncRun{dryRun: p.DryRun, target: target, jobs: jobs, manifestRules: c.HasManifest && !p.Rebuild}
 
 	if p.Unlocked {
 		return c.syncLocked(ctx, r)
@@ -243,7 +260,10 @@ func (c *Context) syncLocked(ctx context.Context, r syncRun) error {
 		return c.Migrate(ctx, MigrateParams{To: l.Strategy})
 	}
 
-	if !r.dryRun && c.syncUpToDate(r.target) {
+	// A stray tool is a disagreement the user has not settled: keep saying so
+	// (and asking), rather than letting the fingerprint, which saw the files as
+	// they were, call everything up to date.
+	if !r.dryRun && c.syncUpToDate(r.target) && !c.hasStrays(r) && !c.stampStale() {
 		_, _ = fmt.Fprintln(out, "✅ Tools up to date.")
 
 		return nil
@@ -259,7 +279,7 @@ func (c *Context) syncLocked(ctx context.Context, r syncRun) error {
 		return err
 	}
 
-	if err := c.discoverFromDisk(r); err != nil {
+	if err := c.discoverFromDisk(ctx, r); err != nil {
 		return err
 	}
 
@@ -275,6 +295,12 @@ func (c *Context) syncLocked(ctx context.Context, r syncRun) error {
 		return err
 	}
 
+	if c.HasManifest && versioncheck.Stamp(c.Version, c.Manifest.Writer) != c.Manifest.Writer {
+		if err := c.Flush(); err != nil {
+			return err
+		}
+	}
+
 	if err := c.Record(ctx); err != nil {
 		return ierrors.New(ierrors.Generic, "Could not write the fingerprint: %v", err)
 	}
@@ -288,12 +314,30 @@ func (c *Context) syncLocked(ctx context.Context, r syncRun) error {
 	return nil
 }
 
+// stampStale reports whether the manifest or the fingerprint records an older
+// gotools than this one, so a sync that has nothing else to do still rewrites
+// them and the version warning stops. Offline sync never writes, so it does not
+// ask.
+func (c *Context) stampStale() bool {
+	if versioncheck.Stamp(c.Version, c.Manifest.Writer) != c.Manifest.Writer {
+		return true
+	}
+
+	if _, err := c.Fingerprint.Read(); err != nil {
+		return false
+	}
+
+	recorded := c.recordedWriter()
+
+	return versioncheck.Stamp(c.Version, recorded) != recorded
+}
+
 // syncUpToDate is the fast path: the fingerprint matches and every modfile
 // still exists with the manifest's version, which catches hand edits that
 // bypassed the manifest.
 func (c *Context) syncUpToDate(target string) bool {
 	recorded, err := c.Fingerprint.Read()
-	if err != nil || recorded != c.Fingerprint.Generate(c.fingerprintParams(target)) {
+	if err != nil || !recorded.Same(c.Fingerprint.Generate(c.fingerprintParams(target))) {
 		return false
 	}
 
@@ -427,6 +471,11 @@ func (c *Context) tidySplit(ctx context.Context, r syncRun) error {
 			continue
 		}
 
+		// Not the manifest's: do not rewrite its go directive or tidy it.
+		if c.strayTool(r, strings.TrimSuffix(n, ".mod")) {
+			continue
+		}
+
 		if r.dryRun {
 			_, _ = fmt.Fprintf(c.Stdout, "  [dry-run] Would tidy %s\n", n)
 
@@ -550,21 +599,15 @@ func (c *Context) tidyModules(ctx context.Context, r syncRun) error {
 	}
 
 	for _, e := range entries {
-		n := e.Name()
-		if strings.HasPrefix(n, ".") {
+		// A module tool is a directory holding a go.mod, and it is the manifest's:
+		// a stray one is not tidied or rewritten.
+		n, ok := toolNameOnDisk(strategy.Module, dir, e.Name())
+		if !ok || c.strayTool(r, n) {
 			continue
 		}
 
 		sub := filepath.Join(dir, n)
 		modfile := filepath.Join(sub, "go.mod")
-
-		if fi, err := os.Stat(sub); err != nil || !fi.IsDir() {
-			continue
-		}
-
-		if fi, err := os.Stat(modfile); err != nil || !fi.Mode().IsRegular() {
-			continue
-		}
 
 		if r.dryRun {
 			_, _ = fmt.Fprintf(c.Stdout, "  [dry-run] Would tidy %s\n", n)
@@ -588,12 +631,33 @@ func (c *Context) tidyModules(ctx context.Context, r syncRun) error {
 	return nil
 }
 
-// discoverFromDisk adds tools that the tools directory declares but the
-// manifest does not know about. A dry run only reports.
-func (c *Context) discoverFromDisk(r syncRun) error {
+// discoverFromDisk deals with tools that the tools directory declares but the
+// manifest does not list. When a manifest file exists it is the truth: they are
+// never added, so reverting the manifest, or a merge that drops an entry, is
+// not undone by the next sync: on a terminal each one is asked about and may be
+// deleted (see reviewStrays), otherwise it is reported and left alone. Without a manifest
+// file the directory is all there is, so they are added: that rebuilds a lost
+// manifest. A dry run only reports.
+func (c *Context) discoverFromDisk(ctx context.Context, r syncRun) error {
 	specs, err := c.ToolsOnDisk()
 	if err != nil {
 		_, _ = fmt.Fprintf(c.Stderr, "⚠️  Some tools on disk could not be read: %v\n", err)
+	}
+
+	if r.manifestRules {
+		strays := c.strays(specs)
+
+		if len(strays) == 0 {
+			return nil
+		}
+
+		if c.Interactive && !r.dryRun {
+			return c.reviewStrays(ctx, strays)
+		}
+
+		c.reportStrays(strays)
+
+		return nil
 	}
 
 	added := 0
@@ -631,6 +695,96 @@ func (c *Context) discoverFromDisk(r syncRun) error {
 	_, _ = fmt.Fprintf(c.Stdout, "✅ Added %d tool(s) to manifest.\n", added)
 
 	return nil
+}
+
+// hasStrays reports whether the manifest rules and the tools directory holds a
+// tool it does not list. A modfile that cannot be read is not a stray here: sync
+// reports it when it reads the directory.
+func (c *Context) hasStrays(r syncRun) bool {
+	if !r.manifestRules {
+		return false
+	}
+
+	// The error lists entries that could not be read; the full sync reports them.
+	specs, _ := c.ToolsOnDisk()
+
+	return len(c.strays(specs)) > 0
+}
+
+// strays are the tools the tools directory declares that the manifest does not
+// list.
+func (c *Context) strays(specs []modparser.Spec) []modparser.Spec {
+	var out []modparser.Spec
+
+	for _, s := range specs {
+		if _, ok := c.Manifest.Tool(s.Name); !ok {
+			out = append(out, s)
+		}
+	}
+
+	return out
+}
+
+// reviewStrays asks, for each stray tool, whether to delete it. Yes removes what
+// the tool has in the tools directory (its modfile and sum, its directory, or its
+// directive), exactly as `remove` does; anything else keeps it, and sync leaves
+// it alone.
+func (c *Context) reviewStrays(ctx context.Context, strays []modparser.Spec) error {
+	out := c.Stdout
+
+	for _, s := range strays {
+		_, _ = fmt.Fprintf(
+			out,
+			"❓ %s (%s@%s) is in %s/ but not in %s, which is the source of truth.\n   Delete it from %s/? [y/N] ",
+			s.Name,
+			s.Package,
+			s.Version,
+			c.Config.Dir,
+			config.ManifestFile,
+			c.Config.Dir,
+		)
+
+		if answer := strings.ToLower(strings.TrimSpace(c.readLine())); answer != "y" && answer != "yes" {
+			_, _ = fmt.Fprintf(
+				out,
+				"   Kept %s. Sync leaves it alone; '%s remove %s' deletes it later.\n",
+				s.Name,
+				c.Program,
+				s.Name,
+			)
+
+			continue
+		}
+
+		// The manager says what it removed.
+		if _, err := c.Tools().Remove(ctx, s.Name); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// reportStrays says which tools are in the tools directory but not in the
+// manifest, and how to settle each: keep it (install) or drop it (remove). It
+// is what a run that cannot ask (no terminal, a dry run) does.
+func (c *Context) reportStrays(strays []modparser.Spec) {
+	w, prog := c.Stderr, c.Program
+
+	_, _ = fmt.Fprintf(
+		w,
+		"⚠️  %d tool(s) in %s/ are not in %s. The manifest is the source of truth, so sync leaves them alone:\n",
+		len(strays),
+		c.Config.Dir,
+		config.ManifestFile,
+	)
+
+	for _, s := range strays {
+		_, _ = fmt.Fprintf(w, "     %s  %s@%s\n", s.Name, s.Package, s.Version)
+	}
+
+	_, _ = fmt.Fprintf(w, "   Keep one:  %s install <name> <package>@<version>\n", prog)
+	_, _ = fmt.Fprintf(w, "   Drop one:  %s remove <name>\n", prog)
 }
 
 // reinstallList lists manifest tools whose modfile is missing or carries a

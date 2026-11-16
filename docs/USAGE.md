@@ -64,6 +64,7 @@ builds the tool without executing it. Tools run only via `exec`, `check` and
 | :--- | :--- |
 | `init [flags]` | Bootstrap the project. |
 | `install [name] <pkg>` | Install a new tool. One tool gets one name: if the package is already managed under another name at the same version (any version in `unified`), install refuses and points at `rename`; at a different version in `split`/`module` it is a separate tool, and on a terminal install asks whether to add it, upgrade the existing one, rename it, or skip. Same name + package refuses without `--force`. |
+| `import-gobin [binary...]` | Take over tools you installed with `go install`. Reads the package and module version each Go binary in `GOBIN` records (never runs it) and installs that package@version, like `install`. With no arguments it only lists; name binaries or pass `--all`. A binary that cannot be imported is skipped and reported; the rest carry on. See [Importing from GOBIN](#importing-from-gobin). |
 | `<stdin> \| gotools` | With no command, install the tools listed on stdin: `go install <pkg>@<ver>`, `<pkg>@<ver>` or `<name> <pkg>@<ver>` per line (blank lines and `#` comments skipped). Every line is checked before anything installs. Works with pipes, heredocs and `< file`. |
 | `exec <name> [args]` | Run a managed tool. |
 | `sync` | Sync state to `.gotools.json`. Auto-migrates on strategy mismatch; skips work via a state fingerprint (tool list, settings and the content of the tool files) when nothing changed. |
@@ -92,6 +93,46 @@ builds the tool without executing it. Tools run only via `exec`, `check` and
 | `--prefix=` | *(auto)* | Module path prefix. |
 | `--no-migrate` | *(off)* | Leave the root `go.mod` untouched (skip adoption). |
 | `--dry-run` | *(off)* | Print the adoption plan without writing anything. |
+
+### The lock file and git
+
+`init` detects a git repository (a `.git` directory or file in the project or
+any parent) and adds `.gotools.flock` to the project's `.gitignore`, with a
+comment saying why. The lock file holds a pid and changes on every run, so it is
+local state: committed, it is noise and a merge conflict. The line is added once,
+the file is created if missing, and nothing is written when the lock is already
+ignored (by `.gitignore` in the project, a parent or the tools directory, or by
+`.git/info/exclude`), when there is no repository, or when `GOTOOLS_NO_LOCK=1`.
+`--dry-run` says what it would add. If `.gitignore` cannot be written (a symlink,
+say), `init` warns and carries on.
+
+Every other command warns on stderr when the project is in a git repository and
+the lock file is not ignored, and says to add the line or run `init`. The check
+reads the ignore files; it does not run git, so it does not see a global excludes
+file.
+
+### Which gotools wrote the files
+
+`.gotools.json` records the gotools version that last wrote it
+(`"gotools_version"`), and `.gotools.fingerprint` records the version that wrote
+it as a last field. They are written by `sync` and by every command that changes
+the manifest, and never lowered: a gotools older than the recorded version
+leaves the stamp alone. A development build records nothing.
+
+Every command warns on stderr when this gotools is not the one that wrote the
+files, a patch version included, because the two may disagree about the files.
+The warning names the fix:
+
+- the files were written by a **newer** gotools than this one: this one may
+  misread them, and rewriting the manifest drops keys it does not know. Run
+  `gotools self-update`. If the release is still behind the recorded version,
+  upgrade further or ask whoever wrote the files which build to use.
+- the files were written by an **older** gotools than this one: run
+  `gotools sync`, which records this version.
+
+The first `sync` after an upgrade does the full sync once, instead of the fast
+path, to record the new version; `sync --offline` never writes, so it does not.
+The manifest changes on an upgrade, which is the point: commit it.
 
 ### Adopting an existing project
 
@@ -132,13 +173,51 @@ that end up in your `go.mod` can therefore differ from the ones the tools had in
 their own modfiles, some raised and some lowered. Review the `go.mod` diff
 before you commit it.
 
+### Importing from GOBIN
+
+`import-gobin` moves tools you installed with `go install` under gotools. Every
+Go binary records the package and module version it was built from; gotools
+reads that from the file (it never runs the binary) and installs the same
+package@version into the project under the binary's name. The binary is not
+copied: gotools builds tools from source, and `go.sum` and the checksum database
+verify the module as for any `install`.
+
+```text
+$ gotools import-gobin
+📋 Binaries in /home/me/go/bin:
+   goimports                golang.org/x/tools/cmd/goimports@v0.30.0
+   mytool                   skip: built from a working tree, so it has no version
+
+1 can be imported. Name the ones you want, or run: gotools import-gobin --all
+$ gotools import-gobin --all
+✅ Imported 1 tool(s).
+```
+
+The directory is `GOBIN`, else the first `GOPATH` entry's `bin`, unless
+`--from <dir>` names another. A binary is skipped, with the reason, and the run
+carries on when it is not a Go binary, was built from a working tree, a modified
+tree or with a `replace` directive (no version to pin), is already managed (by
+name, or the same package under another name), has an unusable name, in `unified`
+shares a module with an earlier binary at another version, or when go could not
+install it. Naming a binary that is not there is exit 5, after the others are
+done. Importing needs the network (exit 6 offline); listing and `--dry-run` do not.
+
 ### Good to know
 
-- **`sync` takes the disk as it finds it.** A tool whose modfile is in the tools
-  directory but not in the manifest is added to the manifest (`✚ … discovered
-  from disk`). Deleting a tool's entry from `.gotools.json` by hand does not
-  remove it: the next `sync` finds the modfile and adds the tool back. Use
-  `gotools remove <name>`, which removes both.
+- **The manifest is the source of truth for `sync`.** A tool in the tools
+  directory (its modfile, its directory, or its directive in `unified`) that
+  `.gotools.json` does not list is never added back. On a terminal, `sync` asks
+  about each one: `y` deletes what it has in the tools directory, exactly as
+  `gotools remove` would; anything else keeps it and `sync` leaves it alone.
+  Without a terminal, and with `--dry-run`, it only reports them on stderr with
+  the two ways out (`install` to keep one, `remove` to drop one) and deletes
+  nothing. A tool `sync` leaves alone is not tidied or rewritten, and `sync`
+  keeps reporting it until you settle it; `sync --offline` does not look.
+  So reverting `.gotools.json` alone, or a merge that drops an entry, is not
+  undone by the next `sync`. The one exception is a missing manifest: with no
+  `.gotools.json` at all (and for the first `init` that writes one) the tools
+  directory is all there is, and `sync` rebuilds the manifest from it
+  (`✚ … discovered from disk`).
 - **`gotools config KEY=VALUE` creates the manifest** when there is none, in the
   current directory, and says `Created .gotools.json`. Run `init` first if you
   want the rest of the setup.

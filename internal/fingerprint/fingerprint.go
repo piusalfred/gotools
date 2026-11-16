@@ -43,6 +43,9 @@ import (
 // built for.
 const FileName = ".gotools.fingerprint"
 
+// dirPerm is the mode of a directory Write creates, as the project lock makes it.
+const dirPerm = 0o755
+
 // ErrNone is returned by Read when nothing has been written.
 var ErrNone = errors.New("no fingerprint recorded")
 
@@ -69,16 +72,27 @@ type Params struct {
 	Strategy     string
 	GoVersion    string
 	ModulePrefix string
+	// Writer is the gotools version recording it. It is not part of the
+	// state: an upgrade alone does not make a project look changed.
+	Writer string
 }
 
 // Fingerprint is a deterministic digest of Params. Any change to the state
 // yields a different value. It is comparable: two fingerprints are equal when
-// every field is.
+// every field is, except Writer: use Same to compare what they cover.
 type Fingerprint struct {
 	Digest       string // hex SHA-256 of the tool list and the files
 	Strategy     string
 	GoVersion    string
 	ModulePrefix string
+	Writer       string // the gotools version that recorded it; empty if unknown
+}
+
+// Same reports whether f and other cover the same state, whoever recorded them.
+func (f Fingerprint) Same(other Fingerprint) bool {
+	f.Writer, other.Writer = "", ""
+
+	return f == other
 }
 
 // New digests params. The result does not depend on the order of
@@ -105,6 +119,7 @@ func New(params Params) Fingerprint {
 		Strategy:     params.Strategy,
 		GoVersion:    params.GoVersion,
 		ModulePrefix: params.ModulePrefix,
+		Writer:       params.Writer,
 	}
 }
 
@@ -135,27 +150,43 @@ func compare(a, b Tool) int {
 	return 0
 }
 
-// String is the recorded form: digest|strategy|go version|module prefix.
+// String is the recorded form: digest|strategy|go version|module prefix, then
+// |gotools version when it is known.
 func (f Fingerprint) String() string {
-	return f.Digest + "|" + f.Strategy + "|" + f.GoVersion + "|" + f.ModulePrefix
+	out := f.Digest + "|" + f.Strategy + "|" + f.GoVersion + "|" + f.ModulePrefix
+	if f.Writer != "" {
+		out += "|" + f.Writer
+	}
+
+	return out
 }
 
-// recordFields is the number of |-separated fields in the recorded form.
-const recordFields = 4
+// Fields in the recorded form: the first four are the state, the fifth (absent
+// in records older gotools wrote) is who recorded it.
+const (
+	stateFields  = 4
+	recordFields = 5
+)
 
-// Parse reads the form String writes.
+// Parse reads the form String writes, and the form without a writer.
 func Parse(s string) (Fingerprint, error) {
 	parts := strings.SplitN(strings.TrimSpace(s), "|", recordFields)
-	if len(parts) != recordFields || parts[0] == "" {
+	if len(parts) < stateFields || parts[0] == "" {
 		return Fingerprint{}, ierrors.New(ierrors.Environment, "malformed fingerprint %q", s)
 	}
 
-	return Fingerprint{
+	fp := Fingerprint{
 		Digest:       parts[0],
 		Strategy:     parts[1],
 		GoVersion:    parts[2],
 		ModulePrefix: parts[3],
-	}, nil
+	}
+
+	if len(parts) == recordFields {
+		fp.Writer = parts[4]
+	}
+
+	return fp, nil
 }
 
 // Fingerprinter generates and records a fingerprint.
@@ -203,8 +234,14 @@ func (f FileFingerprinter) Read() (Fingerprint, error) {
 }
 
 // Write implements Fingerprinter. The record is written to a temporary file
-// and renamed, so a reader never sees a partial one.
+// and renamed, so a reader never sees a partial one. The directory is created
+// when missing: the project lock normally does that, and a project that takes
+// no lock (GOTOOLS_NO_LOCK) has no one else to.
 func (f FileFingerprinter) Write(fp Fingerprint) error {
+	if err := os.MkdirAll(filepath.Dir(f.path), dirPerm); err != nil {
+		return ierrors.Wrap(ierrors.Generic, "create the fingerprint directory", err)
+	}
+
 	tmp, err := os.CreateTemp(filepath.Dir(f.path), filepath.Base(f.path)+".tmp.*")
 	if err != nil {
 		return ierrors.Wrap(ierrors.Generic, "create temporary fingerprint", err)

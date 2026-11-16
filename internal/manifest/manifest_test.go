@@ -549,3 +549,35 @@ func TestSetRefusesABadValueAndChangesNothing(t *testing.T) {
 		t.Errorf("manifest changed: %+v", m)
 	}
 }
+
+func TestWriterRoundTripsAndIsOmittedWhenUnknown(t *testing.T) {
+	t.Parallel()
+
+	m := manifest.New()
+	m.Strategy = "split"
+
+	b, err := m.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(string(b), "gotools_version") {
+		t.Errorf("an unknown writer must not be written:\n%s", b)
+	}
+
+	m.Writer = "v0.7.1"
+
+	b, err = m.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(b), "  \"version\": 1,\n  \"gotools_version\": \"v0.7.1\",\n  \"strategy\"") {
+		t.Errorf("the key belongs right after version:\n%s", b)
+	}
+
+	res, err := manifest.Parse(b, "m")
+	if err != nil || res.Manifest.Writer != "v0.7.1" {
+		t.Fatalf("parsed %+v, %v", res.Manifest, err)
+	}
+}

@@ -85,7 +85,10 @@ type Tool struct {
 // the file does not set them. Settings carries the defaults for keys the file
 // leaves out, and Render writes them all.
 type Manifest struct {
-	Schema       int
+	Schema int
+	// Writer is the gotools version that last wrote the file; empty when the
+	// file records none (an older gotools, or a development build).
+	Writer       string
 	Strategy     string
 	Dir          string
 	GoVersion    string
@@ -122,6 +125,7 @@ func New() *Manifest {
 // document is the file's shape. Field order is the key order Render writes.
 type document struct {
 	Version      jsontext.Value `json:"version"`
+	Writer       string         `json:"gotools_version,omitzero"`
 	Strategy     string         `json:"strategy"`
 	Dir          string         `json:"dir"`
 	GoVersion    string         `json:"go_version"`
@@ -257,6 +261,7 @@ func (t toolsDoc) MarshalJSONTo(enc *jsontext.Encoder) error {
 // rawManifest is what Parse reads. Unknown keys are accepted and dropped.
 type rawManifest struct {
 	Version      jsontext.Value            `json:"version"`
+	Writer       string                    `json:"gotools_version"`
 	Strategy     string                    `json:"strategy"`
 	Dir          string                    `json:"dir"`
 	GoVersion    string                    `json:"go_version"`
@@ -293,6 +298,7 @@ func Parse(data []byte, name string) (ParseResponse, error) {
 
 	m := &Manifest{
 		Schema:       schemaOf(raw.Version),
+		Writer:       raw.Writer,
 		Strategy:     raw.Strategy,
 		Dir:          raw.Dir,
 		GoVersion:    raw.GoVersion,
@@ -399,6 +405,7 @@ func (m *Manifest) Render() ([]byte, error) {
 
 	doc := document{
 		Version:      jsontext.Value("1"),
+		Writer:       m.Writer,
 		Strategy:     orDefault(m.Strategy, string(config.DefaultStrategy)),
 		Dir:          dir,
 		GoVersion:    orDefault(m.GoVersion, config.DefaultGoVersion),

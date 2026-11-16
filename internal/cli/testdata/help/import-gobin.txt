@@ -1,0 +1,30 @@
+Usage: gotools import-gobin [options] [binary...]
+
+  Take over the Go tools you installed with 'go install'. Every Go binary
+  records the package and module version it was built from; import-gobin reads
+  that (it never runs the binary) and installs the same package@version into the
+  project, under the binary's name, like 'install' does. The binary itself is
+  not copied.
+
+  With no arguments it only lists what is in the directory and what could be
+  imported. Name the binaries to import, or pass --all for every importable one.
+  The directory is GOBIN, else the first GOPATH entry's bin, unless --from names
+  another.
+
+  A binary that cannot be imported is skipped, and the rest carry on: it was not
+  built from a released version (a working tree, a modified tree, a replace
+  directive), it is not a Go binary, it is already managed, or go could not
+  install it. The summary says why for each. Naming a binary that is not in the
+  directory is an error (exit 5) once the others are done.
+
+  Examples:
+    gotools import-gobin
+    gotools import-gobin goimports staticcheck
+    gotools import-gobin --all --dry-run
+    gotools import-gobin --all --from ~/bin
+
+  Options:
+    --from <string>  Directory holding the binaries (default: GOBIN, else GOPATH/bin)
+    --all            Import every importable binary
+    --dry-run        Show what would be imported without making changes
+    --offline        Refuse to import (needs the network), exit 6

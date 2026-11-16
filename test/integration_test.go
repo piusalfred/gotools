@@ -575,3 +575,110 @@ func TestExecRunsInTheInvocationDirectory(t *testing.T) {
 		})
 	}
 }
+
+// import-gobin takes over what 'go install' put in GOBIN, from the version the
+// binary records, skips what has none, and init keeps the lock file out of git.
+func TestImportGobinAndGitignore(t *testing.T) {
+	gobin := t.TempDir()
+	install := exec.Command("go", "install", "github.com/daixiang0/gci@v0.13.5")
+	install.Env = append(os.Environ(), "GOBIN="+gobin)
+
+	if out, err := install.CombinedOutput(); err != nil {
+		t.Fatalf("go install: %v\n%s", err, out)
+	}
+
+	// Not a Go binary: skipped, whatever else happens.
+	if err := os.WriteFile(filepath.Join(gobin, "script"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := newProject(t)
+	if err := os.Mkdir(filepath.Join(p.dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out := p.ok("init", "--strategy=split")
+	contains(t, "init", out, "Added .gotools.flock to .gitignore")
+
+	if ign := p.read(".gitignore"); !strings.Contains(ign, ".gotools.flock") {
+		t.Fatalf(".gitignore = %q", ign)
+	}
+
+	// The lock file now exists and is ignored: no command warns about it.
+	if _, errs, rc := p.run("", "list"); rc != 0 || strings.Contains(errs, "not ignored") {
+		t.Fatalf("list: rc=%d stderr=%s", rc, errs)
+	}
+
+	out = p.ok("import-gobin", "--from", gobin)
+	contains(t, "listing", out, "gci", "github.com/daixiang0/gci@v0.13.5", "1 can be imported")
+
+	if p.listed("gci") {
+		t.Fatal("listing imported a tool")
+	}
+
+	out = p.ok("import-gobin", "--all", "--from", gobin)
+	contains(t, "import", out, "Imported 1 tool(s)", "script", "not a Go binary")
+
+	if !p.listed("gci") || !strings.Contains(p.read(".gotools.json"), "v0.13.5") {
+		t.Fatal("gci was not imported at the version the binary recorded")
+	}
+
+	p.execHelp("gci")
+
+	_, errs, rc := p.run("", "import-gobin", "--from", gobin, "missing")
+	if rc != 5 {
+		t.Fatalf("a missing binary: rc=%d stderr=%s", rc, errs)
+	}
+}
+
+// Reverting the manifest alone does not make sync adopt the tool from the tools
+// directory: the manifest is the truth. Without a terminal sync only reports it,
+// and 'remove' still deletes it.
+func TestManifestRulesOverToolsOnDisk(t *testing.T) {
+	for _, st := range []string{"split", "module", "unified"} {
+		t.Run(st, func(t *testing.T) {
+			p := newProject(t)
+			p.ok("init", "--strategy="+st)
+
+			before, err := os.ReadFile(filepath.Join(p.dir, ".gotools.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			p.ok("install", "gci", "github.com/daixiang0/gci@v0.13.5")
+
+			// The user's steps: put the old manifest back, keep the tools directory.
+			if err := os.WriteFile(filepath.Join(p.dir, ".gotools.json"), before, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			out, errs, rc := p.run("", "sync")
+			if rc != 0 {
+				t.Fatalf("sync: rc=%d\n%s\n%s", rc, out, errs)
+			}
+
+			contains(
+				t,
+				"stderr",
+				errs,
+				"1 tool(s) in tools/ are not in .gotools.json",
+				"gci  github.com/daixiang0/gci@v0.13.5",
+			)
+
+			if strings.Contains(out, "discovered from disk") || p.read(".gotools.json") != string(before) {
+				t.Fatalf("sync adopted the tool:\n%s\n%s", out, p.read(".gotools.json"))
+			}
+
+			// It keeps saying so until the user settles it.
+			if again, _, _ := p.run("", "sync"); strings.Contains(again, "Tools up to date") {
+				t.Fatal("the fingerprint hid the stray tool")
+			}
+
+			p.ok("remove", "gci")
+
+			if _, errs, rc := p.run("", "sync"); rc != 0 || strings.Contains(errs, "not in .gotools.json") {
+				t.Fatalf("after remove: rc=%d stderr=%s", rc, errs)
+			}
+		})
+	}
+}
