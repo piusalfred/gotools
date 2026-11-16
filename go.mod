@@ -1,6 +1,6 @@
 module github.com/piusalfred/gotools
 
-go 1.27
+go 1.27.4
 
 require (
 	github.com/knadh/koanf/parsers/json v1.0.1
@@ -9,7 +9,7 @@ require (
 	github.com/knadh/koanf/providers/fs v1.0.1
 	github.com/knadh/koanf/v2 v2.4.1
 	github.com/urfave/cli/v3 v3.14.0
-	golang.org/x/mod v0.42.0
+	golang.org/x/mod v0.43.0
 )
 
 require (

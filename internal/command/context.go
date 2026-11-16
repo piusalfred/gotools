@@ -32,10 +32,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/piusalfred/gotools/internal/binfo"
 	"github.com/piusalfred/gotools/internal/config"
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 	"github.com/piusalfred/gotools/internal/fingerprint"
 	"github.com/piusalfred/gotools/internal/fsx"
+	"github.com/piusalfred/gotools/internal/gitignore"
 	"github.com/piusalfred/gotools/internal/gocmd"
 	"github.com/piusalfred/gotools/internal/goversion"
 	"github.com/piusalfred/gotools/internal/lock"
@@ -47,6 +49,7 @@ import (
 	"github.com/piusalfred/gotools/internal/tools"
 	"github.com/piusalfred/gotools/internal/tracer"
 	"github.com/piusalfred/gotools/internal/verify"
+	"github.com/piusalfred/gotools/internal/versioncheck"
 )
 
 // Context is what a command works on. The first group is handed in by the
@@ -75,6 +78,15 @@ type Context struct {
 	// Releases is where self-update looks for releases; the project's GitHub
 	// releases when its APIURL is empty.
 	Releases selfupdate.Source
+	// Binaries reads the build information of installed binaries
+	// (import-gobin); a real reader when nil.
+	Binaries binfo.Reader
+
+	// keepQuietAboutGitignore stops Load from warning that the lock file is
+	// not ignored: init is the command that fixes it.
+	keepQuietAboutGitignore bool
+
+	stdinReader *bufio.Reader // see readLine
 
 	Root     string             // the project root
 	Config   config.Config      // layout and settings, after every layer
@@ -126,8 +138,70 @@ func (c *Context) Load(_ context.Context, opts ...config.Option) error {
 	}
 
 	c.buildSeams()
+	c.warnUnignoredLock()
+	c.warnVersionDrift()
 
 	return nil
+}
+
+// warnVersionDrift adds a warning when the manifest, or failing that the
+// fingerprint, was written by a gotools whose version is far from this one. A
+// newer writer may have used what this build drops or misreads; an older one
+// may have left files this build does not expect. Either can make this run
+// disagree with the project, so the user hears it before trusting the result.
+func (c *Context) warnVersionDrift() {
+	if !c.HasManifest {
+		return
+	}
+
+	file, writer := config.ManifestFile, c.Manifest.Writer
+
+	if writer == "" {
+		if fp, err := c.Fingerprint.Read(); err == nil {
+			file, writer = filepath.Join(c.Config.Dir, fingerprint.FileName), fp.Writer
+		}
+	}
+
+	var what string
+
+	switch versioncheck.Compare(c.Version, writer) {
+	case versioncheck.WrittenByNewer:
+		what = fmt.Sprintf(
+			"a newer gotools (%s) than this one (%s), which may misread it or drop what it wrote: run '%s self-update' to upgrade this one",
+			writer,
+			c.Version,
+			c.Program,
+		)
+	case versioncheck.WrittenByOlder:
+		what = fmt.Sprintf("an older gotools (%s) than this one (%s): run '%s sync' to record this version",
+			writer, c.Version, c.Program)
+	default:
+		return
+	}
+
+	c.Warnings = append(c.Warnings, fmt.Sprintf("%s was written by %s.", file, what))
+}
+
+// warnUnignoredLock adds a warning when the project is in a git repository that
+// does not ignore the lock file. The file holds a pid and changes on every run;
+// committed, it is noise and a merge conflict. A project that takes no lock
+// never creates it.
+func (c *Context) warnUnignoredLock() {
+	if c.keepQuietAboutGitignore || !c.HasManifest || c.Config.Settings.NoLock {
+		return
+	}
+
+	repo, ok := gitignore.FindRepo(c.Root)
+	if !ok || gitignore.Ignored(repo, c.ToolsDir(), lock.FileName) {
+		return
+	}
+
+	c.Warnings = append(c.Warnings, fmt.Sprintf(
+		"%s is not ignored by git. It is local lock state and should not be committed: add '%s' to .gitignore (or run '%s init').",
+		filepath.Join(c.Config.Dir, lock.FileName),
+		lock.FileName,
+		c.Program,
+	))
 }
 
 // buildSeams fills the seams that depend on the configuration. A seam the caller
@@ -297,6 +371,8 @@ func (c *Context) Flush() error {
 		m.ModulePrefix = orDefault(m.Dir, config.DefaultDir)
 	}
 
+	m.Writer = versioncheck.Stamp(c.Version, m.Writer)
+
 	if err := m.Flush(c.ManifestPath()); err != nil {
 		return err
 	}
@@ -354,7 +430,18 @@ func (c *Context) fingerprintParams(goVersion string) fingerprint.Params {
 		Strategy:     string(c.Config.Strategy),
 		GoVersion:    goVersion,
 		ModulePrefix: c.ModulePrefix(),
+		Writer:       versioncheck.Stamp(c.Version, c.recordedWriter()),
 	}
+}
+
+// recordedWriter is the gotools version the fingerprint on disk names, or "".
+func (c *Context) recordedWriter() string {
+	fp, err := c.Fingerprint.Read()
+	if err != nil {
+		return ""
+	}
+
+	return fp.Writer
 }
 
 // toolFiles are the modfiles and sums in the tools directory, by content, so a
@@ -964,7 +1051,13 @@ func (c *Context) readLine() string {
 		return ""
 	}
 
-	answer, _ := bufio.NewReader(c.Stdin).ReadString('\n')
+	// One reader for the whole run: a second question must not lose the answer
+	// the first reader had already buffered.
+	if c.stdinReader == nil {
+		c.stdinReader = bufio.NewReader(c.Stdin)
+	}
+
+	answer, _ := c.stdinReader.ReadString('\n')
 
 	return answer
 }

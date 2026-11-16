@@ -6,6 +6,7 @@ Usage: gotools <command> [options]
 Commands:
   init                                     Bootstrap the project and adopt tools already declared in the root go.mod.
   install [name] <pkg>                     Install a new tool.
+  import-gobin [binary...]                 Import tools already installed with 'go install' (from GOBIN).
   sync                                     Sync tool state to match .gotools.json.
   migrate <unified|split|module>           Migrate to a different strategy.
   version                                  Show the gotools version.

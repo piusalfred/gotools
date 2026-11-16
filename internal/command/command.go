@@ -199,6 +199,7 @@ func All() []Command {
 	return []Command{
 		NewInit(),
 		NewInstall(),
+		NewImportGobin(),
 		NewSync(),
 		NewMigrate(),
 		NewVersion(),

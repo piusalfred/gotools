@@ -181,7 +181,7 @@ func TestMalformedRecordIsAnError(t *testing.T) {
 	}
 }
 
-func TestWriteReplacesAndFailsInAMissingDirectory(t *testing.T) {
+func TestWriteReplacesAndFailsWhereTheDirectoryCannotBeMade(t *testing.T) {
 	dir := t.TempDir()
 	f := fingerprint.NewFile(dir)
 
@@ -195,9 +195,16 @@ func TestWriteReplacesAndFailsInAMissingDirectory(t *testing.T) {
 		t.Fatalf("Read = %+v", got)
 	}
 
-	if err := fingerprint.NewFile(filepath.Join(dir, "no", "dir")).
+	// A missing directory is made (see TestFileWriteCreatesItsDirectory); one that
+	// cannot be, because a file is in the way, is an error.
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := fingerprint.NewFile(filepath.Join(blocker, "dir")).
 		Write(fingerprint.Fingerprint{Digest: "d"}); err == nil {
-		t.Fatal("missing directory accepted")
+		t.Fatal("a directory that cannot be made was accepted")
 	}
 }
 
@@ -307,5 +314,68 @@ func TestFileDigest(t *testing.T) {
 
 	if _, err := fingerprint.FileDigest(path + ".missing"); err == nil {
 		t.Fatal("a missing file has a digest")
+	}
+}
+
+// Write creates the directory it records in: a project that takes no lock has
+// no one else to create it.
+func TestFileWriteCreatesItsDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tools", "nested")
+	f := fingerprint.NewFile(dir)
+
+	want := fingerprint.New(fingerprint.Params{Strategy: "split"})
+	if err := f.Write(want); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := f.Read(); err != nil || got != want {
+		t.Fatalf("Read = %v, %v", got, err)
+	}
+}
+
+func TestWriterIsRecordedButIsNotPartOfWhatChanged(t *testing.T) {
+	t.Parallel()
+
+	base := fingerprint.Params{Strategy: "split", GoVersion: "1.24", ModulePrefix: "tools"}
+	older, newer := base, base
+	older.Writer, newer.Writer = "v0.7.1", "v0.8.0"
+
+	a, b := fingerprint.New(older), fingerprint.New(newer)
+
+	if a == b || !a.Same(b) {
+		t.Fatalf("a == b is %v, Same is %v: the writer differs but the state is the same", a == b, a.Same(b))
+	}
+
+	if !a.Same(fingerprint.New(base)) {
+		t.Error("a fingerprint with no writer should cover the same state")
+	}
+
+	changed := base
+	changed.Strategy = "module"
+
+	if a.Same(fingerprint.New(changed)) {
+		t.Error("a different strategy is a different state")
+	}
+
+	got, err := fingerprint.Parse(a.String())
+	if err != nil || got != a {
+		t.Fatalf("round trip = %+v, %v", got, err)
+	}
+}
+
+func TestParseReadsARecordWithoutAWriter(t *testing.T) {
+	t.Parallel()
+
+	got, err := fingerprint.Parse("abc|split|1.24|tools\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got.Writer != "" || got.Digest != "abc" || got.ModulePrefix != "tools" {
+		t.Fatalf("got %+v", got)
+	}
+
+	if got.String() != "abc|split|1.24|tools" {
+		t.Errorf("a record with no writer must read back as the old form, got %q", got.String())
 	}
 }

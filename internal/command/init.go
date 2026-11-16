@@ -23,6 +23,7 @@ package command
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	urfave "github.com/urfave/cli/v3"
 	"golang.org/x/mod/module"
@@ -30,7 +31,9 @@ import (
 	"github.com/piusalfred/gotools/internal/config"
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 	"github.com/piusalfred/gotools/internal/fsx"
+	"github.com/piusalfred/gotools/internal/gitignore"
 	"github.com/piusalfred/gotools/internal/goversion"
+	"github.com/piusalfred/gotools/internal/lock"
 	"github.com/piusalfred/gotools/internal/modparser"
 	"github.com/piusalfred/gotools/internal/strategy"
 )
@@ -69,6 +72,9 @@ type Init struct {
 	c     *Context
 	args  initArgs
 	adopt []modparser.Spec
+	// fresh: there was no manifest when init started, so init writes the first
+	// one, and the tools already in the tools directory are what it holds.
+	fresh bool
 }
 
 // NewInit returns the init command.
@@ -204,6 +210,9 @@ func (i *Init) before(ctx context.Context, cmd *urfave.Command) error {
 		return err
 	}
 
+	// init is what ignores the lock file, so Load need not warn about it.
+	c.keepQuietAboutGitignore = true
+
 	// Load the existing manifest first so running init again merges into it.
 	err := c.Load(ctx, config.WithOverrides(config.Overrides{
 		Strategy:  strategy.Strategy(a.strategy),
@@ -213,6 +222,8 @@ func (i *Init) before(ctx context.Context, cmd *urfave.Command) error {
 	if err != nil {
 		return err
 	}
+
+	i.fresh = !c.HasManifest
 
 	for _, w := range c.Warnings {
 		_, _ = fmt.Fprintf(c.Stderr, "  ⚠️  %s\n", w)
@@ -271,6 +282,8 @@ func (i *Init) run(ctx context.Context, _ *urfave.Command) error {
 			c.Config.Dir,
 		)
 
+		c.ignoreLock(true)
+
 		if i.args.noMigrate {
 			return nil
 		}
@@ -291,6 +304,8 @@ func (i *Init) run(ctx context.Context, _ *urfave.Command) error {
 			c.Config.Dir,
 		)
 
+		c.ignoreLock(false)
+
 		if i.args.noMigrate {
 			return nil
 		}
@@ -302,7 +317,7 @@ func (i *Init) run(ctx context.Context, _ *urfave.Command) error {
 // after syncs. A dry run takes no lock: the lock file would create the tools
 // directory.
 func (i *Init) after(ctx context.Context, _ *urfave.Command) error {
-	return i.c.Sync(ctx, SyncParams{DryRun: i.args.dryRun, Unlocked: i.args.dryRun})
+	return i.c.Sync(ctx, SyncParams{DryRun: i.args.dryRun, Unlocked: i.args.dryRun, Rebuild: i.fresh})
 }
 
 func firstSet(vals ...string) string {
@@ -313,4 +328,53 @@ func firstSet(vals ...string) string {
 	}
 
 	return ""
+}
+
+// lockIgnore is the .gitignore line for the project lock. The bare name matches
+// the file wherever the tools directory is, so a later change of --dir keeps it.
+func lockIgnore() gitignore.Entry {
+	return gitignore.Entry{
+		Pattern: lock.FileName,
+		Comment: "The gotools project lock: a pid that changes on every run. Local state, never committed.",
+	}
+}
+
+// ignoreLock keeps the lock file out of git when the project is in a git
+// repository: it appends the file's name to the project's .gitignore. It is a
+// convenience, so a failure is a warning and never stops init. A project that
+// takes no lock never creates the file, and one that already ignores it is left
+// alone.
+func (c *Context) ignoreLock(dryRun bool) {
+	repo, ok := gitignore.FindRepo(c.Root)
+	if !ok || c.Config.Settings.NoLock || gitignore.Ignored(repo, c.ToolsDir(), lock.FileName) {
+		return
+	}
+
+	if dryRun {
+		_, _ = fmt.Fprintf(c.Stdout, "🔍 [dry-run] Would add %s to %s\n", lock.FileName, gitignore.File)
+
+		return
+	}
+
+	added, err := gitignore.Add(filepath.Join(c.Root, gitignore.File), lockIgnore())
+	if err != nil {
+		_, _ = fmt.Fprintf(
+			c.Stderr,
+			"  ⚠️  Could not add %s to %s: %v\n     Add it yourself: it is local state and should not be committed.\n",
+			lock.FileName,
+			gitignore.File,
+			err,
+		)
+
+		return
+	}
+
+	if added {
+		_, _ = fmt.Fprintf(
+			c.Stdout,
+			"📝 Added %s to %s (local lock state, not for commits)\n",
+			lock.FileName,
+			gitignore.File,
+		)
+	}
 }

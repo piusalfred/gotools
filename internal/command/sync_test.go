@@ -192,13 +192,17 @@ func TestSyncDetectsDrift(t *testing.T) {
 	}
 }
 
-func TestSyncDiscoversFromDisk(t *testing.T) {
+const strayModfile = "module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n"
+
+// With no manifest file the tools directory is all there is, so a lost manifest
+// is rebuilt from it.
+func TestSyncRebuildsALostManifestFromDisk(t *testing.T) {
 	dir := syncProject(t, "split")
-	writeFile(
-		t,
-		filepath.Join(dir, "tools/x.mod"),
-		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n",
-	)
+	writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+
+	if err := os.Remove(filepath.Join(dir, config.ManifestFile)); err != nil {
+		t.Fatal(err)
+	}
 
 	r := syncIn(t, installGo(installOpts{}), dir, installOpts{})
 	r.ok(t)
@@ -209,6 +213,195 @@ func TestSyncDiscoversFromDisk(t *testing.T) {
 
 	if tl, ok := readManifest(t, dir).Tool("x"); !ok || tl.Version != "v1.5.0" {
 		t.Fatalf("tool=%+v", tl)
+	}
+}
+
+// A manifest that exists is the truth. Reverting it, or a merge that drops an
+// entry, must not be undone by the next sync adopting the tool from the disk.
+func TestSyncLeavesAToolTheManifestDoesNotListAlone(t *testing.T) {
+	for _, st := range []string{"split", "module"} {
+		t.Run(st, func(t *testing.T) {
+			dir := syncProject(t, st, [3]string{"y", "example.com/b/y", "v1.0.0"})
+
+			stray := filepath.Join(dir, "tools/x.mod")
+			if st == "module" {
+				stray = filepath.Join(dir, "tools/x/go.mod")
+			}
+
+			writeFile(t, stray, strayModfile)
+
+			g := installGo(installOpts{})
+			r := syncIn(t, g, dir, installOpts{})
+			r.ok(t)
+
+			if got := manifestTools(t, dir); !slices.Equal(got, []string{"y"}) {
+				t.Fatalf("the stray tool was adopted: %v", got)
+			}
+
+			if strings.Contains(r.out, "discovered from disk") {
+				t.Errorf("out=%q", r.out)
+			}
+
+			// Said, with the two ways out, on stderr.
+			for _, want := range []string{
+				"1 tool(s) in tools/ are not in .gotools.json",
+				"x  example.com/a/x@v1.5.0",
+				"gotools install <name> <package>@<version>",
+				"gotools remove <name>",
+			} {
+				if !strings.Contains(r.err, want) {
+					t.Errorf("stderr lacks %q:\n%s", want, r.err)
+				}
+			}
+
+			// Not tidied, not rewritten: it is not the manifest's.
+			if readFile(t, stray) != strayModfile {
+				t.Error("the stray tool's modfile was rewritten")
+			}
+
+			for _, c := range g.calls {
+				if len(c.Args) > 1 && c.Args[1] == "tidy" && strings.Contains(c.Dir, "x") && c.Dir != dir {
+					t.Errorf("tidied the stray tool: %v in %s", c.Args, c.Dir)
+				}
+			}
+		})
+	}
+}
+
+// On a terminal each stray tool is asked about. Yes deletes what it has in the
+// tools directory, no keeps it; neither ever adopts it.
+func TestSyncAsksAboutAToolTheManifestDoesNotList(t *testing.T) {
+	type layout struct{ stray, other string }
+
+	for st, l := range map[string]layout{
+		"split":  {"tools/x.mod", "tools/z.mod"},
+		"module": {"tools/x/go.mod", "tools/z/go.mod"},
+	} {
+		t.Run(st, func(t *testing.T) {
+			dir := syncProject(t, st, [3]string{"y", "example.com/b/y", "v1.0.0"})
+
+			writeFile(t, filepath.Join(dir, l.stray), strayModfile)
+			writeFile(t, filepath.Join(dir, l.other), strings.ReplaceAll(strayModfile, "/a", "/c"))
+
+			if st == "split" {
+				writeFile(t, filepath.Join(dir, "tools/x.sum"), "sum\n")
+			}
+
+			// Tools come in name order: x is deleted, z is kept.
+			r := syncIn(t, installGo(installOpts{}), dir, installOpts{interactive: true, stdin: "y\nn\n"})
+			r.ok(t)
+
+			if exists(filepath.Join(dir, l.stray)) || exists(filepath.Join(dir, "tools/x.sum")) ||
+				(st == "module" && exists(filepath.Join(dir, "tools/x"))) {
+				t.Error("x was not deleted")
+			}
+
+			if !exists(filepath.Join(dir, l.other)) {
+				t.Error("z was deleted although the answer was no")
+			}
+
+			if got := manifestTools(t, dir); !slices.Equal(got, []string{"y"}) {
+				t.Errorf("manifest = %v", got)
+			}
+
+			for _, want := range []string{
+				"x (example.com/a/x@v1.5.0) is in tools/ but not in .gotools.json",
+				"Delete it from tools/? [y/N]",
+				"Removed",
+				"Kept z",
+			} {
+				if !strings.Contains(r.out, want) {
+					t.Errorf("stdout lacks %q:\n%s", want, r.out)
+				}
+			}
+		})
+	}
+}
+
+// The default answer, and an empty one, is no.
+func TestSyncKeepsAStrayToolUnlessTheAnswerIsYes(t *testing.T) {
+	for _, stdin := range []string{"\n", "", "maybe\n"} {
+		dir := syncProject(t, "split")
+		writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+
+		syncIn(t, installGo(installOpts{}), dir, installOpts{interactive: true, stdin: stdin}).ok(t)
+
+		if !exists(filepath.Join(dir, "tools/x.mod")) {
+			t.Errorf("stdin %q deleted the tool", stdin)
+		}
+	}
+}
+
+// Deleting a tool needs an answer: a dry run and a run without a terminal only
+// report.
+func TestSyncNeverDeletesAStrayToolWithoutAsking(t *testing.T) {
+	for desc, o := range map[string]installOpts{
+		"no terminal": {stdin: "y\ny\n"},
+		"dry run":     {interactive: true, stdin: "y\ny\n"},
+	} {
+		t.Run(desc, func(t *testing.T) {
+			dir := syncProject(t, "split")
+			writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+
+			args := []string{}
+			if desc == "dry run" {
+				args = append(args, "--dry-run")
+			}
+
+			r := syncIn(t, installGo(installOpts{}), dir, o, args...)
+			r.ok(t)
+
+			if !exists(filepath.Join(dir, "tools/x.mod")) || strings.Contains(r.out, "Delete it") {
+				t.Fatalf("out=%s", r.out)
+			}
+
+			if !strings.Contains(r.err, "gotools remove <name>") {
+				t.Fatalf("stderr=%s", r.err)
+			}
+		})
+	}
+}
+
+// The fingerprint is written after a sync that left a stray tool alone, with
+// the stray's files in it. The next sync must still notice the stray instead of
+// reporting that everything is up to date.
+func TestSyncKeepsNoticingAStrayToolAfterTheFingerprintIsWritten(t *testing.T) {
+	dir := syncProject(t, "split", [3]string{"y", "example.com/b/y", "v1.0.0"})
+	writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+
+	g := installGo(installOpts{})
+	syncIn(t, g, dir, installOpts{}).ok(t)
+
+	second := syncIn(t, g, dir, installOpts{})
+	second.ok(t)
+
+	if strings.Contains(second.out, "Tools up to date") || !strings.Contains(second.err, "x  example.com/a/x@v1.5.0") {
+		t.Fatalf("stdout:\n%s\nstderr:\n%s", second.out, second.err)
+	}
+
+	// Once it is deleted, the fast path is back.
+	if _, _, err := runCommand(t, command.NewRemove(), dir, g, nil, "x"); err != nil {
+		t.Fatal(err)
+	}
+
+	syncIn(t, g, dir, installOpts{}).ok(t)
+
+	if third := syncIn(t, g, dir, installOpts{}); !strings.Contains(third.out, "Tools up to date") {
+		t.Fatalf("stdout:\n%s", third.out)
+	}
+}
+
+// What sync leaves alone, remove can still delete.
+func TestRemoveDeletesAToolOnlyTheDiskHas(t *testing.T) {
+	dir := syncProject(t, "split")
+	writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+
+	if _, _, err := runCommand(t, command.NewRemove(), dir, &fakeGo{}, nil, "x"); err != nil {
+		t.Fatal(err)
+	}
+
+	if exists(filepath.Join(dir, "tools/x.mod")) {
+		t.Fatal("the stray modfile remains")
 	}
 }
 
@@ -258,10 +451,15 @@ func TestSyncDryRunWritesNothing(t *testing.T) {
 	r := syncIn(t, g, dir, installOpts{}, "--dry-run")
 	r.ok(t)
 
-	for _, want := range []string{"Would reinstall x", "Would add z", "Would restore 1"} {
+	for _, want := range []string{"Would reinstall x", "Would restore 1"} {
 		if !strings.Contains(r.out, want) {
 			t.Fatalf("out lacks %q:\n%s", want, r.out)
 		}
+	}
+
+	// z is not the manifest's: reported, never added.
+	if !strings.Contains(r.err, "z  example.com/c/z@v1.0.0") || strings.Contains(r.out, "Would add") {
+		t.Fatalf("stdout:\n%s\nstderr:\n%s", r.out, r.err)
 	}
 
 	if readFile(t, filepath.Join(dir, config.ManifestFile)) != before {
@@ -449,7 +647,7 @@ func TestSyncUnifiedJobsWarns(t *testing.T) {
 }
 
 func TestSyncTidyNetworkFailure(t *testing.T) {
-	dir := syncProject(t, "module")
+	dir := syncProject(t, "module", [3]string{"x", "example.com/a/x", "v1.0.0"})
 	writeFile(t, filepath.Join(dir, "tools/x/go.mod"), "module tools/x\n\ngo 1.24\n")
 
 	g := &fakeGo{intercept: func(c gocmd.Call) (gocmd.Result, error, bool) {
@@ -466,7 +664,7 @@ func TestSyncTidyNetworkFailure(t *testing.T) {
 }
 
 func TestSyncTidyGenericFailureIsNotAUsageError(t *testing.T) {
-	dir := syncProject(t, "module")
+	dir := syncProject(t, "module", [3]string{"x", "example.com/a/x", "v1.0.0"})
 	writeFile(t, filepath.Join(dir, "tools/x/go.mod"), "module tools/x\n\ngo 1.24\n")
 
 	g := &fakeGo{intercept: func(c gocmd.Call) (gocmd.Result, error, bool) {

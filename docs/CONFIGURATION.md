@@ -32,6 +32,7 @@ Related: [Usage](USAGE.md) · [Strategies](STRATEGIES.md)
 | Field | Description |
 | :--- | :--- |
 | `version` | Manifest schema version (currently `1`). |
+| `gotools_version` | The gotools version that last wrote the file. Written by gotools; leave it alone. See [Which gotools wrote the files](USAGE.md#which-gotools-wrote-the-files). |
 | `strategy` | `unified`, `split`, or `module`. |
 | `dir` | Tools directory path (default: `tools`). |
 | `go_version` | Go version for tool modules, or `inherit`. |
