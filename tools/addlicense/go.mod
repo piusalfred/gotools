@@ -1,6 +1,6 @@
 module github.com/piusalfred/gotools/tools/addlicense
 
-go 1.27
+go 1.27.4
 
 tool github.com/google/addlicense
 
