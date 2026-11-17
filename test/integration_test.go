@@ -43,6 +43,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/piusalfred/gotools/internal/config"
 )
 
 var binary string
@@ -242,7 +244,7 @@ func TestLifecycle(t *testing.T) {
 			contains(t, "list json", p.ok("list", "--format=json"), `"tools":[{`)
 
 			contains(t, "config read", p.ok("config", "GOTOOLS_STRATEGY"), strategy)
-			p.ok("config", "GOTOOLS_DIR", "tools")
+			p.ok("config", "GOTOOLS_DIR", config.DefaultDir)
 
 			// Regression: writing config must not reset the strategy.
 			contains(t, "config write keeps the strategy", p.read(".gotools.json"), `"strategy": "`+strategy+`"`)
@@ -296,15 +298,15 @@ func TestParallelColdRestore(t *testing.T) {
 	p.ok("install", "gci", gci)
 
 	for _, f := range []string{"goimports.mod", "goimports.sum", "gci.mod", "gci.sum", ".gotools.fingerprint"} {
-		if err := os.Remove(filepath.Join(p.dir, "tools", f)); err != nil {
+		if err := os.Remove(filepath.Join(p.dir, config.DefaultDir, f)); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	contains(t, "sync --jobs", p.ok("sync", "--jobs", "4"), "restored 2 tool(s)")
 
-	for _, f := range []string{"tools/goimports.mod", "tools/gci.mod", "tools/.gotools.fingerprint"} {
-		if !p.exists(f) {
+	for _, f := range []string{"goimports.mod", "gci.mod", ".gotools.fingerprint"} {
+		if !p.exists(config.DefaultDir + "/" + f) {
 			t.Errorf("%s not restored", f)
 		}
 	}
@@ -381,7 +383,7 @@ func TestOneToolOneName(t *testing.T) {
 		t.Fatalf("rc=%d err=%q", rc, errs)
 	}
 
-	if p.exists("tools/sorter.mod") {
+	if p.exists(config.DefaultDir + "/sorter.mod") {
 		t.Error("the refused install left a modfile")
 	}
 }
@@ -412,7 +414,7 @@ func TestStalledProxyTimesOut(t *testing.T) {
 		t.Errorf("took %s to give up", time.Since(start))
 	}
 
-	if p.exists("tools/stalled.mod") || p.exists("tools/stalled.sum") {
+	if p.exists(config.DefaultDir+"/stalled.mod") || p.exists(config.DefaultDir+"/stalled.sum") {
 		t.Error("the stalled install left files behind")
 	}
 }
@@ -530,7 +532,7 @@ func TestExecRunsInTheInvocationDirectory(t *testing.T) {
 
 			// Badly formatted files at the project root, in the package and
 			// in the tools directory: only the package's is in scope.
-			for rel, pkg := range map[string]string{"root_probe.go": "main", "sub/sub_probe.go": "sub", "tools/tool_probe.go": "tools"} {
+			for rel, pkg := range map[string]string{"root_probe.go": "main", "sub/sub_probe.go": "sub", config.DefaultDir + "/tool_probe.go": "tools"} {
 				path := filepath.Join(p.dir, rel)
 				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 					t.Fatal(err)
@@ -661,7 +663,7 @@ func TestManifestRulesOverToolsOnDisk(t *testing.T) {
 				t,
 				"stderr",
 				errs,
-				"1 tool(s) in tools/ are not in .gotools.json",
+				"1 tool(s) in "+config.DefaultDir+"/ are not in .gotools.json",
 				"gci  github.com/daixiang0/gci@v0.13.5",
 			)
 
