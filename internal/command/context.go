@@ -132,6 +132,7 @@ func (c *Context) Load(_ context.Context, opts ...config.Option) error {
 	}
 
 	c.Config = cfg
+	c.fallbackDir()
 
 	if err := c.rejectSymlinkedToolsDir(); err != nil {
 		return err
@@ -142,6 +143,21 @@ func (c *Context) Load(_ context.Context, opts ...config.Option) error {
 	c.warnVersionDrift()
 
 	return nil
+}
+
+// fallbackDir keeps a project's existing tools/ directory when nothing names
+// another: the manifest, the environment and the flags all left the default,
+// and a tools/ directory is on disk. Without it a project that pre-dates the
+// gotools default would look empty and sync would rebuild it under gotools/.
+func (c *Context) fallbackDir() {
+	if c.Config.Dir != config.DefaultDir || c.HasManifest && c.Manifest.Dir != "" {
+		return
+	}
+
+	legacy := filepath.Join(c.Root, config.LegacyDir)
+	if info, err := os.Stat(legacy); err == nil && info.IsDir() {
+		c.Config.Dir = config.LegacyDir
+	}
 }
 
 // warnVersionDrift adds a warning when the manifest, or failing that the

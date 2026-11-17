@@ -42,14 +42,14 @@ func doctorProject(t *testing.T, strategy string) string {
 	for _, n := range []string{"x", "y"} {
 		switch strategy {
 		case "split":
-			writeFile(t, filepath.Join(dir, "tools", n+".sum"), "sum\n")
+			writeFile(t, filepath.Join(dir, config.DefaultDir, n+".sum"), "sum\n")
 		case "module":
-			writeFile(t, filepath.Join(dir, "tools", n, "go.sum"), "sum\n")
+			writeFile(t, filepath.Join(dir, config.DefaultDir, n, "go.sum"), "sum\n")
 		}
 	}
 
 	if strategy == "unified" {
-		writeFile(t, filepath.Join(dir, "tools/go.sum"), "sum\n")
+		writeFile(t, filepath.Join(dir, config.DefaultDir+"/go.sum"), "sum\n")
 	}
 
 	return dir
@@ -85,7 +85,7 @@ func TestDoctorHealthyEachStrategy(t *testing.T) {
 				"Managed tools (2 declared)",
 				"Strategy: "+st+" — matches disk",
 				"x@v1.0.0 — runnable", "y@v1.2.0 — runnable",
-				"tools/ uses",
+				config.DefaultDir+"/ uses",
 				"All checks passed. Your environment is healthy.",
 			)
 		})
@@ -250,7 +250,7 @@ func TestDoctorIsReadOnly(t *testing.T) {
 
 	sameTree(t, before, tree(t, dir))
 
-	if exists(filepath.Join(dir, "tools")) {
+	if exists(filepath.Join(dir, config.DefaultDir)) {
 		t.Fatal("the doctor created the tools directory")
 	}
 }

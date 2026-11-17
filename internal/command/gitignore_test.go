@@ -27,6 +27,7 @@ import (
 	"testing"
 
 	"github.com/piusalfred/gotools/internal/command"
+	"github.com/piusalfred/gotools/internal/config"
 )
 
 // inGitRepo makes dir look like the root of a git repository.
@@ -101,7 +102,7 @@ func TestInitLeavesAProjectThatAlreadyIgnoresTheLockFile(t *testing.T) {
 
 			switch desc {
 			case "in tools dir":
-				writeFile(t, filepath.Join(repo, "tools", ".gitignore"), ".gotools.flock\n")
+				writeFile(t, filepath.Join(repo, config.DefaultDir, ".gitignore"), ".gotools.flock\n")
 			case "in a parent":
 				project = filepath.Join(repo, "svc")
 				writeFile(t, filepath.Join(repo, ".gitignore"), "**/.gotools.flock\n")
@@ -199,7 +200,7 @@ func TestInitWarnsWhenTheGitignoreIsASymlink(t *testing.T) {
 // Every other command warns, so a project set up before this existed, or by
 // hand, hears about it.
 func TestOtherCommandsWarnAboutAnUnignoredLockFile(t *testing.T) {
-	const warning = "tools/.gotools.flock is not ignored by git"
+	const warning = config.DefaultDir + "/.gotools.flock is not ignored by git"
 
 	dir := infoFixture(t, "split")
 	inGitRepo(t, dir)

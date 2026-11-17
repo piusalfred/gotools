@@ -65,7 +65,7 @@ func TestPurgeConfirmedRemovesToolsAndManifestOnly(t *testing.T) {
 				t.Fatalf("err=%v out=%q", err, out)
 			}
 
-			if exists(filepath.Join(dir, "tools")) || exists(filepath.Join(dir, config.ManifestFile)) {
+			if exists(filepath.Join(dir, config.DefaultDir)) || exists(filepath.Join(dir, config.ManifestFile)) {
 				t.Fatalf("left behind: %v", keys(tree(t, dir)))
 			}
 
@@ -96,7 +96,7 @@ func TestPurgeDryRun(t *testing.T) {
 
 	out, _, err := purgeIn(t, installGo(installOpts{}), dir, "", "--dry-run")
 	if err != nil || !strings.Contains(out, "Would delete:") ||
-		!strings.Contains(out, "  - tools/ (tools directory)") ||
+		!strings.Contains(out, "  - "+config.DefaultDir+"/ (tools directory)") ||
 		!strings.Contains(out, "  - .gotools.json (manifest)") ||
 		strings.Contains(out, "Are you sure") {
 		t.Fatalf("err=%v out=%q", err, out)
@@ -111,7 +111,7 @@ func TestPurgeDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if exists(filepath.Join(empty, "tools")) {
+	if exists(filepath.Join(empty, config.DefaultDir)) {
 		t.Fatal("dry run created the tools directory")
 	}
 }
@@ -120,15 +120,15 @@ func TestPurgeDryRun(t *testing.T) {
 // is not ours to delete.
 func TestPurgeWithoutManifestTouchesNothing(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "tools/keep.txt"), "mine\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/keep.txt"), "mine\n")
 
 	out, _, err := purgeIn(t, installGo(installOpts{}), dir, "YES\n")
 	if err != nil || !strings.Contains(out, "nothing to purge") || strings.Contains(out, "Are you sure") {
 		t.Fatalf("err=%v out=%q", err, out)
 	}
 
-	if readFile(t, filepath.Join(dir, "tools/keep.txt")) != "mine\n" {
-		t.Fatal("tools/keep.txt was touched")
+	if readFile(t, filepath.Join(dir, config.DefaultDir+"/keep.txt")) != "mine\n" {
+		t.Fatal(config.DefaultDir + "/keep.txt was touched")
 	}
 }
 
@@ -137,7 +137,7 @@ func TestPurgeRejectsUnknownArguments(t *testing.T) {
 	dir := purgeProject(t, "split")
 	before := tree(t, dir)
 
-	for _, arg := range []string{"--restor", "--force", "tools"} {
+	for _, arg := range []string{"--restor", "--force", config.DefaultDir} {
 		_, _, err := purgeIn(t, installGo(installOpts{}), dir, "YES\n", arg)
 		if ierrors.CodeOf(err) != ierrors.Usage || !strings.Contains(err.Error(), arg) {
 			t.Fatalf("%s: err=%v", arg, err)
@@ -177,7 +177,7 @@ func TestPurgeRestoreAddsToolsBackToGoMod(t *testing.T) {
 		t.Fatalf("calls: %v", g.calls)
 	}
 
-	if exists(filepath.Join(dir, "tools")) || exists(filepath.Join(dir, config.ManifestFile)) {
+	if exists(filepath.Join(dir, config.DefaultDir)) || exists(filepath.Join(dir, config.ManifestFile)) {
 		t.Fatal("not wiped after restore")
 	}
 }

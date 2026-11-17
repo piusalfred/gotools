@@ -35,19 +35,20 @@ import (
 
 func TestRenameSplit(t *testing.T) {
 	dir := infoFixture(t, "split")
-	writeFile(t, filepath.Join(dir, "tools", "goimports.sum"), "sumdata\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir, "goimports.sum"), "sumdata\n")
 
 	out, _, err := runCommand(t, command.NewRename(), dir, &fakeGo{}, nil, "goimports", "gi")
 	if err != nil || !strings.Contains(out, "✅ Renamed goimports → gi") {
 		t.Fatalf("err=%v out=%s", err, out)
 	}
 
-	tools := filepath.Join(dir, "tools")
+	tools := filepath.Join(dir, config.DefaultDir)
 	if exists(filepath.Join(tools, "goimports.mod")) || exists(filepath.Join(tools, "goimports.sum")) {
 		t.Fatal("old files remain")
 	}
 
-	if mod := readFile(t, filepath.Join(tools, "gi.mod")); !strings.Contains(mod, "module tools/tools/gi\n") ||
+	wantModule := "module tools/" + config.DefaultDir + "/gi\n"
+	if mod := readFile(t, filepath.Join(tools, "gi.mod")); !strings.Contains(mod, wantModule) ||
 		!strings.Contains(mod, "tool golang.org/x/tools/cmd/goimports") {
 		t.Fatalf("mod = %s", mod)
 	}
@@ -72,16 +73,17 @@ func TestRenameModule(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if exists(filepath.Join(dir, "tools", "goimports")) {
+	if exists(filepath.Join(dir, config.DefaultDir, "goimports")) {
 		t.Fatal("old dir remains")
 	}
 
+	wantModule := "module tools/" + config.DefaultDir + "/gi\n"
 	if mod := readFile(
 		t,
-		filepath.Join(dir, "tools", "gi", "go.mod"),
+		filepath.Join(dir, config.DefaultDir, "gi", "go.mod"),
 	); !strings.Contains(
 		mod,
-		"module tools/tools/gi\n",
+		wantModule,
 	) {
 		t.Fatalf("mod = %s", mod)
 	}
@@ -113,7 +115,10 @@ func TestRenamePreconditions(t *testing.T) {
 	}
 
 	// A dangling symlink at the target name must block the rename.
-	if err := os.Symlink(filepath.Join(dir, "nowhere"), filepath.Join(dir, "tools", "dangling.mod")); err != nil {
+	if err := os.Symlink(
+		filepath.Join(dir, "nowhere"),
+		filepath.Join(dir, config.DefaultDir, "dangling.mod"),
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +150,7 @@ func TestRenamePreconditions(t *testing.T) {
 		}
 	}
 
-	if !exists(filepath.Join(dir, "tools", "goimports.mod")) {
+	if !exists(filepath.Join(dir, config.DefaultDir, "goimports.mod")) {
 		t.Fatal("a refused rename moved files")
 	}
 }
@@ -164,7 +169,7 @@ func TestRenameDryRunChangesNothing(t *testing.T) {
 
 func TestRenameRefusesASymlinkedSource(t *testing.T) {
 	dir := infoFixture(t, "split")
-	mod := filepath.Join(dir, "tools", "goimports.mod")
+	mod := filepath.Join(dir, config.DefaultDir, "goimports.mod")
 	target := filepath.Join(dir, "real.mod")
 
 	if err := os.Rename(mod, target); err != nil {
@@ -183,14 +188,14 @@ func TestRenameRefusesASymlinkedSource(t *testing.T) {
 
 func TestRenameManifestOnlyWhenTheModfileIsMissing(t *testing.T) {
 	dir := infoFixture(t, "split")
-	_ = os.Remove(filepath.Join(dir, "tools", "goimports.mod"))
+	_ = os.Remove(filepath.Join(dir, config.DefaultDir, "goimports.mod"))
 
 	out, _, err := runCommand(t, command.NewRename(), dir, &fakeGo{}, nil, "goimports", "gi")
 	if err != nil || !strings.Contains(out, "renaming in the manifest only") || manifestTools(t, dir)[0] != "gi" {
 		t.Fatalf("err=%v out=%s", err, out)
 	}
 
-	if exists(filepath.Join(dir, "tools", fingerprint.FileName)) {
+	if exists(filepath.Join(dir, config.DefaultDir, fingerprint.FileName)) {
 		t.Fatal("fingerprint written although disk and manifest disagree")
 	}
 }
@@ -202,7 +207,7 @@ func TestRenameRollsBackWhenTheManifestWriteFails(t *testing.T) {
 	}
 
 	dir := infoFixture(t, "split")
-	orig := readFile(t, filepath.Join(dir, "tools", "goimports.mod"))
+	orig := readFile(t, filepath.Join(dir, config.DefaultDir, "goimports.mod"))
 
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
@@ -215,8 +220,8 @@ func TestRenameRollsBackWhenTheManifestWriteFails(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	if exists(filepath.Join(dir, "tools", "gi.mod")) ||
-		readFile(t, filepath.Join(dir, "tools", "goimports.mod")) != orig {
+	if exists(filepath.Join(dir, config.DefaultDir, "gi.mod")) ||
+		readFile(t, filepath.Join(dir, config.DefaultDir, "goimports.mod")) != orig {
 		t.Fatal("rename was not rolled back")
 	}
 }

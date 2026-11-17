@@ -31,6 +31,7 @@ import (
 	"testing"
 
 	"github.com/piusalfred/gotools/internal/command"
+	"github.com/piusalfred/gotools/internal/config"
 	"github.com/piusalfred/gotools/internal/gocmd"
 	"github.com/piusalfred/gotools/internal/tracer"
 )
@@ -168,7 +169,7 @@ func TestTracerStampsTheConfiguration(t *testing.T) {
 	env, _ := tp.traceRecord()[0]["env"].(map[string]any)
 
 	want := map[string]any{
-		"GOTOOLS_STRATEGY": "unified", "GOTOOLS_DIR": "tools", "GOTOOLS_GO_VERSION": "1.25",
+		"GOTOOLS_STRATEGY": "unified", "GOTOOLS_DIR": config.DefaultDir, "GOTOOLS_GO_VERSION": "1.25",
 		"GOTOOLS_MODULE_PREFIX": "tools", "GOTOOLS_VERBOSE": "1", "GOTOOLS_TRACE": "true",
 	}
 

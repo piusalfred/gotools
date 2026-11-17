@@ -52,7 +52,7 @@ func syncProject(t *testing.T, strategy string, tools ...[3]string) string {
 
 	dir := t.TempDir()
 	m := manifest.New()
-	m.Strategy, m.ModulePrefix = strategy, "tools"
+	m.Strategy, m.Dir, m.ModulePrefix = strategy, config.DefaultDir, "tools"
 
 	for _, tl := range tools {
 		m.SetTool(manifest.Tool{Name: tl[0], Source: "go", Package: tl[1], Version: tl[2]})
@@ -174,7 +174,7 @@ func TestSyncDetectsDrift(t *testing.T) {
 	dir := syncProject(t, "split", [3]string{"x", "example.com/a/x", "v1.0.0"})
 	writeFile(
 		t,
-		filepath.Join(dir, "tools/x.mod"),
+		filepath.Join(dir, config.DefaultDir+"/x.mod"),
 		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v0.9.0\n",
 	)
 
@@ -187,7 +187,7 @@ func TestSyncDetectsDrift(t *testing.T) {
 		t.Fatalf("out=%q tidy=%d", r.out, g.count("mod", "tidy"))
 	}
 
-	if !strings.Contains(readFile(t, filepath.Join(dir, "tools/x.mod")), "example.com/a v1.0.0") {
+	if !strings.Contains(readFile(t, filepath.Join(dir, config.DefaultDir+"/x.mod")), "example.com/a v1.0.0") {
 		t.Fatal("modfile not reinstalled at the manifest version")
 	}
 }
@@ -198,7 +198,7 @@ const strayModfile = "module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequi
 // is rebuilt from it.
 func TestSyncRebuildsALostManifestFromDisk(t *testing.T) {
 	dir := syncProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/x.mod"), strayModfile)
 
 	if err := os.Remove(filepath.Join(dir, config.ManifestFile)); err != nil {
 		t.Fatal(err)
@@ -223,9 +223,9 @@ func TestSyncLeavesAToolTheManifestDoesNotListAlone(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			dir := syncProject(t, st, [3]string{"y", "example.com/b/y", "v1.0.0"})
 
-			stray := filepath.Join(dir, "tools/x.mod")
+			stray := filepath.Join(dir, config.DefaultDir+"/x.mod")
 			if st == "module" {
-				stray = filepath.Join(dir, "tools/x/go.mod")
+				stray = filepath.Join(dir, config.DefaultDir+"/x/go.mod")
 			}
 
 			writeFile(t, stray, strayModfile)
@@ -244,7 +244,7 @@ func TestSyncLeavesAToolTheManifestDoesNotListAlone(t *testing.T) {
 
 			// Said, with the two ways out, on stderr.
 			for _, want := range []string{
-				"1 tool(s) in tools/ are not in .gotools.json",
+				"1 tool(s) in " + config.DefaultDir + "/ are not in .gotools.json",
 				"x  example.com/a/x@v1.5.0",
 				"gotools install <name> <package>@<version>",
 				"gotools remove <name>",
@@ -274,8 +274,8 @@ func TestSyncAsksAboutAToolTheManifestDoesNotList(t *testing.T) {
 	type layout struct{ stray, other string }
 
 	for st, l := range map[string]layout{
-		"split":  {"tools/x.mod", "tools/z.mod"},
-		"module": {"tools/x/go.mod", "tools/z/go.mod"},
+		"split":  {config.DefaultDir + "/x.mod", config.DefaultDir + "/z.mod"},
+		"module": {config.DefaultDir + "/x/go.mod", config.DefaultDir + "/z/go.mod"},
 	} {
 		t.Run(st, func(t *testing.T) {
 			dir := syncProject(t, st, [3]string{"y", "example.com/b/y", "v1.0.0"})
@@ -284,15 +284,15 @@ func TestSyncAsksAboutAToolTheManifestDoesNotList(t *testing.T) {
 			writeFile(t, filepath.Join(dir, l.other), strings.ReplaceAll(strayModfile, "/a", "/c"))
 
 			if st == "split" {
-				writeFile(t, filepath.Join(dir, "tools/x.sum"), "sum\n")
+				writeFile(t, filepath.Join(dir, config.DefaultDir+"/x.sum"), "sum\n")
 			}
 
 			// Tools come in name order: x is deleted, z is kept.
 			r := syncIn(t, installGo(installOpts{}), dir, installOpts{interactive: true, stdin: "y\nn\n"})
 			r.ok(t)
 
-			if exists(filepath.Join(dir, l.stray)) || exists(filepath.Join(dir, "tools/x.sum")) ||
-				(st == "module" && exists(filepath.Join(dir, "tools/x"))) {
+			if exists(filepath.Join(dir, l.stray)) || exists(filepath.Join(dir, config.DefaultDir+"/x.sum")) ||
+				(st == "module" && exists(filepath.Join(dir, config.DefaultDir+"/x"))) {
 				t.Error("x was not deleted")
 			}
 
@@ -305,8 +305,8 @@ func TestSyncAsksAboutAToolTheManifestDoesNotList(t *testing.T) {
 			}
 
 			for _, want := range []string{
-				"x (example.com/a/x@v1.5.0) is in tools/ but not in .gotools.json",
-				"Delete it from tools/? [y/N]",
+				"x (example.com/a/x@v1.5.0) is in " + config.DefaultDir + "/ but not in .gotools.json",
+				"Delete it from " + config.DefaultDir + "/? [y/N]",
 				"Removed",
 				"Kept z",
 			} {
@@ -322,11 +322,11 @@ func TestSyncAsksAboutAToolTheManifestDoesNotList(t *testing.T) {
 func TestSyncKeepsAStrayToolUnlessTheAnswerIsYes(t *testing.T) {
 	for _, stdin := range []string{"\n", "", "maybe\n"} {
 		dir := syncProject(t, "split")
-		writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+		writeFile(t, filepath.Join(dir, config.DefaultDir+"/x.mod"), strayModfile)
 
 		syncIn(t, installGo(installOpts{}), dir, installOpts{interactive: true, stdin: stdin}).ok(t)
 
-		if !exists(filepath.Join(dir, "tools/x.mod")) {
+		if !exists(filepath.Join(dir, config.DefaultDir+"/x.mod")) {
 			t.Errorf("stdin %q deleted the tool", stdin)
 		}
 	}
@@ -341,7 +341,7 @@ func TestSyncNeverDeletesAStrayToolWithoutAsking(t *testing.T) {
 	} {
 		t.Run(desc, func(t *testing.T) {
 			dir := syncProject(t, "split")
-			writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+			writeFile(t, filepath.Join(dir, config.DefaultDir+"/x.mod"), strayModfile)
 
 			args := []string{}
 			if desc == "dry run" {
@@ -351,7 +351,7 @@ func TestSyncNeverDeletesAStrayToolWithoutAsking(t *testing.T) {
 			r := syncIn(t, installGo(installOpts{}), dir, o, args...)
 			r.ok(t)
 
-			if !exists(filepath.Join(dir, "tools/x.mod")) || strings.Contains(r.out, "Delete it") {
+			if !exists(filepath.Join(dir, config.DefaultDir+"/x.mod")) || strings.Contains(r.out, "Delete it") {
 				t.Fatalf("out=%s", r.out)
 			}
 
@@ -367,7 +367,7 @@ func TestSyncNeverDeletesAStrayToolWithoutAsking(t *testing.T) {
 // reporting that everything is up to date.
 func TestSyncKeepsNoticingAStrayToolAfterTheFingerprintIsWritten(t *testing.T) {
 	dir := syncProject(t, "split", [3]string{"y", "example.com/b/y", "v1.0.0"})
-	writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/x.mod"), strayModfile)
 
 	g := installGo(installOpts{})
 	syncIn(t, g, dir, installOpts{}).ok(t)
@@ -394,13 +394,13 @@ func TestSyncKeepsNoticingAStrayToolAfterTheFingerprintIsWritten(t *testing.T) {
 // What sync leaves alone, remove can still delete.
 func TestRemoveDeletesAToolOnlyTheDiskHas(t *testing.T) {
 	dir := syncProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools/x.mod"), strayModfile)
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/x.mod"), strayModfile)
 
 	if _, _, err := runCommand(t, command.NewRemove(), dir, &fakeGo{}, nil, "x"); err != nil {
 		t.Fatal(err)
 	}
 
-	if exists(filepath.Join(dir, "tools/x.mod")) {
+	if exists(filepath.Join(dir, config.DefaultDir+"/x.mod")) {
 		t.Fatal("the stray modfile remains")
 	}
 }
@@ -411,7 +411,7 @@ func TestSyncKeepsTheManifestNameOfAnAliasedUnifiedTool(t *testing.T) {
 	dir := syncProject(t, "unified", [3]string{"fmt", "mvdan.cc/gofumpt", "v1.0.0"})
 	writeFile(
 		t,
-		filepath.Join(dir, "tools/go.mod"),
+		filepath.Join(dir, config.DefaultDir+"/go.mod"),
 		"module tools\n\ngo 1.24\n\ntool mvdan.cc/gofumpt\n\nrequire mvdan.cc v1.0.0\n",
 	)
 
@@ -424,8 +424,8 @@ func TestSyncKeepsTheManifestNameOfAnAliasedUnifiedTool(t *testing.T) {
 
 func TestSyncIgnoresAStrayGoModInTheSplitDirectory(t *testing.T) {
 	dir := syncProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools/go.mod"), "module tools\n\ngo 1.24\n")
-	writeFile(t, filepath.Join(dir, "tools/.hidden.mod"), "module h\n\ngo 1.24\n\ntool example.com/h/h\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/go.mod"), "module tools\n\ngo 1.24\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/.hidden.mod"), "module h\n\ngo 1.24\n\ntool example.com/h/h\n")
 
 	g := installGo(installOpts{})
 
@@ -441,7 +441,7 @@ func TestSyncDryRunWritesNothing(t *testing.T) {
 	dir := syncProject(t, "split", [3]string{"x", "example.com/a/x", "v1.0.0"})
 	writeFile(
 		t,
-		filepath.Join(dir, "tools/z.mod"),
+		filepath.Join(dir, config.DefaultDir+"/z.mod"),
 		"module tools/z\n\ngo 1.24\n\ntool example.com/c/z\n\nrequire example.com/c v1.0.0\n",
 	)
 
@@ -466,7 +466,8 @@ func TestSyncDryRunWritesNothing(t *testing.T) {
 		t.Fatal("dry-run changed the manifest")
 	}
 
-	if exists(filepath.Join(dir, "tools/x.mod")) || exists(filepath.Join(dir, "tools/.gotools.fingerprint")) {
+	if exists(filepath.Join(dir, config.DefaultDir+"/x.mod")) ||
+		exists(filepath.Join(dir, config.DefaultDir+"/.gotools.fingerprint")) {
 		t.Fatal("dry-run wrote files")
 	}
 
@@ -493,14 +494,14 @@ func TestSyncUsageErrors(t *testing.T) {
 
 func TestSyncStrategyMismatch(t *testing.T) {
 	dir := syncProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools/go.mod"), "module tools\n\ngo 1.24\n\ntool example.com/a/x\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/go.mod"), "module tools\n\ngo 1.24\n\ntool example.com/a/x\n")
 
 	// A dry run reports and changes nothing.
 	r := syncIn(t, installGo(installOpts{}), dir, installOpts{}, "--dry-run")
 	r.ok(t)
 
 	if !strings.Contains(r.out, "Would auto-migrate from 'unified' to 'split'") ||
-		!exists(filepath.Join(dir, "tools/go.mod")) {
+		!exists(filepath.Join(dir, config.DefaultDir+"/go.mod")) {
 		t.Fatalf("out=%q", r.out)
 	}
 
@@ -512,7 +513,8 @@ func TestSyncStrategyMismatch(t *testing.T) {
 		t.Fatalf("out=%q", r.out)
 	}
 
-	if !exists(filepath.Join(dir, "tools/x.mod")) || exists(filepath.Join(dir, "tools/go.mod")) {
+	if !exists(filepath.Join(dir, config.DefaultDir+"/x.mod")) ||
+		exists(filepath.Join(dir, config.DefaultDir+"/go.mod")) {
 		t.Fatalf("layout not migrated: %v", files(t, dir))
 	}
 }
@@ -520,7 +522,7 @@ func TestSyncStrategyMismatch(t *testing.T) {
 // A failed automatic migration puts the old layout back and fails the sync.
 func TestSyncMigrationFailureRestoresTheLayout(t *testing.T) {
 	dir := syncProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools/go.mod"), "module tools\n\ngo 1.24\n\ntool example.com/a/x\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/go.mod"), "module tools\n\ngo 1.24\n\ntool example.com/a/x\n")
 
 	g := &fakeGo{intercept: func(c gocmd.Call) (gocmd.Result, error, bool) {
 		if len(c.Args) > 1 && c.Args[0] == "get" {
@@ -535,7 +537,8 @@ func TestSyncMigrationFailureRestoresTheLayout(t *testing.T) {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
-	if !exists(filepath.Join(dir, "tools/go.mod")) || exists(filepath.Join(dir, "tools/x.mod")) {
+	if !exists(filepath.Join(dir, config.DefaultDir+"/go.mod")) ||
+		exists(filepath.Join(dir, config.DefaultDir+"/x.mod")) {
 		t.Fatalf("the old layout was not restored: %v", files(t, dir))
 	}
 }
@@ -556,7 +559,8 @@ func TestSyncAutoMigrationDoesNotPersistTheEnvironmentStrategy(t *testing.T) {
 		t.Fatalf("the environment's strategy leaked into the manifest: %q", got)
 	}
 
-	if !exists(filepath.Join(dir, "tools/x/go.mod")) || exists(filepath.Join(dir, "tools/x.mod")) {
+	if !exists(filepath.Join(dir, config.DefaultDir+"/x/go.mod")) ||
+		exists(filepath.Join(dir, config.DefaultDir+"/x.mod")) {
 		t.Fatalf("layout not migrated: %v", files(t, dir))
 	}
 }
@@ -625,7 +629,8 @@ func TestSyncParallelFailureLeavesManifest(t *testing.T) {
 		t.Fatal("manifest changed after a failed parallel sync")
 	}
 
-	if exists(filepath.Join(dir, "tools/b.mod")) || exists(filepath.Join(dir, "tools/.gotools.fingerprint")) {
+	if exists(filepath.Join(dir, config.DefaultDir+"/b.mod")) ||
+		exists(filepath.Join(dir, config.DefaultDir+"/.gotools.fingerprint")) {
 		t.Fatal("failed job left files, or the fingerprint was written")
 	}
 }
@@ -648,7 +653,7 @@ func TestSyncUnifiedJobsWarns(t *testing.T) {
 
 func TestSyncTidyNetworkFailure(t *testing.T) {
 	dir := syncProject(t, "module", [3]string{"x", "example.com/a/x", "v1.0.0"})
-	writeFile(t, filepath.Join(dir, "tools/x/go.mod"), "module tools/x\n\ngo 1.24\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/x/go.mod"), "module tools/x\n\ngo 1.24\n")
 
 	g := &fakeGo{intercept: func(c gocmd.Call) (gocmd.Result, error, bool) {
 		if len(c.Args) > 1 && c.Args[1] == "tidy" {
@@ -665,7 +670,7 @@ func TestSyncTidyNetworkFailure(t *testing.T) {
 
 func TestSyncTidyGenericFailureIsNotAUsageError(t *testing.T) {
 	dir := syncProject(t, "module", [3]string{"x", "example.com/a/x", "v1.0.0"})
-	writeFile(t, filepath.Join(dir, "tools/x/go.mod"), "module tools/x\n\ngo 1.24\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir+"/x/go.mod"), "module tools/x\n\ngo 1.24\n")
 
 	g := &fakeGo{intercept: func(c gocmd.Call) (gocmd.Result, error, bool) {
 		if len(c.Args) > 1 && c.Args[1] == "tidy" {
@@ -721,7 +726,7 @@ func TestContextSyncUnlockedTakesNoLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if exists(filepath.Join(dir, "tools")) {
+	if exists(filepath.Join(dir, config.DefaultDir)) {
 		t.Fatal("an unlocked dry run created the tools directory")
 	}
 
@@ -729,7 +734,7 @@ func TestContextSyncUnlockedTakesNoLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !exists(filepath.Join(dir, "tools", ".gotools.flock")) {
+	if !exists(filepath.Join(dir, config.DefaultDir, ".gotools.flock")) {
 		t.Fatal("a locked sync took no lock")
 	}
 }
@@ -769,7 +774,11 @@ func TestSyncFastPathNoticesHandEditsToTheToolFiles(t *testing.T) {
 		"a deleted sum": func(t *testing.T, dir, st string) {
 			t.Helper()
 
-			sums := map[string]string{"split": "tools/x.sum", "module": "tools/x/go.sum", "unified": "tools/go.sum"}
+			sums := map[string]string{
+				"split":   config.DefaultDir + "/x.sum",
+				"module":  config.DefaultDir + "/x/go.sum",
+				"unified": config.DefaultDir + "/go.sum",
+			}
 			if err := os.Remove(filepath.Join(dir, sums[st])); err != nil {
 				t.Fatal(err)
 			}
@@ -777,7 +786,7 @@ func TestSyncFastPathNoticesHandEditsToTheToolFiles(t *testing.T) {
 		"an orphan modfile": func(t *testing.T, dir, st string) {
 			t.Helper()
 
-			writeFile(t, filepath.Join(dir, "tools", "orphan.mod"), "module orphan\n\ngo 1.24\n")
+			writeFile(t, filepath.Join(dir, config.DefaultDir, "orphan.mod"), "module orphan\n\ngo 1.24\n")
 		},
 	}
 
@@ -787,7 +796,11 @@ func TestSyncFastPathNoticesHandEditsToTheToolFiles(t *testing.T) {
 				dir := syncProject(t, st, [3]string{"x", "example.com/a/x", "v1.0.0"})
 
 				// The fake go writes no sums; a real one does.
-				sums := map[string]string{"split": "tools/x.sum", "module": "tools/x/go.sum", "unified": "tools/go.sum"}
+				sums := map[string]string{
+					"split":   config.DefaultDir + "/x.sum",
+					"module":  config.DefaultDir + "/x/go.sum",
+					"unified": config.DefaultDir + "/go.sum",
+				}
 				writeFile(t, filepath.Join(dir, sums[st]), "sum\n")
 
 				syncIn(t, installGo(installOpts{}), dir, installOpts{}).ok(t)
@@ -833,8 +846,8 @@ func TestSyncFastPathIgnoresDotFiles(t *testing.T) {
 	dir := syncProject(t, "split", [3]string{"x", "example.com/a/x", "v1.0.0"})
 
 	syncIn(t, installGo(installOpts{}), dir, installOpts{}).ok(t)
-	writeFile(t, filepath.Join(dir, "tools", ".scratch"), "noise")
-	writeFile(t, filepath.Join(dir, "tools", ".cache", "x"), "noise")
+	writeFile(t, filepath.Join(dir, config.DefaultDir, ".scratch"), "noise")
+	writeFile(t, filepath.Join(dir, config.DefaultDir, ".cache", "x"), "noise")
 
 	if r := syncIn(t, installGo(installOpts{}), dir, installOpts{}); !strings.Contains(r.out, "Tools up to date") {
 		t.Fatalf("a dot-file broke the fast path: %q", r.out)

@@ -64,10 +64,10 @@ func runCommand(
 }
 
 func TestRemoveSplitAndModule(t *testing.T) {
-	for st, path := range map[string]string{"split": "tools/goimports.mod", "module": "tools/goimports"} {
+	for st, path := range map[string]string{"split": config.DefaultDir + "/goimports.mod", "module": config.DefaultDir + "/goimports"} {
 		t.Run(st, func(t *testing.T) {
 			dir := infoFixture(t, st)
-			writeFile(t, filepath.Join(dir, "tools", "goimports.sum"), "x\n")
+			writeFile(t, filepath.Join(dir, config.DefaultDir, "goimports.sum"), "x\n")
 
 			out, _, err := runCommand(t, command.NewRemove(), dir, &fakeGo{}, nil, "goimports")
 			if err != nil || !strings.Contains(out, "🗑️  Removing goimports...") ||
@@ -76,7 +76,7 @@ func TestRemoveSplitAndModule(t *testing.T) {
 			}
 
 			if exists(filepath.Join(dir, path)) ||
-				(st == "split" && exists(filepath.Join(dir, "tools", "goimports.sum"))) {
+				(st == "split" && exists(filepath.Join(dir, config.DefaultDir, "goimports.sum"))) {
 				t.Fatal("files remain")
 			}
 
@@ -92,7 +92,7 @@ func TestRemoveUnifiedDropsTheDirectiveAndTidies(t *testing.T) {
 	g := &fakeGo{}
 
 	out, _, err := runCommand(t, command.NewRemove(), dir, g, nil, "goimports")
-	if err != nil || !strings.Contains(out, "✅ Dropped goimports from tools/go.mod") {
+	if err != nil || !strings.Contains(out, "✅ Dropped goimports from "+config.DefaultDir+"/go.mod") {
 		t.Fatalf("err=%v out=%s", err, out)
 	}
 
@@ -102,7 +102,7 @@ func TestRemoveUnifiedDropsTheDirectiveAndTidies(t *testing.T) {
 		if c.Args[0] != "env" {
 			seen = append(seen, strings.Join(c.Args, " "))
 
-			if filepath.Base(c.Dir) != "tools" {
+			if filepath.Base(c.Dir) != config.DefaultDir {
 				t.Errorf("ran in %s", c.Dir)
 			}
 		}
@@ -138,7 +138,7 @@ func TestRemoveValidatesEveryNameFirst(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	if !exists(filepath.Join(dir, "tools", "goimports.mod")) {
+	if !exists(filepath.Join(dir, config.DefaultDir, "goimports.mod")) {
 		t.Fatal("goimports was removed before validation finished")
 	}
 }
@@ -152,14 +152,14 @@ func TestRemoveUnknownNameFailsButRemovesTheRest(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 
-	if exists(filepath.Join(dir, "tools", "goimports.mod")) {
+	if exists(filepath.Join(dir, config.DefaultDir, "goimports.mod")) {
 		t.Fatal("the known tool was not removed")
 	}
 }
 
 func TestRemoveACleansUpAManifestOnlyEntry(t *testing.T) {
 	dir := infoFixture(t, "split")
-	_ = os.Remove(filepath.Join(dir, "tools", "goimports.mod"))
+	_ = os.Remove(filepath.Join(dir, config.DefaultDir, "goimports.mod"))
 
 	out, _, err := runCommand(t, command.NewRemove(), dir, &fakeGo{}, nil, "goimports")
 	if err != nil || !strings.Contains(out, "goimports.mod not found") || len(manifestTools(t, dir)) != 0 {
@@ -181,7 +181,7 @@ func TestRemoveFailureStillFlushesTheManifest(t *testing.T) {
 	target := filepath.Join(dir, "elsewhere.mod")
 	writeFile(t, target, "module x\n")
 
-	if err := os.Symlink(target, filepath.Join(dir, "tools", "other.mod")); err != nil {
+	if err := os.Symlink(target, filepath.Join(dir, config.DefaultDir, "other.mod")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,7 +233,7 @@ func TestRemoveNeedsANameAndTheLock(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !exists(filepath.Join(dir, "tools", "goimports.mod")) {
+	if !exists(filepath.Join(dir, config.DefaultDir, "goimports.mod")) {
 		t.Fatal("removed while another process held the lock")
 	}
 

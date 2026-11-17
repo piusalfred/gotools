@@ -21,6 +21,7 @@
 package command_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,7 +46,7 @@ func TestListTextAndJSONEachStrategy(t *testing.T) {
 			}
 
 			out, _, err = runCommand(t, command.NewList(), dir, g, nil, "--format=json")
-			want := `{"schema_version":1,"strategy":"` + st + `","dir":"tools","go_version":"inherit","tools":[` +
+			want := `{"schema_version":1,"strategy":"` + st + `","dir":"` + config.DefaultDir + `","go_version":"inherit","tools":[` +
 				`{"name":"goimports","source":"go","package":"golang.org/x/tools/cmd/goimports","version":"v0.30.0","go":"1.24"}]}` + "\n"
 
 			if err != nil || out != want {
@@ -65,9 +66,18 @@ func TestListTextTable(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	modfile := config.DefaultDir + "/goimports.mod"
 	want := "  TOOL               SOURCE STRATEGY   GO       MODFILE                        PACKAGE@VERSION\n" +
 		"  ----               ------ --------   --       -------                        ---------------\n" +
-		"  goimports          go     split      1.24     tools/goimports.mod            golang.org/x/tools/cmd/goimports@v0.30.0\n"
+		fmt.Sprintf(
+			"  %-19s%-6s %-11s%-8s %-31s%s\n",
+			"goimports",
+			"go",
+			"split",
+			"1.24",
+			modfile,
+			"golang.org/x/tools/cmd/goimports@v0.30.0",
+		)
 	if out != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -122,7 +132,7 @@ func TestListUsageErrors(t *testing.T) {
 // A stray tools/go.mod must not be listed as a tool named "go".
 func TestListIgnoresAStrayGoMod(t *testing.T) {
 	dir := infoFixture(t, "split")
-	writeFile(t, filepath.Join(dir, "tools", "go.mod"), "module x\n\ngo 1.24\n\ntool a/b\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir, "go.mod"), "module x\n\ngo 1.24\n\ntool a/b\n")
 
 	out, _, _ := runCommand(t, command.NewList(), dir, &fakeGo{}, nil)
 	if strings.Contains(out, "\n  go ") {
@@ -135,7 +145,7 @@ func TestListShowsAToolThatIsOnlyOnDisk(t *testing.T) {
 	dir := newProject(t, "split")
 	writeFile(
 		t,
-		filepath.Join(dir, "tools", "lint.mod"),
+		filepath.Join(dir, config.DefaultDir, "lint.mod"),
 		"module tools/lint\n\ngo 1.25\n\ntool example.com/lint/cmd/lint\n\nrequire example.com/lint v1.0.0\n",
 	)
 
@@ -149,7 +159,7 @@ func TestListShowsAToolThatIsOnlyOnDisk(t *testing.T) {
 // An unreadable modfile is a warning, and the others are still listed.
 func TestListWarnsAboutAnUnreadableModfile(t *testing.T) {
 	dir := infoFixture(t, "split")
-	writeFile(t, filepath.Join(dir, "tools", "broken.mod"), "this is not a modfile\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir, "broken.mod"), "this is not a modfile\n")
 
 	out, errs, err := runCommand(t, command.NewList(), dir, &fakeGo{}, nil)
 	if err != nil || !strings.Contains(out, "goimports") || !strings.Contains(errs, "⚠️") {
@@ -159,7 +169,7 @@ func TestListWarnsAboutAnUnreadableModfile(t *testing.T) {
 
 func TestListRefusesASymlinkedToolsDirectory(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Symlink(t.TempDir(), filepath.Join(dir, "tools")); err != nil {
+	if err := os.Symlink(t.TempDir(), filepath.Join(dir, config.DefaultDir)); err != nil {
 		t.Skip(err)
 	}
 
@@ -172,7 +182,11 @@ func TestListRefusesASymlinkedToolsDirectory(t *testing.T) {
 // with no go directive has an unknown Go version.
 func TestListShowsWhatTheModfileDoesNotPin(t *testing.T) {
 	dir := newProject(t, "split")
-	writeFile(t, filepath.Join(dir, "tools", "bare.mod"), "module tools/bare\n\ntool example.com/bare/cmd/bare\n")
+	writeFile(
+		t,
+		filepath.Join(dir, config.DefaultDir, "bare.mod"),
+		"module tools/bare\n\ntool example.com/bare/cmd/bare\n",
+	)
 
 	out, _, err := runCommand(t, command.NewList(), dir, &fakeGo{}, nil)
 	if err != nil || !strings.Contains(out, "example.com/bare/cmd/bare@unknown") ||

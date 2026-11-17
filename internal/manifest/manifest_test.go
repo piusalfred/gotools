@@ -212,7 +212,7 @@ func TestRenderDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, want := range []string{`"strategy": "split"`, `"dir": "tools"`, `"go_version": "inherit"`, `"module_prefix": "tools"`} {
+	for _, want := range []string{`"strategy": "split"`, `"dir": "gotools"`, `"go_version": "inherit"`, `"module_prefix": "gotools"`} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("missing %s:\n%s", want, out)
 		}

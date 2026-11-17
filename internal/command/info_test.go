@@ -41,7 +41,7 @@ func infoFixture(t *testing.T, st string) string {
 
 	dir := t.TempDir()
 	m := manifest.New()
-	m.Strategy, m.ModulePrefix = st, "tools"
+	m.Strategy, m.Dir, m.ModulePrefix = st, config.DefaultDir, "tools"
 	m.SetTool(manifest.Tool{Name: "goimports", Source: "go", Package: imports, Version: "v0.30.0"})
 
 	if err := m.Flush(filepath.Join(dir, config.ManifestFile)); err != nil {
@@ -50,11 +50,11 @@ func infoFixture(t *testing.T, st string) string {
 
 	switch st {
 	case "split":
-		writeFile(t, filepath.Join(dir, "tools", "goimports.mod"), goimportsMod)
+		writeFile(t, filepath.Join(dir, config.DefaultDir, "goimports.mod"), goimportsMod)
 	case "module":
-		writeFile(t, filepath.Join(dir, "tools", "goimports", "go.mod"), goimportsMod)
+		writeFile(t, filepath.Join(dir, config.DefaultDir, "goimports", "go.mod"), goimportsMod)
 	case "unified":
-		writeFile(t, filepath.Join(dir, "tools", "go.mod"), goimportsMod)
+		writeFile(t, filepath.Join(dir, config.DefaultDir, "go.mod"), goimportsMod)
 	}
 
 	return dir
@@ -135,7 +135,8 @@ func TestInfoUnknownTool(t *testing.T) {
 	}
 
 	_, _, err = infoIn(t, infoFixture(t, "unified"), &fakeGo{}, "nope")
-	if ierrors.CodeOf(err) != ierrors.ToolNotFound || !strings.Contains(err.Error(), "not found in tools/go.mod") {
+	if ierrors.CodeOf(err) != ierrors.ToolNotFound ||
+		!strings.Contains(err.Error(), "not found in "+config.DefaultDir+"/go.mod") {
 		t.Fatalf("unified: %v", err)
 	}
 }
@@ -144,7 +145,7 @@ func TestInfoUnknownTool(t *testing.T) {
 // without a modfile is still shown as JSON, not runnable.
 func TestInfoFallsBackToTheManifest(t *testing.T) {
 	dir := infoFixture(t, "split")
-	writeFile(t, filepath.Join(dir, "tools", "goimports.mod"), "module tools/goimports\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir, "goimports.mod"), "module tools/goimports\n")
 
 	g := &fakeGo{}
 
@@ -173,7 +174,7 @@ func TestInfoWarnsAboutManifestProblems(t *testing.T) {
 	writeFile(
 		t,
 		filepath.Join(dir, config.ManifestFile),
-		`{"schema_version":1,"strategy":"split","dir":"tools","tools":{"goimports":{"source":"go","package":"`+imports+`","version":"v0.30.0"}},"extra":1}`,
+		`{"schema_version":1,"strategy":"split","dir":"`+config.DefaultDir+`","tools":{"goimports":{"source":"go","package":"`+imports+`","version":"v0.30.0"}},"extra":1}`,
 	)
 
 	if _, _, err := infoIn(t, dir, &fakeGo{}, "goimports"); err != nil {
