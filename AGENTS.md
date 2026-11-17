@@ -195,7 +195,10 @@ builds itself with itself. `bin/` is git-ignored.
   temp file and renamed (`fsx.WriteFileAtomic`, `Manifest.Flush`); never write in
   place. Installs snapshot the modfile and sum and restore them on any failure
   (`fsx.TakeSnapshot`); `migrate` moves the old layout aside and moves it back on
-  failure; `purge --restore` snapshots the root go.mod.
+  failure (a `--dir` move renames the directory itself, after copying it to a
+  backup, and keeps the lock file at the old path so the held project lock is
+  not carried into the new directory); `purge --restore` snapshots the root
+  go.mod.
 - **Dry run.** Every destructive command honors `--dry-run` and then writes
   nothing, not even the lock file (doctor and init's dry-run take no lock).
 - **Offline.** `--offline` / `GOTOOLS_OFFLINE=1` / manifest `offline`: `sync`

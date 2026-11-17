@@ -567,7 +567,10 @@ func TestMigrateUsageMessages(t *testing.T) {
 	dir := newProject(t, "split")
 
 	r := migrateIn(t, installGo(installOpts{}), dir, installOpts{})
-	if !strings.Contains(r.runErr.Error(), "Usage: gotools migrate <unified|split|module> [--dry-run]") {
+	if !strings.Contains(
+		r.runErr.Error(),
+		"Usage: gotools migrate [<unified|split|module>] [--dir=<path>] [--dry-run]",
+	) {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
@@ -697,4 +700,223 @@ func TestContextMigrateTakesNoLock(t *testing.T) {
 	if got := manifestStrategy(t, dir); got != "split" {
 		t.Fatalf("manifest strategy = %q", got)
 	}
+}
+
+// A directory move keeps the strategy and carries every file, managed or not.
+func TestMigrateDirOnly(t *testing.T) {
+	dir := installedProject(t, "split")
+	writeFile(t, filepath.Join(dir, "tools/README.md"), "keep me\n")
+
+	r := migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "--dir=gotools")
+	r.ok(t)
+
+	for _, want := range []string{
+		"Migrating from 'split' to 'split'",
+		"Moved tools/ to gotools/",
+		"Migration from 'split' to 'split' complete",
+	} {
+		if !strings.Contains(r.out, want) {
+			t.Fatalf("missing %q in %q", want, r.out)
+		}
+	}
+
+	got := tree(t, dir)
+
+	for _, n := range []string{"x", "y"} {
+		if !strings.Contains(got["gotools/"+n+".mod"], "tool example.com/") {
+			t.Fatalf("gotools/%s.mod missing or has no tool directive: %q", n, got["gotools/"+n+".mod"])
+		}
+
+		if _, ok := got["tools/"+n+".mod"]; ok {
+			t.Fatalf("old file tools/%s.mod survived", n)
+		}
+	}
+
+	if got["gotools/README.md"] != "keep me\n" {
+		t.Fatalf("unrelated file lost: %v", keys(got))
+	}
+
+	m := readManifest(t, dir)
+	if m.Dir != "gotools" {
+		t.Fatalf("manifest dir = %q", m.Dir)
+	}
+
+	if m.Strategy != "split" {
+		t.Fatalf("manifest strategy = %q", m.Strategy)
+	}
+
+	noMigrateLeftovers(t, dir)
+}
+
+// A directory move and a strategy change are one migration.
+func TestMigrateDirAndStrategy(t *testing.T) {
+	dir := installedProject(t, "split")
+
+	migrateIn(t, installGo(installOpts{}), dir, installOpts{}, "module", "--dir=gotools").ok(t)
+
+	got := tree(t, dir)
+
+	for _, n := range []string{"x", "y"} {
+		if !strings.Contains(got["gotools/"+n+"/go.mod"], "tool example.com/") {
+			t.Fatalf("gotools/%s/go.mod missing or has no tool directive: %q", n, got["gotools/"+n+"/go.mod"])
+		}
+
+		if _, ok := got["tools/"+n+".mod"]; ok {
+			t.Fatalf("old file tools/%s.mod survived", n)
+		}
+	}
+
+	m := readManifest(t, dir)
+	if m.Dir != "gotools" || m.Strategy != "module" {
+		t.Fatalf("manifest = dir %q strategy %q", m.Dir, m.Strategy)
+	}
+
+	noMigrateLeftovers(t, dir)
+}
+
+// A failed reinstall puts the whole directory back where it was.
+func TestMigrateDirFailureMovesEverythingBack(t *testing.T) {
+	dir := installedProject(t, "split")
+	writeFile(t, filepath.Join(dir, "tools/README.md"), "keep me\n")
+
+	before := tree(t, dir)
+
+	r := migrateIn(t, failingOn("example.com/b"), dir, installOpts{}, "--dir=gotools")
+	if r.runErr == nil || !strings.Contains(r.runErr.Error(), "boom") {
+		t.Fatalf("err = %v", r.runErr)
+	}
+
+	sameTree(t, before, tree(t, dir))
+
+	if exists(filepath.Join(dir, "gotools")) {
+		t.Fatalf("target directory survived: %v", files(t, dir))
+	}
+
+	if m := readManifest(t, dir); m.Dir != "tools" {
+		t.Fatalf("manifest dir = %q", m.Dir)
+	}
+
+	noMigrateLeftovers(t, dir)
+}
+
+func TestMigrateDirDryRunWritesNothing(t *testing.T) {
+	dir := installedProject(t, "split")
+	before := tree(t, dir)
+	g := installGo(installOpts{})
+
+	r := migrateIn(t, g, dir, installOpts{}, "--dir=gotools", "--dry-run")
+	r.ok(t)
+
+	if !strings.Contains(r.out, "[dry-run] Would move tools/ to gotools/") {
+		t.Fatalf("out=%q", r.out)
+	}
+
+	sameTree(t, before, tree(t, dir))
+	noInstalls(t, g)
+}
+
+// A directory move that needs the network is refused offline, before the
+// directory is touched.
+func TestMigrateDirOfflineRefusesBeforeTouchingAnything(t *testing.T) {
+	dir := installedProject(t, "split")
+	before := tree(t, dir)
+	o := installOpts{environ: []string{"GOTOOLS_OFFLINE=1"}}
+
+	r := migrateIn(t, installGo(installOpts{}), dir, o, "--dir=gotools")
+	if r.code() != ierrors.Offline || !strings.Contains(r.runErr.Error(), "Network required") {
+		t.Fatalf("err = %v", r.runErr)
+	}
+
+	sameTree(t, before, tree(t, dir))
+	noMigrateLeftovers(t, dir)
+}
+
+// A target that exists, is unsafe, or holds the source is refused before
+// anything moves.
+func TestMigrateDirRefusesAnUnsafeTarget(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args  []string
+		setup func(t *testing.T, dir string)
+		want  string
+	}{
+		"existing directory": {
+			args: []string{"--dir=gotools"},
+			setup: func(t *testing.T, dir string) {
+				t.Helper()
+				writeFile(t, filepath.Join(dir, "gotools/note.txt"), "not mine\n")
+			},
+			want: "already exists",
+		},
+		"into itself": {
+			args:  []string{"--dir=tools/inner"},
+			setup: func(t *testing.T, dir string) { t.Helper() },
+			want:  "into itself",
+		},
+		"outside the project": {
+			args:  []string{"--dir=../gotools"},
+			setup: func(t *testing.T, dir string) { t.Helper() },
+			want:  "inside the project",
+		},
+		"the same directory": {
+			args:  []string{"split", "--dir=tools"},
+			setup: func(t *testing.T, dir string) { t.Helper() },
+			want:  "Nothing to do",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := installedProject(t, "split")
+			tc.setup(t, dir)
+
+			before := tree(t, dir)
+			g := installGo(installOpts{})
+
+			r := migrateIn(t, g, dir, installOpts{}, tc.args...)
+
+			var errStr string
+			if r.runErr != nil {
+				errStr = r.runErr.Error()
+			}
+
+			if !strings.Contains(errStr+r.out, tc.want) {
+				t.Fatalf("err=%v out=%q, want %q", r.runErr, r.out, tc.want)
+			}
+
+			sameTree(t, before, tree(t, dir))
+			noInstalls(t, g)
+			noMigrateLeftovers(t, dir)
+		})
+	}
+}
+
+// A symlinked entry is refused before the directory is renamed: it would be
+// carried into the new directory, where gotools rewrites what it manages.
+func TestMigrateDirRefusesSymlinkedEntries(t *testing.T) {
+	dir := installedProject(t, "split")
+	outside := filepath.Join(t.TempDir(), "evil.mod")
+	writeFile(t, outside, "module evil\n")
+
+	if err := os.Remove(filepath.Join(dir, "tools/x.mod")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Symlink(outside, filepath.Join(dir, "tools/x.mod")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	g := installGo(installOpts{})
+
+	r := migrateIn(t, g, dir, installOpts{}, "--dir=gotools")
+	if r.code() != ierrors.Environment || !strings.Contains(r.runErr.Error(), "symlink") {
+		t.Fatalf("err = %v", r.runErr)
+	}
+
+	if fi, err := os.Lstat(filepath.Join(dir, "tools/x.mod")); err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink was disturbed: %v", err)
+	}
+
+	if exists(filepath.Join(dir, "gotools")) {
+		t.Fatalf("target directory created: %v", files(t, dir))
+	}
+
+	noInstalls(t, g)
 }
