@@ -8,7 +8,7 @@ Commands:
   install [name] <pkg>                     Install a new tool.
   import-gobin [binary...]                 Import tools already installed with 'go install' (from GOBIN).
   sync                                     Sync tool state to match .gotools.json.
-  migrate <unified|split|module>           Migrate to a different strategy.
+  migrate <unified|split|module>           Migrate to a different strategy or tools directory.
   version                                  Show the gotools version.
   info <tool-name>                         Show detailed information about a specific tool.
   check                                    Verify all managed tools are runnable.

@@ -2,7 +2,7 @@
   "version": 1,
   "gotools_version": "v0.8.0",
   "strategy": "module",
-  "dir": "tools",
+  "dir": "gotools",
   "go_version": "inherit",
   "module_prefix": "github.com/piusalfred/gotools",
   "settings": {

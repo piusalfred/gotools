@@ -59,30 +59,37 @@ const EnvPrefix = "GOTOOLS_"
 
 // The environment variables.
 const (
-	EnvVarStrategy          = "GOTOOLS_STRATEGY"
-	EnvVarDir               = "GOTOOLS_DIR"
-	EnvVarGoVersion         = "GOTOOLS_GO_VERSION"
-	EnvVarModulePrefix      = "GOTOOLS_MODULE_PREFIX"
-	EnvVarOffline           = "GOTOOLS_OFFLINE"
-	EnvVarJobs              = "GOTOOLS_JOBS"
-	EnvVarOperationTimeout  = "GOTOOLS_OPERATION_TIMEOUT"
-	EnvVarLockTimeout       = "GOTOOLS_LOCK_TIMEOUT"
-	EnvVarNoLock            = "GOTOOLS_NO_LOCK"
-	EnvVarTrace             = "GOTOOLS_TRACE"
-	EnvVarVerbose           = "GOTOOLS_VERBOSE"
-	KeyStrategy             = "strategy"
-	KeyDir                  = "dir"
-	KeyGoVersion            = "go_version"
-	KeyModulePrefix         = "module_prefix"
-	KeyOffline              = "settings.offline"
-	KeyJobs                 = "settings.jobs"
-	KeyOperationTimeout     = "settings.operation_timeout"
-	KeyLockTimeout          = "settings.lock_timeout"
-	KeyNoLock               = "settings.no_lock"
-	KeyTrace                = "settings.trace"
-	KeyVerbose              = "settings.verbose"
-	DefaultStrategy         = StrategySplit
-	DefaultDir              = "tools"
+	EnvVarStrategy         = "GOTOOLS_STRATEGY"
+	EnvVarDir              = "GOTOOLS_DIR"
+	EnvVarGoVersion        = "GOTOOLS_GO_VERSION"
+	EnvVarModulePrefix     = "GOTOOLS_MODULE_PREFIX"
+	EnvVarOffline          = "GOTOOLS_OFFLINE"
+	EnvVarJobs             = "GOTOOLS_JOBS"
+	EnvVarOperationTimeout = "GOTOOLS_OPERATION_TIMEOUT"
+	EnvVarLockTimeout      = "GOTOOLS_LOCK_TIMEOUT"
+	EnvVarNoLock           = "GOTOOLS_NO_LOCK"
+	EnvVarTrace            = "GOTOOLS_TRACE"
+	EnvVarVerbose          = "GOTOOLS_VERBOSE"
+	KeyStrategy            = "strategy"
+	KeyDir                 = "dir"
+	KeyGoVersion           = "go_version"
+	KeyModulePrefix        = "module_prefix"
+	KeyOffline             = "settings.offline"
+	KeyJobs                = "settings.jobs"
+	KeyOperationTimeout    = "settings.operation_timeout"
+	KeyLockTimeout         = "settings.lock_timeout"
+	KeyNoLock              = "settings.no_lock"
+	KeyTrace               = "settings.trace"
+	KeyVerbose             = "settings.verbose"
+	DefaultStrategy        = StrategySplit
+	// DefaultDir is the tools directory a new project gets. A project that
+	// already has a tools/ directory keeps it: Context.Load falls back to it
+	// when nothing names a directory.
+	DefaultDir = "gotools"
+	// LegacyDir is the tools directory gotools used before DefaultDir. It is
+	// the fallback for a project that has one and no manifest, environment or
+	// flag naming another.
+	LegacyDir               = "tools"
 	DefaultGoVersion        = "inherit"
 	DefaultModulePrefix     = ""
 	DefaultOffline          = false

@@ -54,7 +54,7 @@ func manifestWriter(t *testing.T, dir string) string {
 func fingerprintWriter(t *testing.T, dir string) string {
 	t.Helper()
 
-	fp, err := fingerprint.NewFile(filepath.Join(dir, "tools")).Read()
+	fp, err := fingerprint.NewFile(filepath.Join(dir, config.DefaultDir)).Read()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestWarnsFromTheFingerprintWhenTheManifestRecordsNoVersion(t *testing.T) {
 	r := asVersion(t, "v0.7.1", command.NewList(), dir)
 	r.ok(t)
 
-	if !strings.Contains(r.err, "tools/.gotools.fingerprint was written by a newer gotools (v0.8.0)") {
+	if !strings.Contains(r.err, config.DefaultDir+"/.gotools.fingerprint was written by a newer gotools (v0.8.0)") {
 		t.Errorf("stderr:\n%s", r.err)
 	}
 }

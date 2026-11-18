@@ -30,6 +30,7 @@ import (
 	"testing"
 
 	"github.com/piusalfred/gotools/internal/command"
+	"github.com/piusalfred/gotools/internal/config"
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 	"github.com/piusalfred/gotools/internal/gocmd"
 	"github.com/piusalfred/gotools/internal/manifest"
@@ -70,6 +71,59 @@ func TestRootGoModIsInTheProjectRoot(t *testing.T) {
 	if got := c.RootGoMod(); got != filepath.Join(c.Root, "go.mod") {
 		t.Fatalf("RootGoMod = %q", got)
 	}
+}
+
+// The tools directory is the default unless a layer names another: an explicit
+// value wins, and a legacy tools/ directory is the fallback when nothing does.
+func TestDirResolution(t *testing.T) {
+	load := func(t *testing.T, dir string, environ ...string) string {
+		t.Helper()
+
+		c, _, _ := installContext(dir, installGo(installOpts{}), installOpts{environ: environ})
+		if err := c.Load(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+
+		return c.Config.Dir
+	}
+
+	t.Run("default is the default", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.24\n")
+
+		if got := load(t, dir); got != config.DefaultDir {
+			t.Fatalf("dir = %q, want %q", got, config.DefaultDir)
+		}
+	})
+
+	t.Run("an explicit dir wins", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.24\n")
+
+		if got := load(t, dir, "GOTOOLS_DIR=custom"); got != "custom" {
+			t.Fatalf("dir = %q, want custom", got)
+		}
+	})
+
+	t.Run("a legacy tools directory is the fallback", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.24\n")
+		writeFile(t, filepath.Join(dir, config.LegacyDir, "x.mod"), "module tools/x\n")
+
+		if got := load(t, dir); got != config.LegacyDir {
+			t.Fatalf("dir = %q, want %q (fallback)", got, config.LegacyDir)
+		}
+	})
+
+	t.Run("an explicit dir beats the fallback", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.24\n")
+		writeFile(t, filepath.Join(dir, config.LegacyDir, "x.mod"), "module tools/x\n")
+
+		if got := load(t, dir, "GOTOOLS_DIR=custom"); got != "custom" {
+			t.Fatalf("dir = %q, want custom (explicit beats fallback)", got)
+		}
+	})
 }
 
 func TestPlanAdoption(t *testing.T) {

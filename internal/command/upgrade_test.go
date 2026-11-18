@@ -28,6 +28,7 @@ import (
 	"testing"
 
 	"github.com/piusalfred/gotools/internal/command"
+	"github.com/piusalfred/gotools/internal/config"
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 )
 
@@ -192,14 +193,14 @@ func TestUpgradeOffline(t *testing.T) {
 // stay upgraded and recorded.
 func TestUpgradeFailureKeepsTheFailedToolIntact(t *testing.T) {
 	dir := installedProject(t, "split")
-	yMod := readFile(t, filepath.Join(dir, "tools/y.mod"))
+	yMod := readFile(t, filepath.Join(dir, config.DefaultDir+"/y.mod"))
 
 	_, _, err := upgradeIn(t, failingOn("example.com/b"), dir, nil, "all")
 	if err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("err = %v", err)
 	}
 
-	if readFile(t, filepath.Join(dir, "tools/y.mod")) != yMod || toolVersion(t, dir, "y") != "v1.2.0" {
+	if readFile(t, filepath.Join(dir, config.DefaultDir+"/y.mod")) != yMod || toolVersion(t, dir, "y") != "v1.2.0" {
 		t.Fatal("failed tool changed")
 	}
 

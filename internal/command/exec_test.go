@@ -134,12 +134,12 @@ func TestExecRunsTheToolInTheInvocationDirectory(t *testing.T) {
 				}
 			}
 
-			wantDir := map[string]string{"split": dir, "module": filepath.Join(dir, "tools", "goimports"), "unified": filepath.Join(dir, "tools")}[st]
+			wantDir := map[string]string{"split": dir, "module": filepath.Join(dir, config.DefaultDir, "goimports"), "unified": filepath.Join(dir, config.DefaultDir)}[st]
 			if build.Dir != wantDir || build.Args[len(build.Args)-1] != "goimports" {
 				t.Fatalf("build call = %+v", build)
 			}
 
-			if st == "split" && build.Args[2] != "-modfile="+filepath.Join(dir, "tools", "goimports.mod") {
+			if st == "split" && build.Args[2] != "-modfile="+filepath.Join(dir, config.DefaultDir, "goimports.mod") {
 				t.Fatalf("split build args = %v", build.Args)
 			}
 		})
@@ -169,7 +169,7 @@ func TestExecUnifiedPicksTheRequestedTool(t *testing.T) {
 
 	writeFile(
 		t,
-		filepath.Join(dir, "tools", "go.mod"),
+		filepath.Join(dir, config.DefaultDir, "go.mod"),
 		"module tools/tools\n\ngo 1.24\n\ntool golang.org/x/tools/cmd/goimports\n\ntool example.com/x/cmd/staticcheck\n",
 	)
 
@@ -219,8 +219,8 @@ func TestExecRefusals(t *testing.T) {
 
 	t.Run("not installed", func(t *testing.T) {
 		for st, msg := range map[string]string{
-			"split":  "Tool 'ghost' not found (tools/ghost.mod missing). Run 'install' first.",
-			"module": "Tool 'ghost' not found (tools/ghost/go.mod missing). Run 'install' first.",
+			"split":  "Tool 'ghost' not found (" + config.DefaultDir + "/ghost.mod missing). Run 'install' first.",
+			"module": "Tool 'ghost' not found (" + config.DefaultDir + "/ghost/go.mod missing). Run 'install' first.",
 		} {
 			_, _, err := execIn(t, buildGo(bin), infoFixture(t, st), nil, "", "ghost")
 			if ierrors.CodeOf(err) != ierrors.ToolNotFound || !strings.Contains(err.Error(), msg) {
@@ -231,11 +231,11 @@ func TestExecRefusals(t *testing.T) {
 
 	t.Run("unified without go.mod", func(t *testing.T) {
 		dir := infoFixture(t, "unified")
-		_ = os.Remove(filepath.Join(dir, "tools", "go.mod"))
+		_ = os.Remove(filepath.Join(dir, config.DefaultDir, "go.mod"))
 
 		_, _, err := execIn(t, buildGo(bin), dir, nil, "", "goimports")
 		if ierrors.CodeOf(err) != ierrors.ToolNotFound ||
-			!strings.Contains(err.Error(), "No tools/go.mod found. Run 'init' first.") {
+			!strings.Contains(err.Error(), "No "+config.DefaultDir+"/go.mod found. Run 'init' first.") {
 			t.Fatalf("err = %v", err)
 		}
 	})
@@ -249,7 +249,7 @@ func TestExecRefusals(t *testing.T) {
 
 	t.Run("symlinked modfile", func(t *testing.T) {
 		dir := infoFixture(t, "split")
-		mod := filepath.Join(dir, "tools", "goimports.mod")
+		mod := filepath.Join(dir, config.DefaultDir, "goimports.mod")
 		target := filepath.Join(dir, "real.mod")
 
 		if err := os.Rename(mod, target); err != nil {
@@ -268,7 +268,7 @@ func TestExecRefusals(t *testing.T) {
 
 	t.Run("symlinked module directory", func(t *testing.T) {
 		dir := infoFixture(t, "module")
-		d := filepath.Join(dir, "tools", "goimports")
+		d := filepath.Join(dir, config.DefaultDir, "goimports")
 		target := filepath.Join(dir, "realdir")
 
 		if err := os.Rename(d, target); err != nil {
@@ -438,7 +438,8 @@ func TestExecTrace(t *testing.T) {
 		t.Fatalf("cmd = %q, want %q", r.Cmd, want)
 	}
 
-	if r.Env.Dir != "tools" || r.Env.Trace != "true" || r.Env.ModulePrefix != "tools" || r.Env.GoVersion == "" {
+	if r.Env.Dir != config.DefaultDir || r.Env.Trace != "true" || r.Env.ModulePrefix != "tools" ||
+		r.Env.GoVersion == "" {
 		t.Fatalf("env = %+v", r.Env)
 	}
 

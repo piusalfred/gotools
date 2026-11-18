@@ -16,7 +16,7 @@ Usage: gotools init [options]
 
   Options:
     --strategy <string>  Isolation strategy: unified, split or module (default: "split")
-    --dir <string>       Tools directory (default: "tools")
+    --dir <string>       Tools directory (default: "gotools")
     --go <string>        Go version for tools, or inherit (default: "inherit")
     --prefix <string>    Module path prefix (default: auto from go.mod)
     --no-migrate         Leave the root go.mod untouched

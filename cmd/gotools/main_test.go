@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/piusalfred/gotools/internal/config"
 	"github.com/piusalfred/gotools/internal/gocmd"
 )
 
@@ -131,7 +132,7 @@ func TestInitWritesTheManifestAndSyncs(t *testing.T) {
 	bin, dir := build(t), project(t)
 
 	out, code := runIn(t, bin, dir, "init", "--strategy", "module")
-	if code != 0 || !strings.Contains(out, "Initialized .gotools.json (strategy=module, dir=tools)") ||
+	if code != 0 || !strings.Contains(out, "Initialized .gotools.json (strategy=module, dir="+config.DefaultDir+")") ||
 		!strings.Contains(out, "Sync complete") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -147,7 +148,8 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	bin, dir := build(t), project(t)
 
 	out, code := runIn(t, bin, dir, "init", "--dry-run", "--strategy=unified")
-	if code != 0 || !strings.Contains(out, "[dry-run] Would write .gotools.json (strategy=unified, dir=tools)") ||
+	if code != 0 ||
+		!strings.Contains(out, "[dry-run] Would write .gotools.json (strategy=unified, dir="+config.DefaultDir+")") ||
 		!strings.Contains(out, "Would sync (strategy=unified") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -186,7 +188,7 @@ func TestSyncAutoMigratesAndMigrateRuns(t *testing.T) {
 	}
 
 	if err := os.WriteFile(
-		filepath.Join(dir, "tools", "x.mod"),
+		filepath.Join(dir, config.DefaultDir, "x.mod"),
 		[]byte("module tools/x\n\ngo 1.24\n"),
 		0o644,
 	); err != nil {
@@ -200,7 +202,7 @@ func TestSyncAutoMigratesAndMigrateRuns(t *testing.T) {
 	}
 
 	out, code = runIn(t, bin, dir, "migrate", "split", "--dry-run")
-	if code != 0 || !strings.Contains(out, "[dry-run] Would migrate tools/ from 'module' to 'split'") {
+	if code != 0 || !strings.Contains(out, "[dry-run] Would migrate "+config.DefaultDir+"/ from 'module' to 'split'") {
 		t.Fatalf("migrate --dry-run: code=%d out=%q", code, out)
 	}
 
@@ -249,12 +251,12 @@ func TestVersionAndItsFlags(t *testing.T) {
 func TestInfoShowsAToolAndItsExitCode(t *testing.T) {
 	bin, dir := build(t), project(t)
 
-	if err := os.MkdirAll(filepath.Join(dir, "tools"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, config.DefaultDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	mod := "module tools/goimports\n\ngo 1.24\n\ntool golang.org/x/tools/cmd/goimports\n\nrequire golang.org/x/tools v0.30.0\n"
-	if err := os.WriteFile(filepath.Join(dir, "tools", "goimports.mod"), []byte(mod), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, config.DefaultDir, "goimports.mod"), []byte(mod), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -289,12 +291,12 @@ func TestInfoShowsAToolAndItsExitCode(t *testing.T) {
 func TestCheckExitsFiveForAToolThatCannotRun(t *testing.T) {
 	bin, dir := build(t), project(t)
 
-	if err := os.MkdirAll(filepath.Join(dir, "tools"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, config.DefaultDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := os.WriteFile(
-		filepath.Join(dir, "tools", "ghost.mod"),
+		filepath.Join(dir, config.DefaultDir, "ghost.mod"),
 		[]byte("module tools/ghost\n\ngo 1.24\n"),
 		0o644,
 	); err != nil {
@@ -397,7 +399,11 @@ func TestExecPassesFlagsToTheToolAndReportsAMissingOne(t *testing.T) {
 	}
 
 	out, code := runIn(t, bin, dir, "exec", "ghost", "--version", "-v", "--json")
-	if code != 5 || !strings.Contains(out, "Tool 'ghost' not found (tools/ghost.mod missing). Run 'install' first.") {
+	if code != 5 ||
+		!strings.Contains(
+			out,
+			"Tool 'ghost' not found ("+config.DefaultDir+"/ghost.mod missing). Run 'install' first.",
+		) {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
 
@@ -436,7 +442,7 @@ func TestUninstallDryRunKeepsTheBinary(t *testing.T) {
 func TestPurgeRefusesATypoAndLeavesAForeignToolsDirectory(t *testing.T) {
 	bin, dir := build(t), project(t)
 
-	if err := os.MkdirAll(filepath.Join(dir, "tools"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, config.DefaultDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -448,7 +454,7 @@ func TestPurgeRefusesATypoAndLeavesAForeignToolsDirectory(t *testing.T) {
 		t.Fatalf("code=%d", code)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "tools")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, config.DefaultDir)); err != nil {
 		t.Fatal("tools directory removed")
 	}
 }
@@ -483,7 +489,7 @@ func TestDoctorReportsAndNeverFailsTheShell(t *testing.T) {
 		t.Fatalf("code=%d", code)
 	}
 
-	if _, err := os.Stat(filepath.Join(dir, "tools")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, config.DefaultDir)); err == nil {
 		t.Fatal("doctor created the tools directory")
 	}
 }

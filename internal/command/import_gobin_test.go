@@ -30,6 +30,7 @@ import (
 
 	"github.com/piusalfred/gotools/internal/binfo"
 	"github.com/piusalfred/gotools/internal/command"
+	"github.com/piusalfred/gotools/internal/config"
 	ierrors "github.com/piusalfred/gotools/internal/errors"
 	"github.com/piusalfred/gotools/internal/gocmd"
 )
@@ -203,7 +204,7 @@ func TestImportGobinSkipsWhatCannotBeInstalled(t *testing.T) {
 	}
 
 	// The failed install left nothing behind.
-	if exists(filepath.Join(project, "tools", "staticcheck.mod")) {
+	if exists(filepath.Join(project, config.DefaultDir, "staticcheck.mod")) {
 		t.Error("the failed tool left its modfile")
 	}
 }
@@ -222,7 +223,7 @@ func TestImportGobinDryRun(t *testing.T) {
 		t.Errorf("output:\n%s", out)
 	}
 
-	if g.count("get") != 0 || len(manifestTools(t, project)) != 0 || exists(filepath.Join(project, "tools")) {
+	if g.count("get") != 0 || len(manifestTools(t, project)) != 0 || exists(filepath.Join(project, config.DefaultDir)) {
 		t.Error("a dry run changed something")
 	}
 }

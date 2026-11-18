@@ -6,7 +6,9 @@
 The `migrate` command handles moving between strategies.
 It reads your current tools, extracts their pinned
 versions, wipes the old structure, and rebuilds it using
-the new strategy.
+the new strategy. With `--dir` it moves the tools
+directory itself, keeping the strategy unless you also
+name a new one.
 
 Related: [Strategies](STRATEGIES.md) · [Usage](USAGE.md)
 
@@ -19,6 +21,12 @@ gotools migrate split
 
 # Migrate to unified
 gotools migrate unified
+
+# Move the tools directory, keeping the strategy
+gotools migrate --dir=gotools
+
+# Move the directory and change the strategy
+gotools migrate module --dir=gotools
 ```
 
 The migration process:
@@ -27,10 +35,20 @@ The migration process:
    structure (not the config file).
 2. Extracts the exact list of tools with their pinned
    versions.
-3. Cleans up the old tools directory.
-4. Updates `.gotools.json` with the new strategy.
+3. Cleans up the old tools directory. A directory move
+   renames it to the new path instead, unrelated files
+   and all.
+4. Updates `.gotools.json` with the new strategy, the
+   new directory, or both.
 5. Re-installs all tools at their exact previous
    versions under the new layout.
+
+A failure midway puts everything back: the old layout,
+its go.sum files, and any unrelated file kept in the
+directory. A directory move that cannot be safe is
+refused before anything moves — the target must stay
+inside the project, must not exist yet, and must not
+contain the current directory.
 
 You can also trigger migration indirectly: edit
 `GOTOOLS_STRATEGY` in `.gotools.json` and run `sync`.

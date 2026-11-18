@@ -188,7 +188,7 @@ func TestConfigRefusesANewerManifest(t *testing.T) {
 
 func TestConfigRefusesASymlinkedToolsDirectory(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Symlink(t.TempDir(), filepath.Join(dir, "tools")); err != nil {
+	if err := os.Symlink(t.TempDir(), filepath.Join(dir, config.DefaultDir)); err != nil {
 		t.Skip(err)
 	}
 

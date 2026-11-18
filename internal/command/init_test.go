@@ -324,7 +324,8 @@ func TestInitDefaultsAndPrefixFromRootGoMod(t *testing.T) {
 	initIn(t, dir, opts{}, nil).ok(t)
 
 	m := readManifest(t, dir)
-	if m.Strategy != "split" || m.Dir != "tools" || m.GoVersion != "inherit" || m.ModulePrefix != "example.com/test" {
+	if m.Strategy != "split" || m.Dir != config.DefaultDir || m.GoVersion != "inherit" ||
+		m.ModulePrefix != "example.com/test" {
 		t.Fatalf("manifest = %+v", m)
 	}
 }
@@ -443,7 +444,7 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 	r.ok(t)
 
 	for _, want := range []string{
-		"[dry-run] Would write .gotools.json (strategy=split, dir=tools)",
+		"[dry-run] Would write .gotools.json (strategy=split, dir=" + config.DefaultDir + ")",
 		"[dry-run] Would install stringer",
 		"[dry-run] Would strip tool directives from go.mod and run 'go mod tidy'.",
 	} {
@@ -460,7 +461,7 @@ func TestInitDryRunWritesNothing(t *testing.T) {
 		t.Fatalf("dry run wrote files: %v", got)
 	}
 
-	if exists(filepath.Join(dir, "tools")) {
+	if exists(filepath.Join(dir, config.DefaultDir)) {
 		t.Fatal("dry run created the tools directory, so it took the lock")
 	}
 
@@ -588,7 +589,7 @@ require (
 	)
 
 	m := manifest.New()
-	m.Strategy, m.ModulePrefix = "split", "tools"
+	m.Strategy, m.ModulePrefix = "split", config.DefaultDir
 	m.SetTool(manifest.Tool{Name: "foo", Source: "go", Package: "example.com/a/foo", Version: "v1.0.0"})
 
 	if err := m.Flush(filepath.Join(dir, config.ManifestFile)); err != nil {
@@ -735,7 +736,7 @@ func (f runnerFunc) Run(ctx context.Context, c gocmd.Call) (gocmd.Result, error)
 // resumes.
 func TestInitSyncFailureIsReported(t *testing.T) {
 	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, "tools", "x.mod"), "module tools/x\n\ngo 1.24\n")
+	writeFile(t, filepath.Join(dir, config.DefaultDir, "x.mod"), "module tools/x\n\ngo 1.24\n")
 
 	g := &fakeGo{fail: func(c gocmd.Call) string {
 		if len(c.Args) > 1 && c.Args[1] == "tidy" {
@@ -814,10 +815,10 @@ func TestInitAutoPrefixIsUsedForAdoptedTools(t *testing.T) {
 
 	if got := readFile(
 		t,
-		filepath.Join(dir, "tools", "addlicense.mod"),
+		filepath.Join(dir, config.DefaultDir, "addlicense.mod"),
 	); !strings.HasPrefix(
 		got,
-		"module example.com/test/tools/addlicense\n",
+		"module example.com/test/"+config.DefaultDir+"/addlicense\n",
 	) {
 		t.Fatalf("modfile:\n%s", got)
 	}
@@ -916,11 +917,11 @@ func TestInitWithoutALockCreatesTheToolsDirectory(t *testing.T) {
 		t.Fatal(o.runErr)
 	}
 
-	if !exists(filepath.Join(dir, "tools", ".gotools.fingerprint")) {
+	if !exists(filepath.Join(dir, config.DefaultDir, ".gotools.fingerprint")) {
 		t.Fatal("no fingerprint was written")
 	}
 
-	if exists(filepath.Join(dir, "tools", ".gotools.flock")) {
+	if exists(filepath.Join(dir, config.DefaultDir, ".gotools.flock")) {
 		t.Fatal("a lock file appeared although locking is off")
 	}
 }
@@ -931,7 +932,7 @@ func TestInitRebuildsTheManifestFromToolsOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(
 		t,
-		filepath.Join(dir, "tools", "x.mod"),
+		filepath.Join(dir, config.DefaultDir, "x.mod"),
 		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n",
 	)
 
@@ -954,7 +955,7 @@ func TestInitAgainDoesNotAdoptWhatTheManifestDoesNotList(t *testing.T) {
 
 	writeFile(
 		t,
-		filepath.Join(dir, "tools", "x.mod"),
+		filepath.Join(dir, config.DefaultDir, "x.mod"),
 		"module tools/x\n\ngo 1.24\n\ntool example.com/a/x\n\nrequire example.com/a v1.5.0\n",
 	)
 

@@ -130,7 +130,7 @@ func newProject(t *testing.T, strategy string) string {
 
 	dir := t.TempDir()
 	m := manifest.New()
-	m.Strategy, m.ModulePrefix = strategy, "tools"
+	m.Strategy, m.Dir, m.ModulePrefix = strategy, config.DefaultDir, "tools"
 
 	if err := m.Flush(filepath.Join(dir, config.ManifestFile)); err != nil {
 		t.Fatal(err)
@@ -150,9 +150,9 @@ func manifestTools(t *testing.T, dir string) []string {
 
 func TestInstallEachStrategy(t *testing.T) {
 	for st, path := range map[string]string{
-		"split":   "tools/goimports.mod",
-		"module":  "tools/goimports/go.mod",
-		"unified": "tools/go.mod",
+		"split":   config.DefaultDir + "/goimports.mod",
+		"module":  config.DefaultDir + "/goimports/go.mod",
+		"unified": config.DefaultDir + "/go.mod",
 	} {
 		t.Run(st, func(t *testing.T) {
 			dir := newProject(t, st)
@@ -165,7 +165,7 @@ func TestInstallEachStrategy(t *testing.T) {
 			}
 
 			mod := readFile(t, filepath.Join(dir, path))
-			if !strings.Contains(mod, "module tools") || !strings.Contains(mod, "tool "+imports) {
+			if !strings.Contains(mod, "module tools/"+config.DefaultDir) || !strings.Contains(mod, "tool "+imports) {
 				t.Fatalf("modfile:\n%s", mod)
 			}
 
@@ -277,7 +277,7 @@ func TestInstallForceDropsStaleDirective(t *testing.T) {
 	installIn(t, g, dir, installOpts{}, "x", "example.com/a/old").ok(t)
 	installIn(t, g, dir, installOpts{}, "--force", "x", "example.com/b/new").ok(t)
 
-	mod := readFile(t, filepath.Join(dir, "tools/x.mod"))
+	mod := readFile(t, filepath.Join(dir, config.DefaultDir+"/x.mod"))
 	if strings.Contains(mod, "tool example.com/a/old") || !strings.Contains(mod, "tool example.com/b/new") {
 		t.Fatalf("modfile:\n%s", mod)
 	}
@@ -346,7 +346,7 @@ func TestInstallRenameChoiceRecordsTheFingerprint(t *testing.T) {
 	installIn(t, g, dir, installOpts{}, "goimports", imports+"@v0.1.0").ok(t)
 	installIn(t, g, dir, installOpts{stdin: "3\n", interactive: true}, "gi", imports+"@v0.2.0").ok(t)
 
-	if !exists(filepath.Join(dir, "tools", ".gotools.fingerprint")) {
+	if !exists(filepath.Join(dir, config.DefaultDir, ".gotools.fingerprint")) {
 		t.Fatalf("no fingerprint after a rename: %v", files(t, dir))
 	}
 }
@@ -368,7 +368,7 @@ func TestInstallRefusesASecondNameAtTheSameVersion(t *testing.T) {
 		t,
 		dir,
 	); !slices.Equal(got, []string{"goimports"}) ||
-		exists(filepath.Join(dir, "tools/gi.mod")) {
+		exists(filepath.Join(dir, config.DefaultDir+"/gi.mod")) {
 		t.Fatalf("the refused twin left something behind: %v", got)
 	}
 }
@@ -390,7 +390,7 @@ func TestInstallFailureClassAndRollback(t *testing.T) {
 				t.Fatalf("err = %v", r.runErr)
 			}
 
-			if exists(filepath.Join(dir, "tools/goimports")) {
+			if exists(filepath.Join(dir, config.DefaultDir+"/goimports")) {
 				t.Fatal("module directory left behind")
 			}
 
@@ -406,7 +406,7 @@ func TestInstallFailedForceRestoresModfile(t *testing.T) {
 
 	installIn(t, installGo(installOpts{}), dir, installOpts{}, imports+"@v0.1.0").ok(t)
 
-	before := readFile(t, filepath.Join(dir, "tools/goimports.mod"))
+	before := readFile(t, filepath.Join(dir, config.DefaultDir+"/goimports.mod"))
 
 	r := installIn(
 		t,
@@ -420,7 +420,7 @@ func TestInstallFailedForceRestoresModfile(t *testing.T) {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
-	if after := readFile(t, filepath.Join(dir, "tools/goimports.mod")); after != before {
+	if after := readFile(t, filepath.Join(dir, config.DefaultDir+"/goimports.mod")); after != before {
 		t.Fatalf("modfile changed:\n%s\n---\n%s", before, after)
 	}
 }
@@ -433,7 +433,7 @@ func TestInstallTimeout(t *testing.T) {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
-	if exists(filepath.Join(dir, "tools/goimports.mod")) {
+	if exists(filepath.Join(dir, config.DefaultDir+"/goimports.mod")) {
 		t.Fatal("modfile left behind")
 	}
 }
@@ -446,7 +446,7 @@ func TestInstallVerifyFailureRollsBack(t *testing.T) {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
-	if exists(filepath.Join(dir, "tools/goimports.mod")) || len(manifestTools(t, dir)) != 0 {
+	if exists(filepath.Join(dir, config.DefaultDir+"/goimports.mod")) || len(manifestTools(t, dir)) != 0 {
 		t.Fatal("install not rolled back")
 	}
 
@@ -476,11 +476,11 @@ func TestInstallRejectsASymlinkedModfile(t *testing.T) {
 
 	writeFile(t, outside, "module x\n")
 
-	if err := os.MkdirAll(filepath.Join(dir, "tools"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, config.DefaultDir), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := os.Symlink(outside, filepath.Join(dir, "tools/goimports.mod")); err != nil {
+	if err := os.Symlink(outside, filepath.Join(dir, config.DefaultDir+"/goimports.mod")); err != nil {
 		t.Skip(err)
 	}
 
@@ -592,7 +592,7 @@ func TestInstallTakesTheLockInTheToolsDirectory(t *testing.T) {
 
 	installIn(t, installGo(installOpts{}), dir, installOpts{}, imports).ok(t)
 
-	if !exists(filepath.Join(dir, "tools", ".gotools.flock")) {
+	if !exists(filepath.Join(dir, config.DefaultDir, ".gotools.flock")) {
 		t.Fatalf("no lock file in the tools directory: %v", files(t, dir))
 	}
 }
@@ -768,7 +768,7 @@ func TestSplitNeedsARootGoMod(t *testing.T) {
 		t.Fatalf("err = %v", r.runErr)
 	}
 
-	if r.ran("get") || exists(filepath.Join(dir, "tools")) {
+	if r.ran("get") || exists(filepath.Join(dir, config.DefaultDir)) {
 		t.Fatal("install started before refusing")
 	}
 

@@ -2,7 +2,6 @@
 .rumdl_cache
 .claude
 /bin/
-/gotools
 /dist/
 coverage.out
 .gotools_trace.log

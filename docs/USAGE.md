@@ -75,7 +75,7 @@ builds the tool without executing it. Tools run only via `exec`, `check` and
 | `doctor [--format=json\|text] [--offline]` | Diagnose the environment: Go, proxy, config, tools, lock, integrity, disk. Read-only, always exits 0. |
 | `remove <name...>` | Remove specific tools. |
 | `rename <old-name> <new-name>` | Rename a tool: moves its modfiles (split) or module directory (module) and rewrites the module line. Refuses with the unified strategy (directives carry the names — migrate to split/module first). |
-| `migrate <strategy>` | Migrate to a different strategy. |
+| `migrate <strategy> [--dir=<path>]` | Migrate to a different strategy, or move the tools directory with `--dir`. |
 | `config [key [value]]` | View or edit config. |
 | `purge [--restore]` | Remove all tools and the manifest (nothing happens without a `.gotools.json`); `--restore` first adds the tools back to your `go.mod`. |
 | `uninstall [--dry-run]` | Remove the gotools executable itself. |
